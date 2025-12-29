@@ -49,6 +49,13 @@ class GitHubConnect(BaseModel):
     selected_repo: str
     selected_org: Optional[str] = None
 
+class GitHubLogin(BaseModel):
+    github_id: int
+    github_username: str
+    access_token: str
+    selected_repo: str = "confabs"
+    selected_org: Optional[str] = None
+
 class GitHubRepoResponse(BaseModel):
     repos: List[GitHubRepo]
 

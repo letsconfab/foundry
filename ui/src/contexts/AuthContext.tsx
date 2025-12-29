@@ -26,6 +26,16 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const refreshUser = async () => {
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      setUser(null);
+      return;
+    }
+    const userData = await apiClient.getCurrentUser();
+    setUser(userData);
+  };
+
   const login = async (email, password) => {
     try {
       const userData = await apiClient.login({ email, password });
@@ -62,6 +72,7 @@ export function AuthProvider({ children }) {
     register,
     logout,
     githubLogin,
+    refreshUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

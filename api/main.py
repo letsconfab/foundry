@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 
 from database import get_db, engine, Base
 from models import User, Confab, GitHubAccount
-from schemas import UserCreate, UserLogin, UserResponse, ConfabCreate, ConfabResponse, GitHubConnect, ConfabConfig, SimpleConfabConfig
+from schemas import UserCreate, UserLogin, UserResponse, ConfabCreate, ConfabResponse, GitHubConnect, GitHubLogin, ConfabConfig, SimpleConfabConfig
 from auth import create_access_token, verify_token, get_password_hash, verify_password
-from github_oauth import github_auth_router, get_github_user, get_github_repos
+from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
 from confab_manager import create_confab_in_github, update_confab_in_github
 
 # Load environment variables
@@ -185,8 +185,65 @@ async def connect_github(
     db.commit()
     return {"message": "GitHub account connected successfully"}
 
+@app.post("/auth/github/login", response_model=UserResponse)
+async def github_login(github_data: GitHubLogin, db: Session = Depends(get_db)):
+    # Fetch email from GitHub so we can identify/create the app user
+    github_email = await get_github_primary_email(github_data.access_token)
+    if not github_email:
+        github_email = f"{github_data.github_username}@users.noreply.github.com"
+
+    db_user = db.query(User).filter(User.email == github_email).first()
+    if not db_user:
+        # Create a new user with placeholder required fields
+        db_user = User(
+            name=github_data.github_username,
+            email=github_email,
+            password_hash=get_password_hash(os.urandom(24).hex()),
+            country="other",
+            timezone="utc",
+        )
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+
+    # Upsert GitHubAccount association
+    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == db_user.id).first()
+    if github_account:
+        github_account.github_id = github_data.github_id
+        github_account.github_username = github_data.github_username
+        github_account.access_token = github_data.access_token
+        github_account.selected_repo = github_data.selected_repo
+        github_account.selected_org = github_data.selected_org
+    else:
+        github_account = GitHubAccount(
+            user_id=db_user.id,
+            github_id=github_data.github_id,
+            github_username=github_data.github_username,
+            access_token=github_data.access_token,
+            selected_repo=github_data.selected_repo,
+            selected_org=github_data.selected_org,
+        )
+        db.add(github_account)
+    db.commit()
+
+    access_token = create_access_token(data={"user_id": db_user.id})
+    return UserResponse(
+        id=db_user.id,
+        name=db_user.name,
+        email=db_user.email,
+        country=db_user.country,
+        timezone=db_user.timezone,
+        github_connected=True,
+        access_token=access_token,
+        created_at=db_user.created_at,
+        updated_at=db_user.updated_at,
+    )
+
 @app.get("/auth/github/repos")
-async def get_user_github_repos(current_user: User = Depends(get_current_user)):
+async def get_user_github_repos(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
     if not github_account:
         raise HTTPException(

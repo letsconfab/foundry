@@ -83,6 +83,19 @@ class ApiClient {
     });
   }
 
+  async loginWithGitHub(githubData) {
+    const response = await this.request('/auth/github/login', {
+      method: 'POST',
+      body: JSON.stringify(githubData),
+    });
+
+    if (response.access_token) {
+      localStorage.setItem('access_token', response.access_token);
+    }
+
+    return response;
+  }
+
   async getGitHubRepos() {
     return this.request('/auth/github/repos');
   }

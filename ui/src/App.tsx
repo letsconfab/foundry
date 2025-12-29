@@ -22,6 +22,12 @@ function AppContent() {
   const [selectedConfabName, setSelectedConfabName] = useState('');
   const [selectedConfabVersion, setSelectedConfabVersion] = useState('1.0.0');
 
+  useEffect(() => {
+    if (isLoggedIn && (currentView === 'home' || currentView === 'login' || currentView === 'register')) {
+      setCurrentView('dashboard');
+    }
+  }, [isLoggedIn, currentView]);
+
   const handleNavigate = (view: View, confabName?: string, version?: string) => {
     setCurrentView(view);
     if (confabName) {

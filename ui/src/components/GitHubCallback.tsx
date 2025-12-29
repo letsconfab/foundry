@@ -9,7 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 export function GitHubCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { refreshUser } = useAuth();
   const [status, setStatus] = useState('loading');
   const [message, setMessage] = useState('Connecting to GitHub...');
 
@@ -40,14 +40,21 @@ export function GitHubCallback() {
           setStatus('success');
           setMessage('GitHub account connected successfully!');
         } else {
-          // User is not logged in, this is a GitHub login
-          // We need to get user info and create/login account
-          // For now, we'll redirect to login with a success message
+          // User is not logged in: perform app login via backend exchange
+          await apiClient.loginWithGitHub({
+            github_id: parseInt(githubId),
+            github_username: githubUsername,
+            access_token: accessToken,
+            selected_repo: 'confabs',
+            selected_org: undefined,
+          });
+
+          await refreshUser();
           setStatus('success');
-          setMessage('GitHub authentication successful! Redirecting to login...');
+          setMessage('GitHub login successful! Redirecting to dashboard...');
           setTimeout(() => {
-            navigate('/login');
-          }, 2000);
+            navigate('/');
+          }, 800);
         }
       } catch (error) {
         setStatus('error');
@@ -56,7 +63,7 @@ export function GitHubCallback() {
     };
 
     handleGitHubCallback();
-  }, [searchParams, navigate, login]);
+  }, [searchParams, navigate, refreshUser]);
 
   const handleContinue = () => {
     navigate('/dashboard');

@@ -14,6 +14,8 @@ GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
 GITHUB_BACKEND_REDIRECT_URI = os.getenv("GITHUB_BACKEND_REDIRECT_URI", "http://localhost:8001/auth/github/callback")
 GITHUB_FRONTEND_REDIRECT_URI = os.getenv("GITHUB_FRONTEND_REDIRECT_URI", "http://localhost:3000/auth/github/callback")
 
+HTTPX_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+
 github_auth_router = APIRouter()
 
 class GitHubTokenResponse(BaseModel):
@@ -64,32 +66,43 @@ async def github_callback(code: str):
         )
     
     # Exchange code for access token
-    async with httpx.AsyncClient() as client:
-        token_response = await client.post(
-            "https://github.com/login/oauth/access_token",
-            headers={"Accept": "application/json"},
-            data={
-                "client_id": GITHUB_CLIENT_ID,
-                "client_secret": GITHUB_CLIENT_SECRET,
-                "code": code,
-                "redirect_uri": GITHUB_BACKEND_REDIRECT_URI
-            }
+    try:
+        async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, trust_env=False) as client:
+            token_response = await client.post(
+                "https://github.com/login/oauth/access_token",
+                headers={"Accept": "application/json"},
+                data={
+                    "client_id": GITHUB_CLIENT_ID,
+                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "code": code,
+                    "redirect_uri": GITHUB_BACKEND_REDIRECT_URI
+                }
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Timed out while exchanging GitHub code for token"
         )
-        
-        if token_response.status_code != 200:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to exchange code for token"
-            )
-        
-        token_data = token_response.json()
-        access_token = token_data.get("access_token")
-        
-        if not access_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No access token received"
-            )
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Network error while exchanging GitHub code for token"
+        )
+
+    if token_response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to exchange code for token"
+        )
+
+    token_data = token_response.json()
+    access_token = token_data.get("access_token")
+
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No access token received"
+        )
     
     # Get user information
     user_data = await get_github_user(access_token)
@@ -106,7 +119,7 @@ async def github_callback(code: str):
 
 async def get_github_user(access_token: str) -> GitHubUser:
     """Get GitHub user information using access token."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, trust_env=False) as client:
         response = await client.get(
             "https://api.github.com/user",
             headers={"Authorization": f"token {access_token}"}
@@ -121,9 +134,40 @@ async def get_github_user(access_token: str) -> GitHubUser:
         user_data = response.json()
         return GitHubUser(**user_data)
 
+async def get_github_primary_email(access_token: str) -> Optional[str]:
+    """Get the user's primary, verified email from GitHub."""
+    async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, trust_env=False) as client:
+        response = await client.get(
+            "https://api.github.com/user/emails",
+            headers={
+                "Authorization": f"token {access_token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+
+        if response.status_code != 200:
+            return None
+
+        emails = response.json()
+        if not isinstance(emails, list):
+            return None
+
+        # Prefer primary + verified, then any verified, then any email
+        for e in emails:
+            if e.get("primary") and e.get("verified") and e.get("email"):
+                return e.get("email")
+        for e in emails:
+            if e.get("verified") and e.get("email"):
+                return e.get("email")
+        for e in emails:
+            if e.get("email"):
+                return e.get("email")
+
+        return None
+
 async def get_github_repos(access_token: str) -> List[GitHubRepo]:
     """Get GitHub repositories for the authenticated user."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, trust_env=False) as client:
         # Get user repos
         response = await client.get(
             "https://api.github.com/user/repos?type=owner&per_page=100",
