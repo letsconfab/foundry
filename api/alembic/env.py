@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 
 # Import your models
+import models  # noqa: F401
 from models import Base
 from database import DATABASE_URL
 

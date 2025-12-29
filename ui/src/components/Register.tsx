@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { MessageSquare, Mail, Lock, User, Github, Globe, Clock, AlertCircle } from 'lucide-react';
+import { MessageSquare, Mail, Lock, User, Github, Globe, Clock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat';
@@ -22,11 +22,13 @@ export function Register({ onNavigate }: RegisterProps) {
   const [timezone, setTimezone] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const { register, githubLogin } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     
     // Validation
     if (!name || !email || !password || !country || !timezone) {
@@ -54,7 +56,10 @@ export function Register({ onNavigate }: RegisterProps) {
         country,
         timezone
       });
-      // Navigation will be handled by AuthContext/App
+      setSuccess('Account created successfully! Redirecting to your dashboard...');
+      window.setTimeout(() => {
+        onNavigate('dashboard');
+      }, 600);
     } catch (err: any) {
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
@@ -78,6 +83,12 @@ export function Register({ onNavigate }: RegisterProps) {
         </div>
 
         <Card className="p-6 sm:p-8">
+          {success && (
+            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-green-600" />
+              <span className="text-sm text-green-800">{success}</span>
+            </div>
+          )}
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-500" />

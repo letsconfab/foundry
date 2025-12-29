@@ -26,9 +26,15 @@ except Exception as e:
 app = FastAPI(title="Let's Confab API", version="1.0.0")
 
 # CORS middleware
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+allowed_origins = (
+    [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+    if allowed_origins_env
+    else ["http://localhost:3000"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,7 +105,9 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
         country=db_user.country,
         timezone=db_user.timezone,
         github_connected=False,
-        access_token=access_token
+        access_token=access_token,
+        created_at=db_user.created_at,
+        updated_at=db_user.updated_at,
     )
 
 @app.post("/auth/login", response_model=UserResponse)
@@ -124,11 +132,16 @@ async def login(user: UserLogin, db: Session = Depends(get_db)):
         country=db_user.country,
         timezone=db_user.timezone,
         github_connected=github_account is not None,
-        access_token=access_token
+        access_token=access_token,
+        created_at=db_user.created_at,
+        updated_at=db_user.updated_at,
     )
 
 @app.get("/auth/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
     
     return UserResponse(
@@ -137,7 +150,9 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
         email=current_user.email,
         country=current_user.country,
         timezone=current_user.timezone,
-        github_connected=github_account is not None
+        github_connected=github_account is not None,
+        created_at=current_user.created_at,
+        updated_at=current_user.updated_at,
     )
 
 @app.post("/auth/github/connect")

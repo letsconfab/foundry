@@ -41,10 +41,17 @@ class ApiClient {
 
   // Auth endpoints
   async register(userData) {
-    return this.request('/auth/register', {
+    const response = await this.request('/auth/register', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
+
+    // Store token in localStorage
+    if (response.access_token) {
+      localStorage.setItem('access_token', response.access_token);
+    }
+
+    return response;
   }
 
   async login(credentials) {

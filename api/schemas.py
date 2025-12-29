@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional, List, Dict, Any, Literal, Union
 from datetime import datetime
 
@@ -65,6 +65,7 @@ class AgentCapabilities(BaseModel):
 
 class ModelConfiguration(BaseModel):
     """AI model settings"""
+    model_config = ConfigDict(protected_namespaces=())
     provider: Literal["openai", "anthropic", "google", "local"] = "openai"
     model_name: str = Field(..., description="Model name (e.g., 'gpt-4', 'claude-3-sonnet')")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
@@ -126,8 +127,8 @@ class ConfabConfig(BaseModel):
     deployment: DeploymentSettings = Field(default_factory=DeploymentSettings)
     custom_settings: Dict[str, Any] = Field(default_factory=dict, description="Additional custom configuration")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "capabilities": {
                     "text_generation": True,
@@ -136,7 +137,7 @@ class ConfabConfig(BaseModel):
                     "web_search": True,
                     "file_processing": False,
                     "image_analysis": False,
-                    "custom_tools": ["calculator", "weather_api"]
+                    "custom_tools": ["calculator", "weather_api"],
                 },
                 "model": {
                     "provider": "openai",
@@ -145,7 +146,7 @@ class ConfabConfig(BaseModel):
                     "max_tokens": 2000,
                     "top_p": 1.0,
                     "frequency_penalty": 0.0,
-                    "presence_penalty": 0.0
+                    "presence_penalty": 0.0,
                 },
                 "knowledge_base": {
                     "enabled": True,
@@ -153,7 +154,7 @@ class ConfabConfig(BaseModel):
                     "source": "./documents",
                     "indexing_method": "vector",
                     "chunk_size": 1000,
-                    "overlap": 200
+                    "overlap": 200,
                 },
                 "conversation": {
                     "system_prompt": "You are a helpful AI assistant specialized in software development. Provide clear, accurate, and well-structured responses.",
@@ -161,7 +162,7 @@ class ConfabConfig(BaseModel):
                     "memory_enabled": True,
                     "context_window_size": 10,
                     "greeting_message": "Hello! I'm your software development assistant. How can I help you today?",
-                    "error_message": "I apologize, but I encountered an error. Please try rephrasing your question."
+                    "error_message": "I apologize, but I encountered an error. Please try rephrasing your question.",
                 },
                 "security": {
                     "content_filtering": True,
@@ -169,7 +170,7 @@ class ConfabConfig(BaseModel):
                     "blocked_keywords": ["password", "secret", "token"],
                     "rate_limiting": True,
                     "max_requests_per_minute": 60,
-                    "authentication_required": True
+                    "authentication_required": True,
                 },
                 "integrations": {
                     "apis": [
@@ -177,7 +178,7 @@ class ConfabConfig(BaseModel):
                             "name": "github_api",
                             "url": "https://api.github.com",
                             "auth_type": "token",
-                            "rate_limit": 5000
+                            "rate_limit": 5000,
                         }
                     ],
                     "webhooks": [],
@@ -185,52 +186,44 @@ class ConfabConfig(BaseModel):
                     "storage": {
                         "type": "s3",
                         "bucket": "confab-files",
-                        "region": "us-west-2"
-                    }
+                        "region": "us-west-2",
+                    },
                 },
                 "deployment": {
                     "environment": "development",
-                    "scaling": {
-                        "min_instances": 1,
-                        "max_instances": 5,
-                        "target_cpu": 70
-                    },
+                    "scaling": {"min_instances": 1, "max_instances": 5, "target_cpu": 70},
                     "monitoring": True,
                     "logging_level": "INFO",
-                    "health_checks": True
+                    "health_checks": True,
                 },
                 "custom_settings": {
-                    "feature_flags": {
-                        "beta_features": True,
-                        "advanced_mode": False
-                    },
-                    "ui_preferences": {
-                        "theme": "dark",
-                        "language": "en"
-                    }
-                }
+                    "feature_flags": {"beta_features": True, "advanced_mode": False},
+                    "ui_preferences": {"theme": "dark", "language": "en"},
+                },
             }
         }
+    )
 
 # Simple configuration for basic use cases
 class SimpleConfabConfig(BaseModel):
     """Simplified confab configuration for basic use cases"""
-    model_provider: Literal["openai", "anthropic", "google", "local"] = "openai"
-    model_name: str = "gpt-4"
-    system_prompt: str = Field(..., description="System prompt that defines agent behavior")
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(default=None, ge=1, le=100000)
-    
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        protected_namespaces=(),
+        json_schema_extra={
             "example": {
                 "model_provider": "openai",
                 "model_name": "gpt-4",
                 "system_prompt": "You are a helpful AI assistant. Provide clear and accurate responses.",
                 "temperature": 0.7,
-                "max_tokens": 2000
+                "max_tokens": 2000,
             }
-        }
+        },
+    )
+    model_provider: Literal["openai", "anthropic", "google", "local"] = "openai"
+    model_name: str = "gpt-4"
+    system_prompt: str = Field(..., description="System prompt that defines agent behavior")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=100000)
 
 # Confab schemas
 class ConfabBase(BaseModel):
