@@ -72,7 +72,7 @@ class ApiClient {
     return this.request('/auth/me');
   }
 
-  async getGitHubAuthUrl() {
+  getGitHubAuthUrl() {
     return `${this.baseURL}/auth/github/authorize`;
   }
 

@@ -11,7 +11,8 @@ load_dotenv()
 # GitHub OAuth configuration
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
-GITHUB_REDIRECT_URI = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:3000/auth/github/callback")
+GITHUB_BACKEND_REDIRECT_URI = os.getenv("GITHUB_BACKEND_REDIRECT_URI", "http://localhost:8001/auth/github/callback")
+GITHUB_FRONTEND_REDIRECT_URI = os.getenv("GITHUB_FRONTEND_REDIRECT_URI", "http://localhost:3000/auth/github/callback")
 
 github_auth_router = APIRouter()
 
@@ -47,8 +48,8 @@ async def github_authorize():
     auth_url = (
         f"https://github.com/login/oauth/authorize?"
         f"client_id={GITHUB_CLIENT_ID}&"
-        f"redirect_uri={GITHUB_REDIRECT_URI}&"
-        f"scope=repo user:email"
+        f"redirect_uri={GITHUB_BACKEND_REDIRECT_URI}&"
+        f"scope=public_repo user:email"
     )
     
     return RedirectResponse(url=auth_url)
@@ -71,7 +72,7 @@ async def github_callback(code: str):
                 "client_id": GITHUB_CLIENT_ID,
                 "client_secret": GITHUB_CLIENT_SECRET,
                 "code": code,
-                "redirect_uri": GITHUB_REDIRECT_URI
+                "redirect_uri": GITHUB_BACKEND_REDIRECT_URI
             }
         )
         
@@ -95,7 +96,7 @@ async def github_callback(code: str):
     
     # Redirect to frontend with token and user info
     frontend_url = (
-        f"{GITHUB_REDIRECT_URI}?"
+        f"{GITHUB_FRONTEND_REDIRECT_URI}?"
         f"access_token={access_token}&"
         f"github_id={user_data.id}&"
         f"github_username={user_data.login}"
