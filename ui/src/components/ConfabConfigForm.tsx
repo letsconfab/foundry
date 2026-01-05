@@ -8,7 +8,9 @@ import { Textarea } from './ui/textarea';
 import { Checkbox } from './ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
-import { Settings, Brain, Shield, Database, Globe, Zap, Plus, X } from 'lucide-react';
+import { Settings, Brain, Shield, Database, Globe, Zap, Plus, X, TestTube, Github, CheckCircle, AlertCircle } from 'lucide-react';
+import { apiClient } from '../api/client.js';
+import { useAuth } from '../contexts/AuthContext';
 
 interface SimpleConfig {
   model_provider: 'openai' | 'anthropic' | 'google' | 'local';
@@ -25,7 +27,22 @@ interface ConfabConfigFormProps {
 }
 
 export function ConfabConfigForm({ onSubmit, initialConfig, isLoading = false }: ConfabConfigFormProps) {
+  const { user } = useAuth();
   const [configType, setConfigType] = useState<'simple' | 'advanced'>('simple');
+  const [isTestingRepo, setIsTestingRepo] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
+  const [testError, setTestError] = useState('');
+  
+  // Determine GitHub repo naming convention
+  const getRepoNamingConvention = () => {
+    if (user?.github_connected) {
+      // For GitHub users, we'd need to get the username from the API
+      // For now, we'll use a placeholder that will be updated when the API provides it
+      return 'username/confabs (will be set based on your GitHub username)';
+    } else {
+      return 'letsconfab/confabs (for email users)';
+    }
+  };
   const [simpleConfig, setSimpleConfig] = useState<SimpleConfig>({
     model_provider: 'openai',
     model_name: 'gpt-4',
@@ -102,6 +119,21 @@ export function ConfabConfigForm({ onSubmit, initialConfig, isLoading = false }:
     e.preventDefault();
     const config = configType === 'simple' ? simpleConfig : advancedConfig;
     onSubmit(config);
+  };
+
+  const handleTestRepo = async () => {
+    setIsTestingRepo(true);
+    setTestError('');
+    setTestResult(null);
+    
+    try {
+      const result = await apiClient.testRepoInitialization();
+      setTestResult(result);
+    } catch (error: any) {
+      setTestError(error.message || 'Failed to test repository initialization');
+    } finally {
+      setIsTestingRepo(false);
+    }
   };
 
   const addCustomTool = () => {
@@ -260,6 +292,73 @@ export function ConfabConfigForm({ onSubmit, initialConfig, isLoading = false }:
                   rows={4}
                 />
               </div>
+
+              {/* GitHub Repository Information */}
+              <Card className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Github className="w-5 h-5 text-slate-900" />
+                  <h3 className="text-lg font-semibold">Repository Configuration</h3>
+                </div>
+                <div className="space-y-3">
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <p className="text-sm text-blue-800">
+                      <strong>Repository Naming Convention:</strong>
+                    </p>
+                    <p className="text-sm text-blue-700 mt-1">
+                      {getRepoNamingConvention()}
+                    </p>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      onClick={handleTestRepo}
+                      disabled={isTestingRepo}
+                      variant="outline"
+                      className="gap-2"
+                    >
+                      <TestTube className="w-4 h-4" />
+                      {isTestingRepo ? 'Testing...' : 'TEST'}
+                    </Button>
+                    <span className="text-sm text-slate-600">
+                      Initialize repository with dummy data
+                    </span>
+                  </div>
+                  
+                  {testResult && (
+                    <div className="p-3 bg-green-50 rounded-lg">
+                      <div className="flex items-center gap-2 mb-2">
+                        <CheckCircle className="w-4 h-4 text-green-600" />
+                        <span className="text-sm font-medium text-green-800">
+                          Test Successful
+                        </span>
+                      </div>
+                      <p className="text-sm text-green-700 mb-2">
+                        {testResult.message}
+                      </p>
+                      <div className="text-xs text-green-600">
+                        <p><strong>Repository:</strong> {testResult.repo_name}</p>
+                        <p><strong>Status:</strong> {testResult.status}</p>
+                        {testResult.dummy_data && (
+                          <p><strong>Test Files:</strong> {testResult.dummy_data.test_files?.join(', ')}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {testError && (
+                    <div className="p-3 bg-red-50 rounded-lg">
+                      <div className="flex items-center gap-2 mb-1">
+                        <AlertCircle className="w-4 h-4 text-red-600" />
+                        <span className="text-sm font-medium text-red-800">
+                          Test Failed
+                        </span>
+                      </div>
+                      <p className="text-sm text-red-700">{testError}</p>
+                    </div>
+                  )}
+                </div>
+              </Card>
 
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading ? 'Creating Confab...' : 'Create Confab'}
@@ -478,6 +577,73 @@ export function ConfabConfigForm({ onSubmit, initialConfig, isLoading = false }:
                     ))}
                   </div>
                 </div>
+              </div>
+            </Card>
+
+            {/* GitHub Repository Information */}
+            <Card className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Github className="w-5 h-5 text-slate-900" />
+                <h3 className="text-lg font-semibold">Repository Configuration</h3>
+              </div>
+              <div className="space-y-3">
+                <div className="p-3 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>Repository Naming Convention:</strong>
+                  </p>
+                  <p className="text-sm text-blue-700 mt-1">
+                    {getRepoNamingConvention()}
+                  </p>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    onClick={handleTestRepo}
+                    disabled={isTestingRepo}
+                    variant="outline"
+                    className="gap-2"
+                  >
+                    <TestTube className="w-4 h-4" />
+                    {isTestingRepo ? 'Testing...' : 'TEST'}
+                  </Button>
+                  <span className="text-sm text-slate-600">
+                    Initialize repository with dummy data
+                  </span>
+                </div>
+                
+                {testResult && (
+                  <div className="p-3 bg-green-50 rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle className="w-4 h-4 text-green-600" />
+                      <span className="text-sm font-medium text-green-800">
+                        Test Successful
+                      </span>
+                    </div>
+                    <p className="text-sm text-green-700 mb-2">
+                      {testResult.message}
+                    </p>
+                    <div className="text-xs text-green-600">
+                      <p><strong>Repository:</strong> {testResult.repo_name}</p>
+                      <p><strong>Status:</strong> {testResult.status}</p>
+                      {testResult.dummy_data && (
+                        <p><strong>Test Files:</strong> {testResult.dummy_data.test_files?.join(', ')}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {testError && (
+                  <div className="p-3 bg-red-50 rounded-lg">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AlertCircle className="w-4 h-4 text-red-600" />
+                      <span className="text-sm font-medium text-red-800">
+                        Test Failed
+                      </span>
+                    </div>
+                    <p className="text-sm text-red-700">{testError}</p>
+                  </div>
+                )}
               </div>
             </Card>
 

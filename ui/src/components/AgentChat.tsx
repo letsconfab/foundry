@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Github, Plus, Bot, Shield, Network, Users, Mail, User } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Github, Plus, Bot, Shield, Network, Users, Mail, User, TestTube, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -16,6 +16,8 @@ import {
 } from './ui/select';
 import { Checkbox } from './ui/checkbox';
 import { Avatar, AvatarFallback } from './ui/avatar';
+import { apiClient } from '../api/client.js';
+import { useAuth } from '../contexts/AuthContext';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
@@ -66,11 +68,11 @@ const AGENT_CREATION_STEPS = [
   { id: 4, label: 'Add Tools & APIs', keywords: ['tool', 'api', 'access', 'integrate', 'connect'] },
   { id: 5, label: 'Guardrails', keywords: ['guardrail', 'safety', 'limit', 'restrict', 'boundary', 'rule', 'policy'] },
   { id: 6, label: 'Sample Inputs/Outputs', keywords: ['sample', 'example', 'input', 'output', 'test', 'response', 'demo'] },
-  { id: 7, label: 'Link GitHub Account', keywords: ['github', 'repository', 'repo', 'code', 'version'] },
-  { id: 8, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
+  { id: 7, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
 ];
 
 export function AgentChat({ onNavigate }: AgentChatProps) {
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -84,6 +86,9 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [currentStep, setCurrentStep] = useState(1);
+  const [isTestingRepo, setIsTestingRepo] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
+  const [testError, setTestError] = useState('');
   
   // Multi-Agent State
   const [multiAgentNodes, setMultiAgentNodes] = useState<AgentNode[]>([]);
@@ -92,6 +97,15 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
   const [enableConflictResolution, setEnableConflictResolution] = useState(true);
   const [maxTurnsPerAgent, setMaxTurnsPerAgent] = useState('3');
   const [githubConnected, setGithubConnected] = useState(false);
+
+  // Determine GitHub repo naming convention
+  const getRepoNamingConvention = () => {
+    if (user?.github_connected) {
+      return 'username/confabs (will be set based on your GitHub username)';
+    } else {
+      return 'letsconfab/confabs (for email users)';
+    }
+  };
 
   // Participants State
   const [participants] = useState<Participant[]>([
@@ -194,6 +208,21 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     const agent = availableAgents.find((a) => a.id === agentId);
     if (agent && !multiAgentNodes.find((n) => n.id === agent.id)) {
       setMultiAgentNodes([...multiAgentNodes, agent]);
+    }
+  };
+
+  const handleTestRepo = async () => {
+    setIsTestingRepo(true);
+    setTestError('');
+    setTestResult(null);
+    
+    try {
+      const result = await apiClient.testRepoInitialization();
+      setTestResult(result);
+    } catch (error: any) {
+      setTestError(error.message || 'Failed to test repository initialization');
+    } finally {
+      setIsTestingRepo(false);
     }
   };
 
@@ -302,33 +331,72 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
             </Card>
           )}
 
-          {/* GitHub Account Step */}
-          {currentStep >= 7 && (
-            <Card className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Github className="w-5 h-5 text-slate-900" />
-                <h3 className="text-slate-900">GitHub Account</h3>
+          {/* GitHub Repository Information */}
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Github className="w-5 h-5 text-slate-900" />
+              <h3 className="text-slate-900">Repository Configuration</h3>
+            </div>
+            <div className="space-y-3">
+              <div className="p-3 bg-blue-50 rounded-lg">
+                <p className="text-sm text-blue-800">
+                  <strong>Repository Naming Convention:</strong>
+                </p>
+                <p className="text-sm text-blue-700 mt-1">
+                  {getRepoNamingConvention()}
+                </p>
               </div>
-              {!githubConnected ? (
+              
+              <div className="flex items-center gap-2">
                 <Button
-                  onClick={() => setGithubConnected(true)}
-                  className="w-full gap-2"
+                  onClick={handleTestRepo}
+                  disabled={isTestingRepo}
                   variant="outline"
+                  size="sm"
+                  className="gap-2"
                 >
-                  <Github className="w-4 h-4" />
-                  Connect GitHub
+                  <TestTube className="w-4 h-4" />
+                  {isTestingRepo ? 'Testing...' : 'TEST'}
                 </Button>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg">
-                    <div className="w-2 h-2 bg-green-500 rounded-full" />
-                    <span className="text-sm text-green-700">GitHub Connected</span>
+                <span className="text-sm text-slate-600">
+                  Initialize repository with dummy data
+                </span>
+              </div>
+              
+              {testResult && (
+                <div className="p-3 bg-green-50 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <span className="text-sm font-medium text-green-800">
+                      Test Successful
+                    </span>
                   </div>
-                  <Input placeholder="Repository name (optional)" className="text-sm" />
+                  <p className="text-sm text-green-700 mb-2">
+                    {testResult.message}
+                  </p>
+                  <div className="text-xs text-green-600">
+                    <p><strong>Repository:</strong> {testResult.repo_name}</p>
+                    <p><strong>Status:</strong> {testResult.status}</p>
+                    {testResult.dummy_data && (
+                      <p><strong>Test Files:</strong> {testResult.dummy_data.test_files?.join(', ')}</p>
+                    )}
+                  </div>
                 </div>
               )}
-            </Card>
-          )}
+              
+              {testError && (
+                <div className="p-3 bg-red-50 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1">
+                    <AlertCircle className="w-4 h-4 text-red-600" />
+                    <span className="text-sm font-medium text-red-800">
+                      Test Failed
+                    </span>
+                  </div>
+                  <p className="text-sm text-red-700">{testError}</p>
+                </div>
+              )}
+            </div>
+          </Card>
         </div>
 
         {/* Conversation Area */}

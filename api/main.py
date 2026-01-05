@@ -11,7 +11,7 @@ from models import User, Confab, GitHubAccount
 from schemas import UserCreate, UserLogin, UserResponse, ConfabCreate, ConfabResponse, GitHubConnect, GitHubLogin, ConfabConfig, SimpleConfabConfig
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
-from confab_manager import create_confab_in_github, update_confab_in_github
+from confab_manager import create_confab_in_github, update_confab_in_github, create_github_repository, initialize_confab_repository
 
 # Load environment variables
 load_dotenv()
@@ -431,6 +431,75 @@ async def delete_confab(
     db.commit()
     
     return {"message": "Confab deleted successfully"}
+
+@app.post("/confabs/test-repo")
+async def test_repo_initialization(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Test GitHub repository initialization with dummy data"""
+    try:
+        # Get GitHub account for the user
+        github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+        
+        if not github_account:
+            # For users without GitHub, return a simulated success
+            return {
+                "message": "Test repository initialization simulated for email user",
+                "repo_name": "letsconfab/confabs",
+                "status": "simulated",
+                "dummy_data": {
+                    "purpose": "Test confab for demonstration purposes",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "test_files": ["README.md", "config.json", "example.py"]
+                }
+            }
+        
+        # For GitHub users, create/initialize the actual repository
+        repo_name = "confabs"
+        repo_owner = github_account.github_username
+        
+        # Check if repository exists, if not create it
+        try:
+            # Try to create the repository
+            repo_info = await create_github_repository(
+                repo_name=repo_name,
+                access_token=github_account.access_token,
+                description=f"Confabs repository for {github_account.github_username}",
+                private=False
+            )
+        except Exception as e:
+            # Repository might already exist, try to initialize it directly
+            pass
+        
+        # Initialize repository with confab structure
+        init_result = await initialize_confab_repository(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            access_token=github_account.access_token
+        )
+        
+        if init_result["success"]:
+            return {
+                "message": f"Test repository '{repo_owner}/{repo_name}' initialized successfully",
+                "repo_name": f"{repo_owner}/{repo_name}",
+                "status": "success",
+                "dummy_data": {
+                    "purpose": f"Test confab for {github_account.github_username}",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "test_files": init_result["test_files"],
+                    "github_username": github_account.github_username,
+                    "pr_url": init_result.get("pr_url", "")
+                }
+            }
+        else:
+            raise Exception(init_result["error"])
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to test repository initialization: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn

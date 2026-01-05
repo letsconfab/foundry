@@ -408,3 +408,76 @@ async def update_confab_in_github(
     return await confab_manager.update_confab_in_github(
         confab_name, confab_data, github_url, access_token
     )
+
+async def create_github_repository(
+    repo_name: str,
+    access_token: str,
+    description: str = "Repository for confabs created via Let's Confab",
+    private: bool = False
+) -> Dict[str, Any]:
+    """Create a new GitHub repository."""
+    
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {access_token}"
+    }
+    
+    repo_data = {
+        "name": repo_name,
+        "description": description,
+        "private": private,
+        "auto_init": True,  # Initialize with README
+        "gitignore_template": "Node"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.github.com/user/repos",
+            headers=headers,
+            json=repo_data
+        )
+        
+        if response.status_code != 201:
+            error_data = response.json()
+            raise Exception(f"Failed to create repository: {error_data.get('message', 'Unknown error')}")
+        
+        return response.json()
+
+async def initialize_confab_repository(
+    repo_owner: str,
+    repo_name: str,
+    access_token: str,
+    test_confab_name: str = "test-confab"
+) -> Dict[str, Any]:
+    """Initialize a repository with confab structure and dummy data."""
+    
+    # Create test confab data
+    test_confab_data = {
+        "description": "Test confab for repository initialization",
+        "purpose": "To verify the repository structure and confab creation process",
+        "version": "1.0.0"
+    }
+    
+    try:
+        # Create confab files in the repository
+        pr_url = await create_confab_in_github(
+            confab_name=test_confab_name,
+            confab_data=test_confab_data,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            access_token=access_token
+        )
+        
+        return {
+            "success": True,
+            "pr_url": pr_url,
+            "message": f"Successfully initialized repository {repo_owner}/{repo_name} with test confab",
+            "test_files": ["Confab.toml", "PURPOSE.md", "GUARDRAILS.md", "TESTS.md"]
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": f"Failed to initialize repository: {str(e)}"
+        }

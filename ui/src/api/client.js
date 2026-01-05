@@ -129,6 +129,12 @@ class ApiClient {
     });
   }
 
+  async testRepoInitialization() {
+    return this.request('/confabs/test-repo', {
+      method: 'POST',
+    });
+  }
+
   clearToken() {
     localStorage.removeItem('access_token');
   }

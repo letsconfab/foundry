@@ -67,8 +67,7 @@ const AGENT_CREATION_STEPS = [
   { id: 4, label: 'Tools & APIs', keywords: ['tool', 'api', 'access', 'integrate', 'connect'] },
   { id: 5, label: 'Guardrails', keywords: ['guardrail', 'safety', 'limit', 'restrict', 'boundary', 'rule', 'policy'] },
   { id: 6, label: 'Sample Inputs/Outputs', keywords: ['sample', 'example', 'input', 'output', 'test', 'response', 'demo'] },
-  { id: 7, label: 'GitHub Account', keywords: ['github', 'repository', 'repo', 'code', 'version'] },
-  { id: 8, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
+  { id: 7, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
 ];
 
 export function ConfigureConfab({ onNavigate, confabName, version }: ConfigureConfabProps) {
@@ -349,33 +348,6 @@ export function ConfigureConfab({ onNavigate, confabName, version }: ConfigureCo
               </Card>
             )}
 
-            {/* GitHub Account Step */}
-            {currentStep >= 7 && (
-              <Card className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Github className="w-5 h-5 text-slate-900" />
-                  <h3 className="text-slate-900">GitHub Account</h3>
-                </div>
-                {!githubConnected ? (
-                  <Button
-                    onClick={() => setGithubConnected(true)}
-                    className="w-full gap-2"
-                    variant="outline"
-                  >
-                    <Github className="w-4 h-4" />
-                    Connect GitHub
-                  </Button>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg">
-                      <div className="w-2 h-2 bg-green-500 rounded-full" />
-                      <span className="text-sm text-green-700">GitHub Connected</span>
-                    </div>
-                    <Input placeholder="Repository name (optional)" className="text-sm" />
-                  </div>
-                )}
-              </Card>
-            )}
           </div>
         )}
 

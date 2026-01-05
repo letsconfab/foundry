@@ -1,10 +1,40 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { apiClient } from '../api/client.js';
 
-const AuthContext = createContext(undefined);
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  country: string;
+  timezone: string;
+  github_connected: boolean;
+  created_at: string;
+  updated_at?: string;
+}
 
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+interface UserCreateData {
+  name: string;
+  email: string;
+  password: string;
+  country: string;
+  timezone: string;
+}
+
+interface AuthContextType {
+  user: User | null;
+  isLoggedIn: boolean;
+  isLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (userData: UserCreateData) => Promise<void>;
+  logout: () => void;
+  githubLogin: () => void;
+  refreshUser: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -36,7 +66,7 @@ export function AuthProvider({ children }) {
     setUser(userData);
   };
 
-  const login = async (email, password) => {
+  const login = async (email: string, password: string) => {
     try {
       const userData = await apiClient.login({ email, password });
       setUser(userData);
@@ -45,7 +75,7 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const register = async (userData) => {
+  const register = async (userData: UserCreateData) => {
     try {
       const response = await apiClient.register(userData);
       setUser(response);
@@ -78,7 +108,7 @@ export function AuthProvider({ children }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth() {
+export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
