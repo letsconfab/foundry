@@ -263,3 +263,26 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     user_id: Optional[int] = None
+
+
+# LLM Chat Schemas
+class LLMChatMessage(BaseModel):
+    """A single message in an LLM conversation."""
+    role: Literal["user", "assistant", "system"]
+    content: str
+
+
+class LLMChatRequest(BaseModel):
+    """Request schema for LLM chat streaming endpoint."""
+    provider: Literal["anthropic", "openai"]
+    model: Optional[str] = None
+    messages: List[LLMChatMessage]
+    system_prompt: Optional[str] = None
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=4096, ge=1, le=100000)
+
+
+class LLMModelsResponse(BaseModel):
+    """Response schema for available LLM models."""
+    anthropic: List[str]
+    openai: List[str]

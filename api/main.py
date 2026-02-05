@@ -1,17 +1,24 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 import os
+import logging
 from dotenv import load_dotenv
 
 from database import get_db, engine, Base
 from models import User, Confab, GitHubAccount
-from schemas import UserCreate, UserLogin, UserResponse, ConfabCreate, ConfabResponse, GitHubConnect, GitHubLogin, ConfabConfig, SimpleConfabConfig
+from schemas import UserCreate, UserLogin, UserResponse, ConfabCreate, ConfabResponse, GitHubConnect, GitHubLogin, ConfabConfig, SimpleConfabConfig, LLMChatRequest, LLMModelsResponse
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
 from confab_manager import create_confab_in_github, update_confab_in_github, create_github_repository, initialize_confab_repository
+from llm_proxy import LLMProxy, ChatMessage, PURPOSE_AGENT_SYSTEM_PROMPT
+
+# Configure logging to exclude sensitive headers
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -500,6 +507,84 @@ async def test_repo_initialization(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to test repository initialization: {str(e)}"
         )
+
+# ============================================================================
+# LLM Proxy Endpoints
+# ============================================================================
+
+@app.get("/llm/models", response_model=LLMModelsResponse)
+async def get_available_models():
+    """Get available LLM models for each provider."""
+    return LLMModelsResponse(
+        anthropic=LLMProxy.AVAILABLE_MODELS["anthropic"],
+        openai=LLMProxy.AVAILABLE_MODELS["openai"]
+    )
+
+
+@app.post("/llm/chat/stream")
+async def llm_chat_stream(
+    request: LLMChatRequest,
+    x_llm_api_key: str = Header(..., alias="X-LLM-API-Key"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Stream chat completions from LLM providers.
+
+    The API key is passed via X-LLM-API-Key header and is only held in memory
+    during the request - it is NEVER logged or stored.
+
+    Returns: Server-Sent Events (SSE) stream of text chunks
+    """
+    # Log request (WITHOUT the API key)
+    logger.info(f"LLM chat stream request from user {current_user.id}, provider: {request.provider}")
+
+    async def generate():
+        try:
+            # Convert request messages to ChatMessage objects
+            messages = [
+                ChatMessage(role=msg.role, content=msg.content)
+                for msg in request.messages
+            ]
+
+            async for chunk in LLMProxy.stream_chat(
+                provider=request.provider,
+                api_key=x_llm_api_key,  # In-memory only, never stored
+                messages=messages,
+                model=request.model,
+                system_prompt=request.system_prompt,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+            ):
+                # Send chunk as SSE event
+                yield f"data: {chunk}\n\n"
+
+            # Send done signal
+            yield "data: [DONE]\n\n"
+
+        except Exception as e:
+            # Log error (without sensitive details)
+            logger.error(f"LLM stream error for user {current_user.id}: {type(e).__name__}")
+            error_msg = str(e)
+            yield f"data: [ERROR] {error_msg}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+
+
+@app.get("/llm/purpose-agent/system-prompt")
+async def get_purpose_agent_system_prompt(
+    current_user: User = Depends(get_current_user)
+):
+    """Get the system prompt for the Purpose Defining Agent."""
+    return {"system_prompt": PURPOSE_AGENT_SYSTEM_PROMPT}
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -138,6 +138,72 @@ class ApiClient {
   clearToken() {
     localStorage.removeItem('access_token');
   }
+
+  /**
+   * Make a streaming request that returns an async generator of SSE events.
+   * Used for LLM chat streaming.
+   */
+  async *streamRequest(endpoint, options = {}) {
+    const url = `${this.baseURL}${endpoint}`;
+
+    const config = {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    };
+
+    // Add auth token if available
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await fetch(url, config);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              return;
+            }
+            if (data.startsWith('[ERROR]')) {
+              throw new Error(data.slice(8));
+            }
+            yield data;
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  // LLM endpoints
+  async getLLMModels() {
+    return this.request('/llm/models');
+  }
+
+  async getPurposeAgentSystemPrompt() {
+    return this.request('/llm/purpose-agent/system-prompt');
+  }
 }
 
 // Create a singleton instance

@@ -18,6 +18,8 @@ import { Checkbox } from './ui/checkbox';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
+import { LLMSetupFlow } from './LLMSetupFlow';
+import { hasLLMCredentials } from '../utils/llmCredentials';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
@@ -62,17 +64,19 @@ const PROMPT_SUGGESTIONS = [
 ];
 
 const AGENT_CREATION_STEPS = [
-  { id: 1, label: 'Define Purpose', keywords: ['what', 'do', 'help', 'agent', 'create', 'build'] },
-  { id: 2, label: 'Add Participants', keywords: ['participant', 'collaborator', 'team', 'member', 'invite', 'share', 'permission'] },
-  { id: 3, label: 'Configure Memory', keywords: ['memory', 'remember', 'conversation', 'history', 'context'] },
-  { id: 4, label: 'Add Tools & APIs', keywords: ['tool', 'api', 'access', 'integrate', 'connect'] },
-  { id: 5, label: 'Guardrails', keywords: ['guardrail', 'safety', 'limit', 'restrict', 'boundary', 'rule', 'policy'] },
-  { id: 6, label: 'Sample Inputs/Outputs', keywords: ['sample', 'example', 'input', 'output', 'test', 'response', 'demo'] },
-  { id: 7, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
+  { id: 1, label: 'Select LLM Provider', keywords: ['llm', 'provider', 'openai', 'anthropic', 'claude', 'gpt', 'api', 'key'] },
+  { id: 2, label: 'Define Purpose', keywords: ['what', 'do', 'help', 'agent', 'create', 'build'] },
+  { id: 3, label: 'Add Participants', keywords: ['participant', 'collaborator', 'team', 'member', 'invite', 'share', 'permission'] },
+  { id: 4, label: 'Configure Memory', keywords: ['memory', 'remember', 'conversation', 'history', 'context'] },
+  { id: 5, label: 'Add Tools & APIs', keywords: ['tool', 'api', 'access', 'integrate', 'connect'] },
+  { id: 6, label: 'Guardrails', keywords: ['guardrail', 'safety', 'limit', 'restrict', 'boundary', 'rule', 'policy'] },
+  { id: 7, label: 'Sample Inputs/Outputs', keywords: ['sample', 'example', 'input', 'output', 'test', 'response', 'demo'] },
+  { id: 8, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
 ];
 
 export function AgentChat({ onNavigate }: AgentChatProps) {
   const { user } = useAuth();
+  const [llmSetupComplete, setLLMSetupComplete] = useState(() => hasLLMCredentials());
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -85,7 +89,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [currentStep, setCurrentStep] = useState(1);
+  const [currentStep, setCurrentStep] = useState(() => hasLLMCredentials() ? 2 : 1);
   const [isTestingRepo, setIsTestingRepo] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
   const [testError, setTestError] = useState('');
@@ -215,7 +219,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     setIsTestingRepo(true);
     setTestError('');
     setTestResult(null);
-    
+
     try {
       const result = await apiClient.testRepoInitialization();
       setTestResult(result);
@@ -224,6 +228,11 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     } finally {
       setIsTestingRepo(false);
     }
+  };
+
+  const handleLLMSetupComplete = () => {
+    setLLMSetupComplete(true);
+    setCurrentStep(2);
   };
 
   return (
@@ -266,29 +275,40 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
             <h3 className="text-slate-900 mb-3">Configuration Steps</h3>
             <div className="space-y-2">
               {AGENT_CREATION_STEPS.map(step => (
-                <div 
-                  key={step.id} 
-                  className={`text-sm p-3 rounded-lg transition-all ${
-                    step.id === currentStep 
-                      ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300' 
-                      : step.id < currentStep 
-                      ? 'bg-green-50 text-green-700 border border-green-200' 
-                      : 'bg-slate-50 text-slate-500 border border-slate-200'
+                <button
+                  key={step.id}
+                  onClick={() => {
+                    // Allow navigating to current or completed steps
+                    if (step.id <= currentStep) {
+                      setCurrentStep(step.id);
+                      // If going back to step 1, reset LLM setup
+                      if (step.id === 1) {
+                        setLLMSetupComplete(false);
+                      }
+                    }
+                  }}
+                  className={`w-full text-sm p-3 rounded-lg transition-all text-left ${
+                    step.id === currentStep
+                      ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300'
+                      : step.id < currentStep
+                      ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 cursor-pointer'
+                      : 'bg-slate-50 text-slate-500 border border-slate-200 cursor-not-allowed'
                   }`}
+                  disabled={step.id > currentStep}
                 >
                   <div className="flex items-center gap-2">
                     <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
-                      step.id === currentStep 
-                        ? 'bg-indigo-600 text-white' 
-                        : step.id < currentStep 
-                        ? 'bg-green-600 text-white' 
+                      step.id === currentStep
+                        ? 'bg-indigo-600 text-white'
+                        : step.id < currentStep
+                        ? 'bg-green-600 text-white'
                         : 'bg-slate-300 text-white'
                     }`}>
                       {step.id}
                     </div>
                     <span>{step.label}</span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </Card>
@@ -401,6 +421,20 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
 
         {/* Conversation Area */}
         <div className="lg:col-span-2">
+          {/* LLM Setup Flow - shown on step 1 */}
+          {currentStep === 1 && !llmSetupComplete && (
+            <div className="min-h-[600px] flex items-start justify-center pt-8">
+              <div className="w-full max-w-lg">
+                <LLMSetupFlow
+                  onSetupComplete={handleLLMSetupComplete}
+                  onSkip={handleLLMSetupComplete}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Regular Chat Interface - shown after LLM setup */}
+          {(currentStep > 1 || llmSetupComplete) && (
           <Card className="flex flex-col min-h-[600px]">
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
@@ -559,6 +593,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
               </div>
             </div>
           </Card>
+          )}
         </div>
 
         {/* Participants Sidebar */}

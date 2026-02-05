@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Github, Plus, Bot, Shield, Network, Users, Mail, User, ArrowLeft, Folder, FileText, ChevronRight, ChevronDown, ChevronLeft, Menu, MessageSquare, List } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Github, Plus, Bot, Shield, Network, Users, Mail, User, ArrowLeft, Folder, FileText, ChevronRight, ChevronDown, ChevronLeft, Menu, MessageSquare, List, Wand2 } from 'lucide-react';
+import { PurposeDefiningAgent } from './PurposeDefiningAgent';
+import { LLMSetupFlow } from './LLMSetupFlow';
+import { hasLLMCredentials } from '../utils/llmCredentials';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -97,6 +100,37 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
   const [showThreadsList, setShowThreadsList] = useState(false);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
+
+  // Purpose Defining Agent State
+  const [showPurposeAgent, setShowPurposeAgent] = useState(false);
+  const [llmSetupComplete, setLLMSetupComplete] = useState(() => hasLLMCredentials());
+  const [purposeContent, setPurposeContent] = useState(`# ${confabName} Purpose
+
+## Overview
+This confab is designed to assist users with intelligent, context-aware responses for customer support and product inquiries.
+
+## Primary Objectives
+- Provide accurate and helpful responses to customer queries
+- Maintain a professional and friendly tone
+- Escalate complex issues to human agents when necessary
+- Learn from interactions to improve response quality
+
+## Key Capabilities
+- Natural language understanding
+- Multi-turn conversation handling
+- Integration with knowledge base
+- Sentiment analysis and adaptive responses
+
+## Success Metrics
+- Customer satisfaction scores
+- Response accuracy rate
+- Average resolution time
+- Escalation rate
+
+## Constraints
+- Must not provide medical or legal advice
+- Should respect user privacy and data protection
+- Cannot make financial commitments on behalf of the company`);
 
   // Participants State
   const [participants] = useState<Participant[]>([
@@ -452,57 +486,96 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
 
           {/* Step 2: Purpose */}
           {selectedConfigStep === 2 && (
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <FileText className="w-5 h-5 text-slate-900" />
-                <h3 className="text-slate-900">Confab Purpose</h3>
-                <Badge variant="secondary" className="ml-auto text-xs">purpose.md</Badge>
-              </div>
-              
-              <div className="space-y-4">
-                <div>
-                  <Label className="text-sm text-slate-700 mb-2 block">Purpose Definition</Label>
-                  <Textarea 
-                    className="min-h-[400px] font-mono text-sm"
-                    defaultValue={`# ${confabName} Purpose
+            <div className="space-y-4">
+              {/* LLM Setup Flow - shown first if not configured */}
+              {!llmSetupComplete && (
+                <LLMSetupFlow
+                  onSetupComplete={() => setLLMSetupComplete(true)}
+                  onSkip={() => setLLMSetupComplete(true)}
+                />
+              )}
+
+              {/* Purpose Configuration - shown after LLM setup */}
+              {llmSetupComplete && (
+                <Card className="p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <FileText className="w-5 h-5 text-slate-900" />
+                    <h3 className="text-slate-900">Confab Purpose</h3>
+                    <Badge variant="secondary" className="ml-auto text-xs">purpose.md</Badge>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* AI-Assisted Discovery Button */}
+                    <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-lg p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <Wand2 className="w-5 h-5 text-white" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="text-indigo-900 font-medium mb-1">AI-Assisted Discovery</h4>
+                          <p className="text-sm text-indigo-700 mb-3">
+                            Let AI guide you through a conversation to help define your confab's purpose.
+                            It will ask thoughtful questions and generate a structured PURPOSE.md for you.
+                          </p>
+                          <Button
+                            onClick={() => setShowPurposeAgent(true)}
+                            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
+                          >
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            Start AI-Assisted Discovery
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <span className="w-full border-t border-slate-200" />
+                      </div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-white px-2 text-slate-500">or edit manually</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label className="text-sm text-slate-700 mb-2 block">Purpose Definition</Label>
+                      <Textarea
+                        className="min-h-[400px] font-mono text-sm"
+                        value={purposeContent}
+                        onChange={(e) => setPurposeContent(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => setPurposeContent(`# ${confabName} Purpose
 
 ## Overview
-This confab is designed to assist users with intelligent, context-aware responses for customer support and product inquiries.
+This confab is designed to assist users with intelligent, context-aware responses.
 
 ## Primary Objectives
-- Provide accurate and helpful responses to customer queries
-- Maintain a professional and friendly tone
-- Escalate complex issues to human agents when necessary
-- Learn from interactions to improve response quality
+- Define your objectives here
 
 ## Key Capabilities
-- Natural language understanding
-- Multi-turn conversation handling
-- Integration with knowledge base
-- Sentiment analysis and adaptive responses
+- List capabilities here
 
 ## Success Metrics
-- Customer satisfaction scores
-- Response accuracy rate
-- Average resolution time
-- Escalation rate
+- Define success metrics
 
 ## Constraints
-- Must not provide medical or legal advice
-- Should respect user privacy and data protection
-- Cannot make financial commitments on behalf of the company`}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1">
-                    Reset to Default
-                  </Button>
-                  <Button className="flex-1">
-                    Save Purpose
-                  </Button>
-                </div>
-              </div>
-            </Card>
+- List constraints here`)}
+                      >
+                        Reset to Default
+                      </Button>
+                      <Button className="flex-1">
+                        Save Purpose
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              )}
+            </div>
           )}
 
           {/* Step 3: Participants */}
@@ -1276,6 +1349,17 @@ This confab is designed to assist users with intelligent, context-aware response
           </Card>
         </div>
       </div>
+
+      {/* Purpose Defining Agent Dialog */}
+      <PurposeDefiningAgent
+        open={showPurposeAgent}
+        onOpenChange={setShowPurposeAgent}
+        confabName={confabName}
+        onPurposeGenerated={(content) => {
+          setPurposeContent(content);
+          setShowPurposeAgent(false);
+        }}
+      />
     </div>
   );
 }
