@@ -8,9 +8,10 @@ Foundry is the monorepo for **Let's Confab** — a platform for building, saving
 
 1. **Democratize AI agent creation** — Provide a guided, conversational interface that walks users through defining an AI agent step-by-step, without requiring deep technical expertise.
 2. **Version-controlled agent definitions** — Store every confab as structured files (TOML + Markdown) in GitHub repositories, giving users full ownership, auditability, and collaboration via pull requests.
-3. **Multi-provider flexibility** — Support multiple LLM providers (OpenAI, Anthropic, Google, Cohere) and cloud deployment targets (AWS, Azure, GCP, DigitalOcean), letting users choose the stack that fits their needs.
-4. **Local-first execution** — Allow users to run confabs entirely on their own device using Ollama with open-source LLM models (e.g., Llama, Mistral, Gemma) as the inference engine, paired with agent runtimes such as LangChain, LangGraph, CrewAI, or AutoGen. No cloud API keys or external services required.
-5. **Multi-agent orchestration** — Enable users to compose systems of multiple confabs that interact, with configurable participant roles, moderator rules, and conflict resolution.
+3. **LLM Agnostic** — BYOK (Bring Your Own Key). Support multiple LLM providers (OpenAI, Anthropic, Google, Cohere) so users can plug in their own API keys and choose the model that fits their needs.
+4. **Multiple Cloud Targets** — Deploy confabs to any major cloud provider (AWS, Azure, GCP, DigitalOcean), letting users choose the infrastructure that fits their requirements.
+5. **Local-first execution** — Allow users to run confabs entirely on their own device using Ollama with open-source LLM models (e.g., Llama, Mistral, Gemma) as the inference engine, paired with agent runtimes such as LangChain, LangGraph, CrewAI, or AutoGen. No cloud API keys or external services required.
+6. **Multi-agent orchestration** — Enable users to compose systems of multiple confabs that interact, with configurable participant roles, moderator rules, and conflict resolution.
 
 ## What Is a Confab?
 
