@@ -231,3 +231,7 @@ Managed by `AuthContext` which:
 - Feature branches with descriptive names.
 - Confabs stored in GitHub repos via branch + pull request workflow.
 - No CI/CD pipeline currently configured.
+
+### Secrets
+
+- **Never store secrets in code.** API keys, OAuth credentials, JWT signing keys, database passwords, and any other sensitive values must never appear in source files, configuration files that are committed, or anywhere else that could be seen by others. Always use `.env` files (which are gitignored) or a dedicated secrets manager. If a secret is accidentally committed, treat it as compromised and rotate it immediately.
