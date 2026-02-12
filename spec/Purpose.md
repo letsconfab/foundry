@@ -9,7 +9,8 @@ Foundry is the monorepo for **Let's Confab** — a platform for building, saving
 1. **Democratize AI agent creation** — Provide a guided, conversational interface that walks users through defining an AI agent step-by-step, without requiring deep technical expertise.
 2. **Version-controlled agent definitions** — Store every confab as structured files (TOML + Markdown) in GitHub repositories, giving users full ownership, auditability, and collaboration via pull requests.
 3. **Multi-provider flexibility** — Support multiple LLM providers (OpenAI, Anthropic, Google, Cohere) and cloud deployment targets (AWS, Azure, GCP, DigitalOcean), letting users choose the stack that fits their needs.
-4. **Multi-agent orchestration** — Enable users to compose systems of multiple confabs that interact, with configurable participant roles, moderator rules, and conflict resolution.
+4. **Local-first execution** — Allow users to run confabs entirely on their own device using Ollama with open-source LLM models (e.g., Llama, Mistral, Gemma) as the inference engine, paired with agent runtimes such as LangChain, LangGraph, CrewAI, or AutoGen. No cloud API keys or external services required.
+5. **Multi-agent orchestration** — Enable users to compose systems of multiple confabs that interact, with configurable participant roles, moderator rules, and conflict resolution.
 
 ## What Is a Confab?
 
@@ -29,3 +30,4 @@ Each confab is created on its own branch and submitted as a pull request, enabli
 - Developers and teams who want to define AI agents declaratively and manage them like code.
 - Organizations that need auditable, reviewable, and version-controlled AI configurations.
 - Non-technical users who benefit from the guided chat-based agent creation wizard.
+- Privacy-conscious users who want to run AI agents locally without sending data to external APIs.
