@@ -51,6 +51,13 @@
 - **Cloud provider selection** — AWS, Azure, GCP, DigitalOcean with region selection.
 - **LLM provider selection** — OpenAI, Anthropic, Google, Cohere with model selection.
 
+### Chat Interface (Backend)
+
+- **LangChain runtime** — Chat interactions are powered by LangChain as the agent runtime.
+- **Persistent chat history** — All messages are persisted in the database and associated with a specific confab. History survives across sessions.
+- **Topic-based threads** — Each confab has a dedicated thread for every high-level configuration topic (e.g., Define Purpose, Add Participants, Configure Memory, Add Tools & APIs, Guardrails, Sample Inputs/Outputs, Review & Save). Threads keep conversations organized by concern.
+- **Cross-thread references** — Users can address and post to other threads from within a given thread, enabling cross-topic context sharing without leaving the current conversation.
+
 ### Chat Interface (Frontend)
 
 - **Confab chat** — Message interface for interacting with a deployed confab.
