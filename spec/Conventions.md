@@ -227,6 +227,7 @@ Managed by `AuthContext` which:
 
 ### Git Workflow
 
+- **Never push directly to `main`.** All changes — whether to spec documents, generated code, or application code — must be committed to a feature branch and submitted as a pull request. Direct commits to `main` are not permitted.
 - Feature branches with descriptive names.
 - Confabs stored in GitHub repos via branch + pull request workflow.
 - No CI/CD pipeline currently configured.
