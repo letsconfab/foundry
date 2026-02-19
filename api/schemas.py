@@ -26,6 +26,16 @@ class UserResponse(UserBase):
     class Config:
         from_attributes = True
 
+
+class UserListItem(BaseModel):
+    """Safe user fields for participants/list (from users table)."""
+    id: int
+    name: str
+    email: str
+
+    class Config:
+        from_attributes = True
+
 # GitHub schemas
 class GitHubUser(BaseModel):
     id: int
@@ -255,6 +265,87 @@ class ConfabResponse(ConfabBase):
 
     class Config:
         from_attributes = True
+
+# Thread schemas (table 2: thread_id, thread_name, createdAt, owner_user_id)
+class ThreadBase(BaseModel):
+    thread_name: str
+
+class ThreadCreate(ThreadBase):
+    pass
+
+class ThreadResponse(ThreadBase):
+    id: int
+    created_at: datetime
+    owner_user_id: int
+
+    class Config:
+        from_attributes = True
+
+
+# Message schemas (table 3: id, thread_id, content, time)
+class MessageBase(BaseModel):
+    content: str
+    role: Optional[Literal["user", "assistant"]] = "user"
+
+class MessageCreate(MessageBase):
+    pass
+
+class MessageResponse(BaseModel):
+    id: int
+    thread_id: int
+    content: str
+    time: datetime
+    role: Optional[str] = "user"
+
+    class Config:
+        from_attributes = True
+
+
+# === [CLAUDE: Thread Mapping Schemas - Maps confabs to threads] ===
+class ThreadMappingCreate(BaseModel):
+    """Create a mapping between a confab and a thread"""
+    confab_id: int
+    thread_id: int
+
+class ThreadMappingResponse(BaseModel):
+    """Response for thread mapping"""
+    id: int
+    confab_id: int
+    thread_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# === [CLAUDE: Ollama API Schemas for dynamic chat responses] ===
+class OllamaRequest(BaseModel):
+    """Request to Ollama API for generating chat responses"""
+    model: str = Field(..., description="Model name (e.g., 'gemma3:4b')")
+    prompt: str = Field(..., description="User prompt to send to the model")
+    stream: bool = Field(default=False, description="Whether to stream the response")
+    temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
+
+class OllamaResponse(BaseModel):
+    """Response from Ollama API"""
+    model: str
+    created_at: Optional[str] = None
+    response: str
+    done: bool = False
+
+class ChatRequest(BaseModel):
+    """Request for chat completion using Ollama"""
+    thread_id: int
+    message: str
+    confab_id: Optional[int] = None
+
+class ChatResponse(BaseModel):
+    """Response for chat completion"""
+    thread_id: int
+    message_id: int
+    response: str
+    timestamp: datetime
+
 
 # Auth schemas
 class Token(BaseModel):

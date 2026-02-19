@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Github, Plus, Bot, Shield, Network, Users, Mail, User, TestTube, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from './ui/button';
@@ -19,7 +20,7 @@ import { Avatar, AvatarFallback } from './ui/avatar';
 import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'review-chats';
 
 interface AgentChatProps {
   onNavigate: (view: View, confabName?: string) => void;
@@ -42,16 +43,6 @@ interface AgentNode {
   id: string;
   name: string;
   role: string;
-}
-
-interface Participant {
-  id: string;
-  name: string;
-  email?: string;
-  role: 'owner' | 'admin' | 'editor' | 'viewer';
-  avatar?: string;
-  isOnline: boolean;
-  type: 'user' | 'confab';
 }
 
 const PROMPT_SUGGESTIONS = [
@@ -89,6 +80,23 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
   const [isTestingRepo, setIsTestingRepo] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
   const [testError, setTestError] = useState('');
+  /** Thread id for storing this conversation in DB (threads + messages tables). */
+  const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
+
+  // [CLAUDE: IMPLEMENTATION - Create confab_id on page load and link to thread_mapping]
+  // Stores the confab (agent configuration) ID created when entering this page
+  const [currentConfabId, setCurrentConfabId] = useState<number | null>(null);
+  const [isConfabCreating, setIsConfabCreating] = useState(false);
+  // === [CLAUDE: ADDED state for confab builder inputs] ===
+  const [purposeText, setPurposeText] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [repoOwnerInput, setRepoOwnerInput] = useState('');
+  const [repoNameInput, setRepoNameInput] = useState('');
+  const [memoryEnabledLocal, setMemoryEnabledLocal] = useState(true);
+  const [memoryNotes, setMemoryNotes] = useState('');
+  const [guardrailsText, setGuardrailsText] = useState('');
+  const [sampleIO, setSampleIO] = useState('');
+  const [saveResult, setSaveResult] = useState<any>(null);
   
   // Multi-Agent State
   const [multiAgentNodes, setMultiAgentNodes] = useState<AgentNode[]>([]);
@@ -98,6 +106,55 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
   const [maxTurnsPerAgent, setMaxTurnsPerAgent] = useState('3');
   const [githubConnected, setGithubConnected] = useState(false);
 
+  // === [CLAUDE: Ollama-related state for dynamic chat] ===
+  const [ollamaHealthy, setOllamaHealthy] = useState(false);
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
+
+  // Check Ollama health on component mount
+  useEffect(() => {
+    const checkOllama = async () => {
+      try {
+        const health = await apiClient.ollamaHealthCheck();
+        setOllamaHealthy(health.healthy);
+        if (!health.healthy) {
+          setOllamaError('Ollama service is not available. Running at http://localhost:11434');
+        }
+      } catch (error) {
+        setOllamaHealthy(false);
+        setOllamaError('Could not connect to Ollama service');
+      }
+    };
+    checkOllama();
+
+    // [CLAUDE: IMPLEMENTATION - Create confab on page load]
+    // This creates a confab entry in the database when entering @agentchat page
+    // The confab_id will be linked to the thread via thread_mapping on first message
+    const createInitialConfab = async () => {
+      if (isConfabCreating) return; // Prevent duplicate creation
+      
+      try {
+        setIsConfabCreating(true);
+        const confabName = `Agent Chat – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
+        const confab = await apiClient.createConfab({
+          name: confabName,
+          description: 'Auto-generated confab for agent chat conversation',
+        });
+        
+        if (confab?.id) {
+          setCurrentConfabId(confab.id);
+          console.log('[CLAUDE: IMPLEMENTATION] Confab created with ID:', confab.id);
+        }
+      } catch (error) {
+        console.error('[CLAUDE: IMPLEMENTATION] Error creating confab:', error);
+        // Continue gracefully - confab creation is optional for demo
+      } finally {
+        setIsConfabCreating(false);
+      }
+    };
+    
+    createInitialConfab();
+  }, []);
+
   // Determine GitHub repo naming convention
   const getRepoNamingConvention = () => {
     if (user?.github_connected) {
@@ -106,17 +163,6 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
       return 'letsconfab/confabs (for email users)';
     }
   };
-
-  // Participants State
-  const [participants] = useState<Participant[]>([
-    { id: '1', name: 'John Smith', email: 'john@example.com', role: 'owner', isOnline: true, type: 'user' },
-    { id: '2', name: 'Sarah Chen', email: 'sarah@example.com', role: 'editor', isOnline: true, type: 'user' },
-    { id: '3', name: 'Mike Johnson', email: 'mike@example.com', role: 'viewer', isOnline: false, type: 'user' },
-    { id: '4', name: 'Customer Support Bot', role: 'admin', isOnline: true, type: 'confab' },
-    { id: '5', name: 'Data Analyzer', role: 'editor', isOnline: true, type: 'confab' },
-    { id: '6', name: 'Code Review Assistant', role: 'viewer', isOnline: false, type: 'confab' },
-  ]);
-  const [currentUser] = useState('John Smith');
 
   const availableAgents = [
     { id: '1', name: 'Customer Support Agent', role: 'Support' },
@@ -132,13 +178,14 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     scrollToBottom();
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim()) return;
+    const content = input.trim();
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input,
+      content,
       timestamp: new Date(),
     };
 
@@ -146,26 +193,119 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     setInput('');
     setIsTyping(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const responses = [
-        "Great! I'm building a confab that can help with that. What LLM provider would you prefer? We support OpenAI, Anthropic, Google AI, and more.",
-        "Perfect! I'm configuring those capabilities now. Would you like this confab to have memory of past conversations?",
-        "Excellent choice! Your confab is taking shape. Should it have access to any specific tools or APIs?",
-        "Looking good! Let me summarize what we've built so far and you can review the configuration.",
-      ];
-      
+    // === [CLAUDE: Initialize or use existing thread for conversation storage] ===
+    let tid = currentThreadId;
+    if (tid == null) {
+      try {
+        const name = `Create Confab – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
+        const thread = await apiClient.createThread(name);
+        tid = thread?.id ?? null;
+        if (tid != null) setCurrentThreadId(tid);
+        if (tid != null && messages[0]?.role === 'assistant') {
+          await apiClient.addMessage(tid, messages[0].content, 'assistant');
+        }
+
+        // [CLAUDE: IMPLEMENTATION - Create thread_mapping on first message]
+        // Links the confab (created when entering page) to the thread (created when sending first message)
+        // This establishes the relationship: confab_id -> thread_id in thread_mapping table
+        if (tid != null && currentConfabId != null) {
+          try {
+            const mapping = await apiClient.createThreadMapping(currentConfabId, tid);
+            console.log('[CLAUDE: IMPLEMENTATION] Thread mapping created:', mapping);
+          } catch (mappingError) {
+            console.error('[CLAUDE: IMPLEMENTATION] Error creating thread mapping:', mappingError);
+            // Continue gracefully - the thread is still created even if mapping fails
+          }
+        } else if (tid != null && currentConfabId == null) {
+          console.warn('[CLAUDE: IMPLEMENTATION] Thread created but confab_id is missing:', {
+            threadId: tid,
+            confabId: currentConfabId,
+          });
+        }
+      } catch {
+        tid = null;
+      }
+    }
+
+    // === [CLAUDE: Store user message in database if thread exists] ===
+    if (tid != null) {
+      apiClient.addMessage(tid, content, 'user').catch(() => {});
+    }
+
+    // === [CLAUDE: Generate AI response from Ollama API] ===
+    try {
+      let assistantContent = '';
+
+      if (!ollamaHealthy) {
+        assistantContent = "I notice that the Ollama service is not currently available. Please ensure Ollama is running at http://localhost:11434 and try again. In the meantime, I can provide general guidance about confab configuration.";
+      } else {
+        try {
+          // Call the new Ollama-powered chat endpoint
+          if (tid != null) {
+            const response = await apiClient.chatWithOllama(tid, content);
+            assistantContent = response.assistant_message?.content || "I couldn't generate a response. Please try again.";
+          } else {
+            // Fallback: use direct Ollama generation if no thread
+            const response = await apiClient.ollamaGenerateResponse(
+              `User asked: ${content}\n\nProvide a helpful response about building an AI confab:`
+            );
+            assistantContent = response.response || "I couldn't generate a response. Please try again.";
+          }
+        } catch (error: any) {
+          console.error('[CLAUDE: Ollama API error]', error);
+          assistantContent = `I encountered an error: ${error.message || 'Unable to generate response from Ollama'}. Please try again or check if Ollama is running.`;
+          setOllamaError(error.message);
+        }
+      }
+
+      setIsTyping(false);
+
+      // === [CLAUDE: Add AI response to messages state] ===
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: responses[messages.filter(m => m.role === 'user').length % responses.length],
+        content: assistantContent,
         timestamp: new Date(),
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+      updateStep(assistantContent);
+
+      // === [CLAUDE: ADDED] If current step fields are missing, ask a targeted follow-up question ===
+      const followUps:any = {
+        1: () => !purposeText && "Can you briefly describe the primary purpose of this confab? (This will be saved to PURPOSE.md)",
+        3: () => memoryEnabledLocal && !memoryNotes && "What should the agent remember across conversations? Provide short notes for memory.",
+        4: () => (!apiKey && !repoOwnerInput && !repoNameInput) && "If you want the agent to use external tools, provide an API key or repository owner/name to save the confab.",
+        5: () => !guardrailsText && "Any guardrails to enforce? (e.g., do not provide legal advice, avoid personal data)",
+        6: () => !sampleIO && "Can you provide one or two sample inputs and expected outputs to help generate tests/examples?"
+      };
+
+      const follow = followUps[currentStep]?.();
+      if (follow) {
+        const followMessage: Message = {
+          id: (Date.now() + 2).toString(),
+          role: 'assistant',
+          content: follow,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, followMessage]);
+      }
+
+      // === [CLAUDE: Store AI response in database if thread exists] ===
+      if (tid != null) {
+        apiClient.addMessage(tid, assistantContent, 'assistant').catch(() => {});
+      }
+    } catch (error) {
+      console.error('[CLAUDE: Error in handleSend]', error);
       setIsTyping(false);
-      updateStep(assistantMessage.content);
-    }, 1000);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `Error: Failed to generate response. ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -223,6 +363,59 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
       setTestError(error.message || 'Failed to test repository initialization');
     } finally {
       setIsTestingRepo(false);
+    }
+  };
+
+  // === [CLAUDE: ADDED] Save confab handler that compiles collected inputs and calls createConfab ===
+  const handleSaveConfab = async () => {
+    setIsConfabCreating(true);
+    setSaveResult(null);
+
+    try {
+      const confabName = `Confab - ${new Date().toLocaleString()}`;
+      const confabDescription = purposeText || 'Created via agent chat';
+
+      const confabConfig: any = {
+        conversation: {
+          system_prompt: purposeText || 'You are an assistant for this confab.',
+          memory_enabled: memoryEnabledLocal,
+        },
+        integrations: {
+          apis: []
+        },
+        custom_settings: {
+          sample_io: sampleIO,
+          guardrails: guardrailsText,
+          memory_notes: memoryNotes
+        }
+      };
+
+      if (apiKey) {
+        confabConfig.integrations.apis.push({ name: 'custom_api', key: apiKey });
+      }
+
+      // If user entered explicit repo owner / name, attach into custom settings so backend may use it
+      if (repoOwnerInput || repoNameInput) {
+        confabConfig.custom_settings.repo_override = {
+          owner: repoOwnerInput,
+          repo: repoNameInput
+        };
+      }
+
+      const response = await apiClient.createConfab({
+        name: confabName,
+        description: confabDescription,
+        config: confabConfig
+      });
+
+      setSaveResult(response);
+      if (response?.id) {
+        setCurrentConfabId(response.id);
+      }
+    } catch (error:any) {
+      setSaveResult({ error: error.message || 'Failed to save confab' });
+    } finally {
+      setIsConfabCreating(false);
     }
   };
 
@@ -294,6 +487,25 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
           </Card>
 
           {/* Add Collaborators Step */}
+          {/* Define Purpose Step */}
+          {currentStep >= 1 && (
+            <Card className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-5 h-5 text-slate-900" />
+                <h3 className="text-slate-900">Define Purpose</h3>
+              </div>
+              <div className="space-y-3">
+                <Textarea
+                  value={purposeText}
+                  onChange={(e) => setPurposeText(e.target.value)}
+                  placeholder="Describe the purpose of this confab (this will be written to PURPOSE.md)"
+                  className="text-sm min-h-[80px]"
+                />
+                <p className="text-xs text-slate-600">This will be saved to the repository as PURPOSE.md inside the confab directory.</p>
+              </div>
+            </Card>
+          )}
+
           {currentStep >= 2 && (
             <Card className="p-4">
               <div className="flex items-center gap-2 mb-3">
@@ -331,6 +543,29 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
             </Card>
           )}
 
+          {/* Configure Memory Step */}
+          {currentStep >= 3 && (
+            <Card className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Shield className="w-5 h-5 text-slate-900" />
+                <h3 className="text-slate-900">Configure Memory</h3>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox checked={memoryEnabledLocal} onCheckedChange={(v:any) => setMemoryEnabledLocal(!!v)} />
+                  <Label className="text-sm">Enable long-term memory</Label>
+                </div>
+                <Textarea
+                  value={memoryNotes}
+                  onChange={(e) => setMemoryNotes(e.target.value)}
+                  placeholder="Notes about what the agent should remember (optional)"
+                  className="text-sm min-h-[80px]"
+                />
+                <p className="text-xs text-slate-600">Memory helps the agent remember important details across conversations.</p>
+              </div>
+            </Card>
+          )}
+
           {/* GitHub Repository Information */}
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-3">
@@ -338,6 +573,36 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
               <h3 className="text-slate-900">Repository Configuration</h3>
             </div>
             <div className="space-y-3">
+              {/* === [CLAUDE: Ollama Service Status Display] === */}
+              {!ollamaHealthy && (
+                <div className="p-3 bg-yellow-50 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1">
+                    <AlertCircle className="w-4 h-4 text-yellow-600" />
+                    <span className="text-sm font-medium text-yellow-800">
+                      Ollama Service Status
+                    </span>
+                  </div>
+                  <p className="text-sm text-yellow-700">{ollamaError || 'Ollama is not available'}</p>
+                  <p className="text-xs text-yellow-600 mt-1">
+                    Ensure Ollama is running at http://localhost:11434 for dynamic chat responses
+                  </p>
+                </div>
+              )}
+              
+              {ollamaHealthy && (
+                <div className="p-3 bg-green-50 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <span className="text-sm font-medium text-green-800">
+                      Ollama Service Active
+                    </span>
+                  </div>
+                  <p className="text-xs text-green-600">
+                    Using model: gemma3:4b | Connection: http://localhost:11434
+                  </p>
+                </div>
+              )}
+
               <div className="p-3 bg-blue-50 rounded-lg">
                 <p className="text-sm text-blue-800">
                   <strong>Repository Naming Convention:</strong>
@@ -346,6 +611,36 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
                   {getRepoNamingConvention()}
                 </p>
               </div>
+
+              {/* === [CLAUDE: ADDED Tools & APIs inputs for Step 4] === */}
+              {currentStep >= 4 && (
+                <div className="mt-3">
+                  <Label className="text-xs">API Key / Tool Secret</Label>
+                  <Input
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    type="password"
+                    placeholder="Optional: paste API key for external tool"
+                    className="mt-1 text-sm"
+                  />
+
+                  <div className="flex gap-2 mt-2">
+                    <Input
+                      value={repoOwnerInput}
+                      onChange={(e) => setRepoOwnerInput(e.target.value)}
+                      placeholder="Repository owner (optional)"
+                      className="text-sm"
+                    />
+                    <Input
+                      value={repoNameInput}
+                      onChange={(e) => setRepoNameInput(e.target.value)}
+                      placeholder="Repository name (optional)"
+                      className="text-sm"
+                    />
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1">If provided, these values will be used when creating the confab files (overrides connected GitHub settings).</p>
+                </div>
+              )}
               
               <div className="flex items-center gap-2">
                 <Button
@@ -361,6 +656,19 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
                 <span className="text-sm text-slate-600">
                   Initialize repository with dummy data
                 </span>
+
+                {currentStep >= 7 && (
+                  <div className="ml-2">
+                    <Button
+                      onClick={handleSaveConfab}
+                      disabled={isConfabCreating}
+                      size="sm"
+                      className="gap-2"
+                    >
+                      {isConfabCreating ? 'Saving...' : 'Save & Create'}
+                    </Button>
+                  </div>
+                )}
               </div>
               
               {testResult && (
@@ -393,6 +701,31 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
                     </span>
                   </div>
                   <p className="text-sm text-red-700">{testError}</p>
+                </div>
+              )}
+
+              {/* === [CLAUDE: ADDED Guardrails (Step 5) and Samples (Step 6) inside repo card] === */}
+              {currentStep >= 5 && (
+                <div className="p-3 bg-slate-50 rounded-lg mt-3">
+                  <h4 className="text-sm font-medium mb-2">Guardrails</h4>
+                  <Textarea
+                    value={guardrailsText}
+                    onChange={(e) => setGuardrailsText(e.target.value)}
+                    placeholder="Optional: add guardrails that will be saved to GUARDRAILS.md"
+                    className="text-sm min-h-[80px]"
+                  />
+                </div>
+              )}
+
+              {currentStep >= 6 && (
+                <div className="p-3 bg-slate-50 rounded-lg mt-3">
+                  <h4 className="text-sm font-medium mb-2">Sample Inputs / Outputs</h4>
+                  <Textarea
+                    value={sampleIO}
+                    onChange={(e) => setSampleIO(e.target.value)}
+                    placeholder={'Examples:\nUser: How do I reset my password?\nAssistant: Ask the user to confirm email...'}
+                    className="text-sm min-h-[80px]"
+                  />
                 </div>
               )}
             </div>
@@ -442,7 +775,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
                           <User className="w-4 h-4 text-slate-600" />
                         </AvatarFallback>
                       </Avatar>
-                      <span className="text-xs text-slate-600">{currentUser}</span>
+                      <span className="text-xs text-slate-600">{user?.name ?? 'You'}</span>
                     </div>
                   )}
                 </div>
@@ -492,6 +825,11 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
                   >
                     <Save className="w-5 h-5" />
                   </Button>
+                  {currentThreadId && (
+                    <span className="text-xs text-emerald-600 self-center" title="Conversation saved to Review Chats">
+                      Saved
+                    </span>
+                  )}
                 </div>
               </div>
               <p className="text-xs text-slate-500 mt-2">
@@ -561,45 +899,30 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
           </Card>
         </div>
 
-        {/* Participants Sidebar */}
+        {/* Participants Sidebar — logged-in user only (name + email from users table) */}
         <div className="lg:col-span-1">
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-4">
               <Users className="w-5 h-5 text-slate-900" />
               <h3 className="text-slate-900">Participants</h3>
-              <Badge variant="secondary" className="ml-auto">{participants.length}</Badge>
             </div>
-            <div className="space-y-3">
-              {participants.map((participant) => (
-                <div key={participant.id} className="flex items-center gap-3">
-                  <div className="relative">
-                    <Avatar className="w-9 h-9">
-                      <AvatarFallback className={`${
-                        participant.type === 'confab'
-                          ? 'bg-purple-100 text-purple-700'
-                          : participant.role === 'owner' 
-                          ? 'bg-indigo-100 text-indigo-700' 
-                          : 'bg-slate-200 text-slate-700'
-                      }`}>
-                        {participant.type === 'confab' ? <Bot className="w-4 h-4" /> : participant.name.split(' ').map(n => n[0]).join('')}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${
-                      participant.isOnline ? 'bg-green-500' : 'bg-slate-400'
-                    }`} />
-                  </div>
+            {user ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-50 ring-1 ring-indigo-200">
+                  <Avatar className="w-9 h-9">
+                    <AvatarFallback className="bg-indigo-200 text-indigo-700">
+                      {user.name.split(' ').map(n => n[0]).join('') || '?'}
+                    </AvatarFallback>
+                  </Avatar>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm text-slate-900 truncate">{participant.name}</p>
-                      {participant.type === 'confab' && (
-                        <Badge variant="secondary" className="text-[10px] h-4 px-1">Confab</Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-500 capitalize">{participant.role}</p>
+                    <p className="text-sm font-medium text-slate-900 truncate">{user.name}</p>
+                    <p className="text-xs text-slate-500 truncate">{user.email}</p>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500 py-2">Sign in to see your profile.</p>
+            )}
           </Card>
         </div>
       </div>

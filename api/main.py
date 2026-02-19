@@ -7,11 +7,18 @@ import os
 from dotenv import load_dotenv
 
 from database import get_db, engine, Base
-from models import User, Confab, GitHubAccount
-from schemas import UserCreate, UserLogin, UserResponse, ConfabCreate, ConfabResponse, GitHubConnect, GitHubLogin, ConfabConfig, SimpleConfabConfig
+from models import User, Confab, GitHubAccount, Thread, Message, ThreadMapping
+from schemas import (
+    UserCreate, UserLogin, UserResponse, UserListItem, ConfabCreate, ConfabResponse,
+    GitHubConnect, GitHubLogin, ConfabConfig, SimpleConfabConfig,
+    ThreadCreate, ThreadResponse, MessageCreate, MessageResponse,
+    ThreadMappingCreate, ThreadMappingResponse, OllamaRequest, OllamaResponse,
+)
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
 from confab_manager import create_confab_in_github, update_confab_in_github, create_github_repository, initialize_confab_repository
+# === [CLAUDE: Import Ollama service for dynamic chat responses] ===
+from ollama_service import ask_ollama, ollama_client
 
 # Load environment variables
 load_dotenv()
@@ -30,7 +37,7 @@ allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
 allowed_origins = (
     [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
     if allowed_origins_env
-    else ["http://localhost:3000"]
+    else ["http://localhost:3002"]
 )
 app.add_middleware(
     CORSMiddleware,
@@ -154,6 +161,16 @@ async def get_current_user_info(
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
     )
+
+
+@app.get("/users", response_model=list[UserListItem])
+async def list_users(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List users from the users table (for participants). Returns id, name, email only."""
+    users = db.query(User).order_by(User.name).all()
+    return [UserListItem.model_validate(u) for u in users]
 
 @app.post("/auth/github/connect")
 async def connect_github(
@@ -432,6 +449,95 @@ async def delete_confab(
     
     return {"message": "Confab deleted successfully"}
 
+
+# --- Threads & Messages (review chats) ---
+# Table 2: threads (thread_id/id, thread_name, createdAt, owner_user_id)
+# Table 3: messages (id, thread_id, content, time)
+
+@app.get("/threads", response_model=list[ThreadResponse])
+async def list_threads(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List all chat threads for the current user (for reviewing chats)."""
+    threads = db.query(Thread).filter(Thread.owner_user_id == current_user.id).order_by(Thread.created_at.desc()).all()
+    return [ThreadResponse.model_validate(t) for t in threads]
+
+
+@app.post("/threads", response_model=ThreadResponse)
+async def create_thread(
+    body: ThreadCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new chat thread."""
+    db_thread = Thread(
+        thread_name=body.thread_name,
+        owner_user_id=current_user.id,
+    )
+    db.add(db_thread)
+    db.commit()
+    db.refresh(db_thread)
+    return ThreadResponse.model_validate(db_thread)
+
+
+@app.get("/threads/{thread_id}", response_model=ThreadResponse)
+async def get_thread(
+    thread_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a single thread (for review)."""
+    thread = db.query(Thread).filter(
+        Thread.id == thread_id,
+        Thread.owner_user_id == current_user.id
+    ).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return ThreadResponse.model_validate(thread)
+
+
+@app.get("/threads/{thread_id}/messages", response_model=list[MessageResponse])
+async def list_messages(
+    thread_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List messages in a thread (for reviewing chats)."""
+    thread = db.query(Thread).filter(
+        Thread.id == thread_id,
+        Thread.owner_user_id == current_user.id
+    ).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.time).all()
+    return [MessageResponse.model_validate(m) for m in messages]
+
+
+@app.post("/threads/{thread_id}/messages", response_model=MessageResponse)
+async def add_message(
+    thread_id: int,
+    body: MessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Add a message to a thread."""
+    thread = db.query(Thread).filter(
+        Thread.id == thread_id,
+        Thread.owner_user_id == current_user.id
+    ).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    db_message = Message(
+        thread_id=thread_id,
+        content=body.content,
+        role=body.role or "user",
+    )
+    db.add(db_message)
+    db.commit()
+    db.refresh(db_message)
+    return MessageResponse.model_validate(db_message)
+
 @app.post("/confabs/test-repo")
 async def test_repo_initialization(
     current_user: User = Depends(get_current_user),
@@ -500,6 +606,238 @@ async def test_repo_initialization(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to test repository initialization: {str(e)}"
         )
+
+
+# === [CLAUDE: Ollama API Endpoints for Dynamic Chat Responses] ===
+# These endpoints handle interactions with the Ollama LLM service
+
+@app.get("/ollama/health")
+async def ollama_health_check():
+    """
+    Check if Ollama service is running and accessible.
+    Returns health status indicating if Ollama is available.
+    """
+    is_healthy = await ollama_client.health_check()
+    return {
+        "status": "healthy" if is_healthy else "unavailable",
+        "ollama_url": ollama_client.base_url,
+        "model": ollama_client.model,
+        "healthy": is_healthy
+    }
+
+
+@app.get("/ollama/models")
+async def ollama_list_models():
+    """
+    Get list of available models in Ollama.
+    """
+    try:
+        models = await ollama_client.list_models()
+        return models
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Cannot connect to Ollama: {str(e)}"
+        )
+
+
+@app.post("/ollama/generate")
+async def ollama_generate(request: OllamaRequest):
+    """
+    Generate a response from Ollama using the provided prompt.
+    
+    [CLAUDE: Direct endpoint for generating text with Ollama, useful for testing]
+    """
+    try:
+        response = await ask_ollama(
+            prompt=request.prompt,
+            temperature=request.temperature
+        )
+        return {
+            "model": ollama_client.model,
+            "response": response,
+            "success": True
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Ollama service error: {str(e)}"
+        )
+
+
+@app.post("/threads/{thread_id}/chat")
+async def chat_with_ollama(
+    thread_id: int,
+    request: MessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    [CLAUDE: Main chat endpoint - takes user message, generates response from Ollama, and stores both in DB]
+    
+    This endpoint:
+    1. Validates the thread belongs to the current user
+    2. Stores the user's message in the database
+    3. Calls Ollama to generate a response based on message history
+    4. Stores the AI response in the database
+    5. Returns both messages to the client
+    """
+    # Validate thread ownership
+    thread = db.query(Thread).filter(
+        Thread.id == thread_id,
+        Thread.owner_user_id == current_user.id
+    ).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    
+    # [CLAUDE: Store user message in database]
+    user_message = Message(
+        thread_id=thread_id,
+        content=request.content,
+        role="user"
+    )
+    db.add(user_message)
+    db.commit()
+    db.refresh(user_message)
+    
+    # [CLAUDE: Build context from message history for Ollama prompt]
+    messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.time).all()
+    
+    # Build prompt with conversation context
+    context_prompt = "Based on the following conversation, provide a helpful and coherent response.\n\n"
+    for msg in messages[-10:]:  # Use last 10 messages for context
+        role = "User" if msg.role == "user" else "Assistant"
+        context_prompt += f"{role}: {msg.content}\n"
+    
+    try:
+        # [CLAUDE: Generate response from Ollama using the full context]
+        ai_response = await ask_ollama(
+            prompt=context_prompt,
+            temperature=0.7
+        )
+        
+        # [CLAUDE: Store AI response in database]
+        assistant_message = Message(
+            thread_id=thread_id,
+            content=ai_response,
+            role="assistant"
+        )
+        db.add(assistant_message)
+        db.commit()
+        db.refresh(assistant_message)
+        
+        return {
+            "user_message": MessageResponse.model_validate(user_message),
+            "assistant_message": MessageResponse.model_validate(assistant_message),
+            "success": True
+        }
+    except Exception as e:
+        # [CLAUDE: If Ollama fails, still return the user message but with error for assistant]
+        error_message = Message(
+            thread_id=thread_id,
+            content=f"Error: Could not generate response - {str(e)}",
+            role="assistant"
+        )
+        db.add(error_message)
+        db.commit()
+        db.refresh(error_message)
+        
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Ollama service error: {str(e)}"
+        )
+
+
+@app.post("/thread-mappings", response_model=ThreadMappingResponse)
+async def create_thread_mapping(
+    mapping: ThreadMappingCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    [CLAUDE: Create a mapping between a confab and a thread]
+    
+    This links a conversation thread to a specific confab so we can track
+    which confab a conversation belongs to.
+    """
+    # Validate confab ownership
+    confab = db.query(Confab).filter(
+        Confab.id == mapping.confab_id,
+        Confab.user_id == current_user.id
+    ).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    
+    # Validate thread ownership
+    thread = db.query(Thread).filter(
+        Thread.id == mapping.thread_id,
+        Thread.owner_user_id == current_user.id
+    ).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    
+    # Create mapping
+    db_mapping = ThreadMapping(
+        confab_id=mapping.confab_id,
+        thread_id=mapping.thread_id
+    )
+    db.add(db_mapping)
+    db.commit()
+    db.refresh(db_mapping)
+    
+    return ThreadMappingResponse.model_validate(db_mapping)
+
+
+@app.get("/thread-mappings")
+async def list_thread_mappings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    [CLAUDE: List all thread mappings for the current user's confabs and threads]
+    """
+    # Get all confabs for the user
+    user_confab_ids = db.query(Confab.id).filter(Confab.user_id == current_user.id).all()
+    user_confab_ids = [c[0] for c in user_confab_ids]
+    
+    # Get all threads for the user
+    user_thread_ids = db.query(Thread.id).filter(Thread.owner_user_id == current_user.id).all()
+    user_thread_ids = [t[0] for t in user_thread_ids]
+    
+    # Get mappings that involve the user's confabs and threads
+    mappings = db.query(ThreadMapping).filter(
+        ThreadMapping.confab_id.in_(user_confab_ids) if user_confab_ids else False,
+        ThreadMapping.thread_id.in_(user_thread_ids) if user_thread_ids else False
+    ).all()
+    
+    return [ThreadMappingResponse.model_validate(m) for m in mappings]
+
+
+@app.get("/confab/{confab_id}/threads")
+async def get_confab_threads(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    [CLAUDE: Get all threads mapped to a specific confab]
+    """
+    # Validate confab ownership
+    confab = db.query(Confab).filter(
+        Confab.id == confab_id,
+        Confab.user_id == current_user.id
+    ).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    
+    # Get all thread mappings for this confab
+    mappings = db.query(ThreadMapping).filter(ThreadMapping.confab_id == confab_id).all()
+    thread_ids = [m.thread_id for m in mappings]
+    
+    # Get the threads
+    threads = db.query(Thread).filter(Thread.id.in_(thread_ids)) if thread_ids else []
+    
+    return [ThreadResponse.model_validate(t) for t in threads]
 
 if __name__ == "__main__":
     import uvicorn

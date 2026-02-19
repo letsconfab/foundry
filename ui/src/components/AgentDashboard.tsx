@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState } from 'react';
 import { Plus, Bot, MoreVertical, Share2, StopCircle, Trash2, Cloud, MessageSquare, Settings } from 'lucide-react';
 import { Button } from './ui/button';

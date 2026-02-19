@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState } from 'react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
@@ -27,28 +28,34 @@ export function Register({ onNavigate }: RegisterProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Register: Form submitted');
     setError('');
     setSuccess('');
     
     // Validation
     if (!name || !email || !password || !country || !timezone) {
+      console.log('Register: Validation failed - missing fields');
       setError('Please fill in all fields');
       return;
     }
     
     if (password !== confirmPassword) {
+      console.log('Register: Validation failed - passwords do not match');
       setError('Passwords do not match');
       return;
     }
     
     if (password.length < 6) {
+      console.log('Register: Validation failed - password too short');
       setError('Password must be at least 6 characters long');
       return;
     }
 
+    console.log('Register: Validation passed, calling register function');
     setIsLoading(true);
     
     try {
+      console.log('Register: About to call register API with:', { name, email, country, timezone });
       await register({
         name,
         email,
@@ -56,13 +63,16 @@ export function Register({ onNavigate }: RegisterProps) {
         country,
         timezone
       });
+      console.log('Register: Register API call successful');
       setSuccess('Account created successfully! Redirecting to your dashboard...');
       window.setTimeout(() => {
         onNavigate('dashboard');
       }, 600);
     } catch (err: any) {
+      console.error('Register: Register API call failed:', err);
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
+      console.log('Register: Setting isLoading to false');
       setIsLoading(false);
     }
   };

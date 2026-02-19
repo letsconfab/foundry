@@ -1,4 +1,6 @@
+import React from 'react';
 import { MessageSquare, Cloud, Zap, Network, ArrowRight, Bot, Users, Rocket } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 
@@ -9,6 +11,7 @@ interface HeroSectionProps {
 }
 
 export function HeroSection({ onNavigate }: HeroSectionProps) {
+  const { isLoggedIn } = useAuth();
   const features = [
     {
       icon: MessageSquare,
@@ -54,7 +57,8 @@ export function HeroSection({ onNavigate }: HeroSectionProps) {
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
             <Button
               size="lg"
-              onClick={() => onNavigate('create')}
+              // onClick={() => onNavigate('create')}
+              onClick={() => onNavigate(isLoggedIn ? 'create' : 'login')}
               className="gap-2 group"
             >
               Create Your First Confab
@@ -63,7 +67,7 @@ export function HeroSection({ onNavigate }: HeroSectionProps) {
             <Button
               size="lg"
               variant="outline"
-              onClick={() => onNavigate('dashboard')}
+              onClick={() => onNavigate(isLoggedIn ? 'dashboard' : 'login')}
             >
               View Dashboard
             </Button>

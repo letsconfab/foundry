@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Header } from './components/Header';
@@ -11,10 +12,11 @@ import { Register } from './components/Register';
 import { ConfabChat } from './components/ConfabChat';
 import { ConfigureConfab } from './components/ConfigureConfab';
 import { ConfigureConfabWithThreads } from './components/ConfigureConfabWithThreads';
+import { ReviewChats } from './components/ReviewChats';
 import { GitHubCallback } from './components/GitHubCallback';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat' | 'configure';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat' | 'configure' | 'review-chats';
 
 function AppContent() {
   const { isLoggedIn, isLoading, user } = useAuth();
@@ -73,6 +75,7 @@ function AppContent() {
                 {currentView === 'multi-agent' && <MultiAgentBuilder onNavigate={handleNavigate} />}
                 {currentView === 'confab-chat' && <ConfabChat onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} />}
                 {currentView === 'configure' && <ConfigureConfabWithThreads onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} />}
+                {currentView === 'review-chats' && <ReviewChats onNavigate={handleNavigate} />}
               </main>
             </>
           } />

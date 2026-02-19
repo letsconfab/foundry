@@ -1,5 +1,6 @@
+import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, ThumbsUp, ThumbsDown, ArrowLeft, Bot, User, Users } from 'lucide-react';
+import { Send, ThumbsUp, ThumbsDown, ArrowLeft, Bot, User, Users, Save, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -13,13 +14,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
+import { apiClient } from '../api/client.js';
+import { useAuth } from '../contexts/AuthContext';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure' | 'review-chats';
 
 interface ConfabChatProps {
   onNavigate: (view: View) => void;
   confabName: string;
   version: string;
+  /** When set, load messages from this thread and persist new messages to DB */
+  threadId?: number | null;
 }
 
 interface Message {
@@ -31,14 +36,15 @@ interface Message {
 }
 
 interface Participant {
-  id: string;
+  id: number | string;
   name: string;
   email?: string;
   avatar?: string;
-  isOnline: boolean;
+  isOnline?: boolean;
+  isCurrentUser?: boolean;
 }
 
-export function ConfabChat({ onNavigate, confabName, version }: ConfabChatProps) {
+export function ConfabChat({ onNavigate, confabName, version, threadId: threadIdProp }: ConfabChatProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -53,14 +59,58 @@ export function ConfabChat({ onNavigate, confabName, version }: ConfabChatProps)
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [savingToChats, setSavingToChats] = useState(false);
+  /** Thread id from API: either passed in (review) or auto-created on first send. Used to persist every message. */
+  const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  /** Participants loaded from users table */
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [participantsLoading, setParticipantsLoading] = useState(true);
+  const { user: currentUser } = useAuth();
 
-  // Participants connected to this chat
-  const [participants] = useState<Participant[]>([
-    { id: '1', name: 'You', isOnline: true },
-    { id: '2', name: 'John Smith', email: 'john@example.com', isOnline: true },
-    { id: '3', name: 'Sarah Chen', email: 'sarah@example.com', isOnline: false },
-  ]);
+  const effectiveThreadId = threadIdProp ?? currentThreadId;
+
+  // Load messages from DB when threadId is provided (review/continue chat)
+  useEffect(() => {
+    if (threadIdProp == null) return;
+    apiClient.getThreadMessages(threadIdProp).then((list) => {
+      if (!Array.isArray(list) || list.length === 0) return;
+      const loaded: Message[] = list.map((m) => ({
+        id: String(m.id),
+        role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+        content: m.content,
+        timestamp: new Date(m.time),
+        feedback: null,
+      }));
+      setMessages(loaded);
+    }).catch(() => {});
+  }, [threadIdProp]);
+
+  // Load participants from users table
+  useEffect(() => {
+    let cancelled = false;
+    setParticipantsLoading(true);
+    apiClient
+      .getUsers()
+      .then((list) => {
+        if (cancelled || !Array.isArray(list)) return;
+        const currentId = currentUser?.id;
+        const mapped: Participant[] = list.map((u) => ({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          isCurrentUser: u.id === currentId,
+        }));
+        setParticipants(mapped);
+      })
+      .catch(() => {
+        if (!cancelled) setParticipants([]);
+      })
+      .finally(() => {
+        if (!cancelled) setParticipantsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [currentUser?.id]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -72,11 +122,11 @@ export function ConfabChat({ onNavigate, confabName, version }: ConfabChatProps)
 
   const handleSend = async () => {
     if (!input.trim()) return;
-
+    const content = input.trim();
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input,
+      content,
       timestamp: new Date(),
     };
 
@@ -84,18 +134,60 @@ export function ConfabChat({ onNavigate, confabName, version }: ConfabChatProps)
     setInput('');
     setIsTyping(true);
 
-    // Simulate AI response
+    let tid = effectiveThreadId;
+    if (tid == null) {
+      try {
+        const name = `${confabName} – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
+        const thread = await apiClient.createThread(name);
+        tid = thread?.id ?? null;
+        if (tid != null) setCurrentThreadId(tid);
+        if (tid != null && messages[0]?.role === 'assistant') {
+          await apiClient.addMessage(tid, messages[0].content, 'assistant');
+        }
+      } catch {
+        tid = null;
+      }
+    }
+    if (tid != null) {
+      apiClient.addMessage(tid, content, 'user').catch(() => {});
+    }
+
+    const assistantContent = `I understand you're asking about "${content}". Let me help you with that. This is a demo response to show how the chat interface works with feedback buttons.`;
     setTimeout(() => {
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `I understand you're asking about "${input}". Let me help you with that. This is a demo response to show how the chat interface works with feedback buttons.`,
+        content: assistantContent,
         timestamp: new Date(),
         feedback: null,
       };
       setMessages((prev) => [...prev, assistantMessage]);
       setIsTyping(false);
+      if (tid != null) {
+        apiClient.addMessage(tid, assistantContent, 'assistant').catch(() => {});
+      }
     }, 1500);
+  };
+
+  const handleSaveToMyChats = async () => {
+    if (messages.length === 0) return;
+    setSavingToChats(true);
+    try {
+      const name = `${confabName} – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
+      const thread = await apiClient.createThread(name);
+      const tid = thread?.id;
+      if (tid) {
+        for (const m of messages) {
+          if (m.role === 'assistant' && m.content === `Hello! I'm ${confabName}. How can I help you today?`) continue;
+          await apiClient.addMessage(tid, m.content, m.role);
+        }
+        onNavigate('review-chats');
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSavingToChats(false);
+    }
   };
 
   const handleFeedback = (messageId: string, feedback: 'up' | 'down') => {
@@ -152,6 +244,18 @@ export function ConfabChat({ onNavigate, confabName, version }: ConfabChatProps)
                 <p className="text-sm text-slate-500">Online</p>
               </div>
             </div>
+            {!effectiveThreadId && messages.length > 1 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                disabled={savingToChats}
+                onClick={handleSaveToMyChats}
+              >
+                {savingToChats ? <span className="animate-pulse">Saving…</span> : <Save className="w-4 h-4" />}
+                Save to my chats
+              </Button>
+            )}
           </div>
         </div>
 
@@ -286,46 +390,59 @@ export function ConfabChat({ onNavigate, confabName, version }: ConfabChatProps)
         </div>
       </div>
 
-      {/* Participants Sidebar */}
+      {/* Participants Sidebar — loaded from users table */}
       <div className="hidden lg:block w-80 bg-white border-l border-slate-200 overflow-y-auto">
         <div className="p-6">
           <div className="flex items-center gap-2 mb-6">
             <Users className="w-5 h-5 text-slate-600" />
             <h3 className="text-slate-900">Participants</h3>
-            <span className="ml-auto text-sm text-slate-500">
-              {participants.filter(p => p.isOnline).length} online
-            </span>
+            {!participantsLoading && (
+              <span className="ml-auto text-sm text-slate-500">
+                {participants.length} user{participants.length !== 1 ? 's' : ''}
+              </span>
+            )}
           </div>
 
-          <div className="space-y-3">
-            {participants.map((participant) => (
-              <div
-                key={participant.id}
-                className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition-colors"
-              >
-                <div className="relative">
-                  <Avatar className="w-10 h-10">
-                    <AvatarFallback className="bg-indigo-100 text-indigo-600">
-                      {participant.name.split(' ').map(n => n[0]).join('')}
-                    </AvatarFallback>
-                  </Avatar>
-                  {participant.isOnline && (
-                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-slate-900 truncate">
-                    {participant.name}
-                  </p>
-                  {participant.email && (
-                    <p className="text-xs text-slate-500 truncate">
-                      {participant.email}
+          {participantsLoading ? (
+            <div className="flex items-center gap-2 text-slate-500 py-4">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading…
+            </div>
+          ) : participants.length === 0 ? (
+            <p className="text-sm text-slate-500 py-4">No users yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {participants.map((participant) => (
+                <div
+                  key={participant.id}
+                  className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
+                    participant.isCurrentUser ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="relative">
+                    <Avatar className="w-10 h-10">
+                      <AvatarFallback className={participant.isCurrentUser ? 'bg-indigo-200 text-indigo-700' : 'bg-indigo-100 text-indigo-600'}>
+                        {participant.name.split(' ').map(n => n[0]).join('') || '?'}
+                      </AvatarFallback>
+                    </Avatar>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-slate-900 truncate flex items-center gap-1.5">
+                      {participant.name}
+                      {participant.isCurrentUser && (
+                        <span className="text-xs text-indigo-600 font-medium">(you)</span>
+                      )}
                     </p>
-                  )}
+                    {participant.email && (
+                      <p className="text-xs text-slate-500 truncate">
+                        {participant.email}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

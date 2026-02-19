@@ -1,4 +1,5 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+console.log('API Client: API_BASE_URL set to:', API_BASE_URL);
 
 class ApiClient {
   constructor() {
@@ -7,7 +8,8 @@ class ApiClient {
 
   async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
-    
+    console.log('API Client: Request method called for:', url, 'with options:', options);
+
     const config = {
       headers: {
         'Content-Type': 'application/json',
@@ -23,17 +25,30 @@ class ApiClient {
     }
 
     try {
+      console.log('API Client: About to fetch:', url);
       const response = await fetch(url, config);
-      
+      console.log('API Client: Fetch response received:', response.status, response.statusText);
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+        let errorData = {};
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          // If body isn't JSON, fall back to text for debugging-friendly message.
+          const text = await response.text();
+          errorData = { message: text };
+        }
+        const errorMessage = errorData.detail || errorData.message || `HTTP ${response.status}: ${response.statusText}`;
+        throw new Error(errorMessage);
       }
 
-      return await response.json();
+      const data = await response.json();
+      console.log('API Client: Request successful, returning data:', data);
+      return data;
     } catch (error) {
+      console.error('API Client: Request failed:', error);
       if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        throw new Error('Network error. Please check your connection and ensure the backend server is running.');
+        throw new Error(`Network error: Cannot connect to API at ${url}. Please check your connection and ensure the backend server is running at ${this.baseURL}.`);
       }
       throw error;
     }
@@ -41,13 +56,19 @@ class ApiClient {
 
   // Auth endpoints
   async register(userData) {
+    console.log('API Client: Register called with:', { ...userData, password: '***' });
+    console.log('API Client: Making request to:', `${this.baseURL}/auth/register`);
+    
     const response = await this.request('/auth/register', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
 
+    console.log('API Client: Register response received:', response);
+
     // Store token in localStorage
     if (response.access_token) {
+      console.log('API Client: Storing access token in localStorage');
       localStorage.setItem('access_token', response.access_token);
     }
 
@@ -70,6 +91,10 @@ class ApiClient {
 
   async getCurrentUser() {
     return this.request('/auth/me');
+  }
+
+  async getUsers() {
+    return this.request('/users');
   }
 
   getGitHubAuthUrl() {
@@ -135,9 +160,85 @@ class ApiClient {
     });
   }
 
+  // Threads & messages (review chats) — tables: users, threads, messages
+  async getThreads() {
+    return this.request('/threads');
+  }
+
+  async createThread(threadName) {
+    return this.request('/threads', {
+      method: 'POST',
+      body: JSON.stringify({ thread_name: threadName }),
+    });
+  }
+
+  async getThread(threadId) {
+    return this.request(`/threads/${threadId}`);
+  }
+
+  async getThreadMessages(threadId) {
+    return this.request(`/threads/${threadId}/messages`);
+  }
+
+  async addMessage(threadId, content, role = 'user') {
+    return this.request(`/threads/${threadId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content, role }),
+    });
+  }
+
+  // === [CLAUDE: Ollama API endpoints for dynamic chat responses] ===
+  
+  async chatWithOllama(threadId, message) {
+    console.log('API Client: Chatting with Ollama for thread:', threadId);
+    return this.request(`/threads/${threadId}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ content: message, role: 'user' }),
+    });
+  }
+
+  async ollamaHealthCheck() {
+    try {
+      return await this.request('/ollama/health');
+    } catch (error) {
+      console.error('API Client: Ollama health check failed:', error);
+      return { status: 'unavailable', healthy: false };
+    }
+  }
+
+  async ollamaGenerateResponse(prompt) {
+    console.log('API Client: Generating Ollama response');
+    return this.request('/ollama/generate', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, stream: false }),
+    });
+  }
+
+  async ollamaListModels() {
+    return this.request('/ollama/models');
+  }
+
+  // === [CLAUDE: Thread mapping endpoints] ===
+  
+  async createThreadMapping(confabId, threadId) {
+    return this.request('/thread-mappings', {
+      method: 'POST',
+      body: JSON.stringify({ confab_id: confabId, thread_id: threadId }),
+    });
+  }
+
+  async getThreadMappings() {
+    return this.request('/thread-mappings');
+  }
+
+  async getConfabThreads(confabId) {
+    return this.request(`/confab/${confabId}/threads`);
+  }
+
   clearToken() {
     localStorage.removeItem('access_token');
   }
+
 }
 
 // Create a singleton instance
