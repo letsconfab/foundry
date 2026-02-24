@@ -273,7 +273,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
 
       // === [CLAUDE: ADDED] If current step fields are missing, ask a targeted follow-up question ===
       const followUps:any = {
-        1: () => !purposeText && "Can you briefly describe the primary purpose of this confab? (This will be saved to PURPOSE.md)",
+        // 1: () => !purposeText && "Can you briefly describe the primary purpose of this confab? (This will be saved to PURPOSE.md)",
         3: () => memoryEnabledLocal && !memoryNotes && "What should the agent remember across conversations? Provide short notes for memory.",
         4: () => (!apiKey && !repoOwnerInput && !repoNameInput) && "If you want the agent to use external tools, provide an API key or repository owner/name to save the confab.",
         5: () => !guardrailsText && "Any guardrails to enforce? (e.g., do not provide legal advice, avoid personal data)",
@@ -488,12 +488,12 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
 
           {/* Add Collaborators Step */}
           {/* Define Purpose Step */}
-          {currentStep >= 1 && (
+          {/* {currentStep >= 1 && (
             <Card className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-5 h-5 text-slate-900" />
-                <h3 className="text-slate-900">Define Purpose</h3>
-              </div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="w-5 h-5 text-slate-900" />
+                  <h3 className="text-slate-900">Define Purpose</h3>
+                </div>
               <div className="space-y-3">
                 <Textarea
                   value={purposeText}
@@ -504,9 +504,9 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
                 <p className="text-xs text-slate-600">This will be saved to the repository as PURPOSE.md inside the confab directory.</p>
               </div>
             </Card>
-          )}
+          )} */}
 
-          {currentStep >= 2 && (
+          {/* {currentStep >= 2 && (
             <Card className="p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Users className="w-5 h-5 text-slate-900" />
@@ -541,10 +541,10 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
                 </div>
               </div>
             </Card>
-          )}
+          )} */}
 
           {/* Configure Memory Step */}
-          {currentStep >= 3 && (
+          {/* {currentStep >= 3 && (
             <Card className="p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Shield className="w-5 h-5 text-slate-900" />
@@ -564,7 +564,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
                 <p className="text-xs text-slate-600">Memory helps the agent remember important details across conversations.</p>
               </div>
             </Card>
-          )}
+          )} */}
 
           {/* GitHub Repository Information */}
           <Card className="p-4">
