@@ -2,8 +2,10 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Dict, Any
+
 import os
+import json, re
 from dotenv import load_dotenv
 
 from database import get_db, engine, Base
@@ -17,6 +19,11 @@ from schemas import (
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
 from confab_manager import create_confab_in_github, update_confab_in_github, create_github_repository, initialize_confab_repository
+# import the setup-step tools so we can execute them when the agent asks
+from agent_tools import (
+    define_purpose, add_participant, configure_memory, add_tools_and_apis,
+    guardrails, sample_io, review_and_save
+)
 # === [CLAUDE: Import Ollama service for dynamic chat responses] ===
 from ollama_service import ask_ollama, ollama_client
 
@@ -665,6 +672,69 @@ async def ollama_generate(request: OllamaRequest):
         )
 
 
+# System prompt that instructs the LLM how to behave during the confab setup conversation.
+SYSTEM_PROMPT = """You are a Confab Setup Agent.
+
+You must:
+- Detect which setup step the user is working on
+- Call the correct tool
+- Update step progress
+- Guide user to next step
+
+Available steps:
+1 Define Purpose
+2 Add Participants
+3 Configure Memory
+4 Add Tools & APIs
+5 Guardrails
+6 Sample Inputs/Outputs
+7 Review & Save
+"""
+
+
+def _parse_tool_call(text: str) -> Optional[Dict[str, Any]]:
+    """Look for a JSON-like tool call in the model output.
+
+    The agent is instructed to emit a JSON object such as:
+    {"tool": "define_purpose", "args": {"confab_id":123, "purpose_text":"..."}}
+    The function returns the parsed dictionary or None if nothing relevant is found.
+    """
+    try:
+        obj = json.loads(text.strip())
+        if isinstance(obj, dict) and "tool" in obj:
+            return obj
+    except Exception:
+        pass
+    # fallback: search for embedded JSON blob
+    m = re.search(r"\{\s*\"tool\".*\}", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+    return None
+
+
+def _execute_tool(tool_name: str, args: Dict[str, Any], db: Session) -> str:
+    """Dispatch helper to run one of the agent_tools functions."""
+    if tool_name == "define_purpose":
+        return define_purpose(db, args.get("confab_id"), args.get("purpose_text", ""))
+    elif tool_name == "add_participant":
+        return add_participant(db, args.get("confab_id"), args.get("email", ""))
+    elif tool_name == "configure_memory":
+        return configure_memory(db, args.get("confab_id"), args.get("memory_notes", ""), args.get("enable", True))
+    elif tool_name == "add_tools_and_apis":
+        return add_tools_and_apis(db, args.get("confab_id"), args.get("tool_name", ""), args.get("api_key", ""))
+    elif tool_name == "guardrails":
+        return guardrails(db, args.get("confab_id"), args.get("guardrails_text", ""))
+    elif tool_name == "sample_io":
+        return sample_io(db, args.get("confab_id"), args.get("sample_text", ""))
+    elif tool_name == "review_and_save":
+        return review_and_save(db, args.get("confab_id"))
+    else:
+        return f"Unknown tool: {tool_name}"
+
+
 @app.post("/threads/{thread_id}/chat")
 async def chat_with_ollama(
     thread_id: int,
@@ -674,7 +744,7 @@ async def chat_with_ollama(
 ):
     """
     [CLAUDE: Main chat endpoint - takes user message, generates response from Ollama, and stores both in DB]
-    
+
     This endpoint:
     1. Validates the thread belongs to the current user
     2. Stores the user's message in the database
@@ -689,7 +759,7 @@ async def chat_with_ollama(
     ).first()
     if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    
+
     # [CLAUDE: Store user message in database]
     user_message = Message(
         thread_id=thread_id,
@@ -699,24 +769,57 @@ async def chat_with_ollama(
     db.add(user_message)
     db.commit()
     db.refresh(user_message)
-    
+
     # [CLAUDE: Build context from message history for Ollama prompt]
     messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.time).all()
-    
+
     # Build prompt with conversation context
-    context_prompt = "Based on the following conversation, provide a helpful and coherent response.\n\n"
+    context_prompt = SYSTEM_PROMPT + "\n\nBased on the following conversation, provide a helpful and coherent response.\n\n"
     for msg in messages[-10:]:  # Use last 10 messages for context
         role = "User" if msg.role == "user" else "Assistant"
         context_prompt += f"{role}: {msg.content}\n"
-    
+
     try:
         # [CLAUDE: Generate response from Ollama using the full context]
         ai_response = await ask_ollama(
             prompt=context_prompt,
             temperature=0.7
         )
-        
-        # [CLAUDE: Store AI response in database]
+
+        # check for a tool call in the text
+        tool_instr = _parse_tool_call(ai_response)
+        if tool_instr:
+            tool_result = _execute_tool(tool_instr.get("tool"), tool_instr.get("args", {}), db)
+            # compute progress summary from confab config if available
+            try:
+                cid = int(tool_instr.get("args", {}).get("confab_id"))
+                confab = db.query(Confab).filter(Confab.id == cid).first()
+                if confab:
+                    cfg = confab.config or {}
+                    completed = cfg.get("setup_steps_completed", [])
+                    remaining = [i for i in range(1, 8) if i not in completed]
+                    tool_result += f"\n[progress] completed steps: {completed}, remaining: {remaining}"
+            except Exception:
+                pass
+
+            # store the tool output as its own message in the thread
+            tool_message = Message(
+                thread_id=thread_id,
+                content=f"[tool:{tool_instr.get('tool')}] {tool_result}",
+                role="assistant"
+            )
+            db.add(tool_message)
+            db.commit()
+            db.refresh(tool_message)
+
+            # call the model again to continue conversation after tool
+            context_prompt += f"Assistant: {ai_response}\nTool output: {tool_result}\n"
+            ai_response = await ask_ollama(
+                prompt=context_prompt,
+                temperature=0.7
+            )
+
+        # [CLAUDE: Store final AI response in database]
         assistant_message = Message(
             thread_id=thread_id,
             content=ai_response,
@@ -725,12 +828,15 @@ async def chat_with_ollama(
         db.add(assistant_message)
         db.commit()
         db.refresh(assistant_message)
-        
-        return {
+
+        response_payload = {
             "user_message": MessageResponse.model_validate(user_message),
             "assistant_message": MessageResponse.model_validate(assistant_message),
             "success": True
         }
+        if tool_instr and tool_message is not None:
+            response_payload["tool_message"] = MessageResponse.model_validate(tool_message)
+        return response_payload
     except Exception as e:
         # [CLAUDE: If Ollama fails, still return the user message but with error for assistant]
         error_message = Message(
@@ -741,7 +847,7 @@ async def chat_with_ollama(
         db.add(error_message)
         db.commit()
         db.refresh(error_message)
-        
+
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Ollama service error: {str(e)}"

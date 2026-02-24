@@ -165,7 +165,7 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                   Deploy
                 </Button>
               )}
-              <Button
+              {/* <Button
                 variant="outline"
                 size="sm"
                 className="flex-1 gap-2"
@@ -173,7 +173,7 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
               >
                 <Settings className="w-3 h-3" />
                 Configure
-              </Button>
+              </Button> */}
             </div>
           </Card>
         ))}

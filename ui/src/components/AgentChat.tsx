@@ -1,21 +1,10 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Github, Plus, Bot, Shield, Network, Users, Mail, User, TestTube, CheckCircle, AlertCircle } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, TestTube, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
-import { Progress } from './ui/progress';
-import { Label } from './ui/label';
-import { Input } from './ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select';
-import { Checkbox } from './ui/checkbox';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
@@ -45,6 +34,25 @@ interface AgentNode {
   role: string;
 }
 
+// the server prepends the following system prompt to every chat request:
+//
+// You are a Confab Setup Agent.
+//
+// You must:
+// - Detect which setup step the user is working on
+// - Call the correct tool
+// - Update step progress
+// - Guide user to next step
+//
+// Available steps:
+// 1 Define Purpose
+// 2 Add Participants
+// 3 Configure Memory
+// 4 Add Tools & APIs
+// 5 Guardrails
+// 6 Sample Inputs/Outputs
+// 7 Review & Save
+
 const PROMPT_SUGGESTIONS = [
   "Create a customer support agent that handles refunds and returns",
   "Build an agent that analyzes sales data and generates weekly reports",
@@ -52,15 +60,6 @@ const PROMPT_SUGGESTIONS = [
   "Create an agent that summarizes meeting transcripts",
 ];
 
-const AGENT_CREATION_STEPS = [
-  { id: 1, label: 'Define Purpose', keywords: ['what', 'do', 'help', 'agent', 'create', 'build'] },
-  { id: 2, label: 'Add Participants', keywords: ['participant', 'collaborator', 'team', 'member', 'invite', 'share', 'permission'] },
-  { id: 3, label: 'Configure Memory', keywords: ['memory', 'remember', 'conversation', 'history', 'context'] },
-  { id: 4, label: 'Add Tools & APIs', keywords: ['tool', 'api', 'access', 'integrate', 'connect'] },
-  { id: 5, label: 'Guardrails', keywords: ['guardrail', 'safety', 'limit', 'restrict', 'boundary', 'rule', 'policy'] },
-  { id: 6, label: 'Sample Inputs/Outputs', keywords: ['sample', 'example', 'input', 'output', 'test', 'response', 'demo'] },
-  { id: 7, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
-];
 
 export function AgentChat({ onNavigate }: AgentChatProps) {
   const { user } = useAuth();
@@ -68,7 +67,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     {
       id: '1',
       role: 'assistant',
-      content: "Hi! I'm your AI confab builder assistant. Let's create an amazing AI confab together. Tell me what you'd like your confab to do, and I'll help you configure it step by step.",
+      content: "Hi! I'm your AI confab builder assistant. Let's build your confab step by step through conversation.",
       timestamp: new Date(),
     },
   ]);
@@ -76,35 +75,25 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [currentStep, setCurrentStep] = useState(1);
-  const [isTestingRepo, setIsTestingRepo] = useState(false);
-  const [testResult, setTestResult] = useState<any>(null);
-  const [testError, setTestError] = useState('');
   /** Thread id for storing this conversation in DB (threads + messages tables). */
   const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
 
   // [CLAUDE: IMPLEMENTATION - Create confab_id on page load and link to thread_mapping]
-  // Stores the confab (agent configuration) ID created when entering this page
   const [currentConfabId, setCurrentConfabId] = useState<number | null>(null);
   const [isConfabCreating, setIsConfabCreating] = useState(false);
-  // === [CLAUDE: ADDED state for confab builder inputs] ===
-  const [purposeText, setPurposeText] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [repoOwnerInput, setRepoOwnerInput] = useState('');
-  const [repoNameInput, setRepoNameInput] = useState('');
-  const [memoryEnabledLocal, setMemoryEnabledLocal] = useState(true);
-  const [memoryNotes, setMemoryNotes] = useState('');
-  const [guardrailsText, setGuardrailsText] = useState('');
-  const [sampleIO, setSampleIO] = useState('');
-  const [saveResult, setSaveResult] = useState<any>(null);
   
-  // Multi-Agent State
+  // Multi-Agent State (if we ever support it)
   const [multiAgentNodes, setMultiAgentNodes] = useState<AgentNode[]>([]);
   const [moderatorRules, setModeratorRules] = useState('');
   const [tieBreaker, setTieBreaker] = useState('');
   const [enableConflictResolution, setEnableConflictResolution] = useState(true);
   const [maxTurnsPerAgent, setMaxTurnsPerAgent] = useState('3');
   const [githubConnected, setGithubConnected] = useState(false);
+
+  // repository test helpers (same as ConfabConfigForm)
+  const [isTestingRepo, setIsTestingRepo] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
+  const [testError, setTestError] = useState('');
 
   // === [CLAUDE: Ollama-related state for dynamic chat] ===
   const [ollamaHealthy, setOllamaHealthy] = useState(false);
@@ -161,6 +150,20 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
       return 'username/confabs (will be set based on your GitHub username)';
     } else {
       return 'letsconfab/confabs (for email users)';
+    }
+  };
+
+  const handleTestRepo = async () => {
+    setIsTestingRepo(true);
+    setTestError('');
+    setTestResult(null);
+    try {
+      const result = await apiClient.testRepoInitialization();
+      setTestResult(result);
+    } catch (error: any) {
+      setTestError(error.message || 'Failed to test repository initialization');
+    } finally {
+      setIsTestingRepo(false);
     }
   };
 
@@ -235,6 +238,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     // === [CLAUDE: Generate AI response from Ollama API] ===
     try {
       let assistantContent = '';
+      let response: any = null;
 
       if (!ollamaHealthy) {
         assistantContent = "I notice that the Ollama service is not currently available. Please ensure Ollama is running at http://localhost:11434 and try again. In the meantime, I can provide general guidance about confab configuration.";
@@ -242,11 +246,11 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
         try {
           // Call the new Ollama-powered chat endpoint
           if (tid != null) {
-            const response = await apiClient.chatWithOllama(tid, content);
+            response = await apiClient.chatWithOllama(tid, content);
             assistantContent = response.assistant_message?.content || "I couldn't generate a response. Please try again.";
           } else {
             // Fallback: use direct Ollama generation if no thread
-            const response = await apiClient.ollamaGenerateResponse(
+            response = await apiClient.ollamaGenerateResponse(
               `User asked: ${content}\n\nProvide a helpful response about building an AI confab:`
             );
             assistantContent = response.response || "I couldn't generate a response. Please try again.";
@@ -261,6 +265,17 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
       setIsTyping(false);
 
       // === [CLAUDE: Add AI response to messages state] ===
+      // if the backend returned a tool_message, display it first
+      if (response && response.tool_message) {
+        const toolMsg: Message = {
+          id: `tool-${Date.now()}`,
+          role: 'assistant',
+          content: response.tool_message.content,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, toolMsg]);
+      }
+
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -269,27 +284,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-      updateStep(assistantContent);
-
-      // === [CLAUDE: ADDED] If current step fields are missing, ask a targeted follow-up question ===
-      const followUps:any = {
-        // 1: () => !purposeText && "Can you briefly describe the primary purpose of this confab? (This will be saved to PURPOSE.md)",
-        3: () => memoryEnabledLocal && !memoryNotes && "What should the agent remember across conversations? Provide short notes for memory.",
-        4: () => (!apiKey && !repoOwnerInput && !repoNameInput) && "If you want the agent to use external tools, provide an API key or repository owner/name to save the confab.",
-        5: () => !guardrailsText && "Any guardrails to enforce? (e.g., do not provide legal advice, avoid personal data)",
-        6: () => !sampleIO && "Can you provide one or two sample inputs and expected outputs to help generate tests/examples?"
-      };
-
-      const follow = followUps[currentStep]?.();
-      if (follow) {
-        const followMessage: Message = {
-          id: (Date.now() + 2).toString(),
-          role: 'assistant',
-          content: follow,
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, followMessage]);
-      }
+      // step tracking is handled by the backend agent via tools
 
       // === [CLAUDE: Store AI response in database if thread exists] ===
       if (tid != null) {
@@ -331,18 +326,6 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     setUploadedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const updateStep = (messageContent: string) => {
-    const content = messageContent.toLowerCase();
-    
-    // Find the first step that matches keywords in the message
-    for (let i = AGENT_CREATION_STEPS.length - 1; i >= 0; i--) {
-      const step = AGENT_CREATION_STEPS[i];
-      if (step.keywords.some(keyword => content.includes(keyword))) {
-        setCurrentStep(Math.min(step.id + 1, AGENT_CREATION_STEPS.length));
-        return;
-      }
-    }
-  };
 
   const addMultiAgent = (agentId: string) => {
     const agent = availableAgents.find((a) => a.id === agentId);
@@ -351,73 +334,7 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     }
   };
 
-  const handleTestRepo = async () => {
-    setIsTestingRepo(true);
-    setTestError('');
-    setTestResult(null);
-    
-    try {
-      const result = await apiClient.testRepoInitialization();
-      setTestResult(result);
-    } catch (error: any) {
-      setTestError(error.message || 'Failed to test repository initialization');
-    } finally {
-      setIsTestingRepo(false);
-    }
-  };
 
-  // === [CLAUDE: ADDED] Save confab handler that compiles collected inputs and calls createConfab ===
-  const handleSaveConfab = async () => {
-    setIsConfabCreating(true);
-    setSaveResult(null);
-
-    try {
-      const confabName = `Confab - ${new Date().toLocaleString()}`;
-      const confabDescription = purposeText || 'Created via agent chat';
-
-      const confabConfig: any = {
-        conversation: {
-          system_prompt: purposeText || 'You are an assistant for this confab.',
-          memory_enabled: memoryEnabledLocal,
-        },
-        integrations: {
-          apis: []
-        },
-        custom_settings: {
-          sample_io: sampleIO,
-          guardrails: guardrailsText,
-          memory_notes: memoryNotes
-        }
-      };
-
-      if (apiKey) {
-        confabConfig.integrations.apis.push({ name: 'custom_api', key: apiKey });
-      }
-
-      // If user entered explicit repo owner / name, attach into custom settings so backend may use it
-      if (repoOwnerInput || repoNameInput) {
-        confabConfig.custom_settings.repo_override = {
-          owner: repoOwnerInput,
-          repo: repoNameInput
-        };
-      }
-
-      const response = await apiClient.createConfab({
-        name: confabName,
-        description: confabDescription,
-        config: confabConfig
-      });
-
-      setSaveResult(response);
-      if (response?.id) {
-        setCurrentConfabId(response.id);
-      }
-    } catch (error:any) {
-      setSaveResult({ error: error.message || 'Failed to save confab' });
-    } finally {
-      setIsConfabCreating(false);
-    }
-  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -437,302 +354,60 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
             Active
           </Badge>
         </div>
-        
-        {/* Progress Bar */}
-        <div className="mt-6">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-slate-700">
-              Step {currentStep} of {AGENT_CREATION_STEPS.length}
-            </span>
+        {/* repository info / test button */}
+        <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+          <p className="text-sm text-blue-800">
+            <strong>Repository Naming Convention:</strong>
+          </p>
+          <p className="text-sm text-blue-700 mt-1">
+            {getRepoNamingConvention()}
+          </p>
+          <div className="flex items-center gap-2 mt-2">
+            <Button
+              onClick={handleTestRepo}
+              disabled={isTestingRepo}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              <TestTube className="w-4 h-4" />
+              {isTestingRepo ? 'Testing...' : 'TEST'}
+            </Button>
             <span className="text-sm text-slate-600">
-              {AGENT_CREATION_STEPS[currentStep - 1]?.label}
+              Initialize repository with dummy data
             </span>
           </div>
-          <Progress value={(currentStep / AGENT_CREATION_STEPS.length) * 100} className="h-2" />
+          {testResult && (
+            <div className="mt-3 p-3 bg-green-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle className="w-4 h-4 text-green-600" />
+                <span className="text-sm font-medium text-green-800">
+                  Test Successful
+                </span>
+              </div>
+              <p className="text-sm text-green-700">
+                {testResult.message}
+              </p>
+            </div>
+          )}
+          {testError && (
+            <div className="mt-3 p-3 bg-red-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertCircle className="w-4 h-4 text-red-600" />
+                <span className="text-sm font-medium text-red-800">
+                  Test Failed
+                </span>
+              </div>
+              <p className="text-sm text-red-700">
+                {testError}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Steps Panel */}
-        <div className="space-y-4">
-          <Card className="p-4">
-            <h3 className="text-slate-900 mb-3">Configuration Steps</h3>
-            <div className="space-y-2">
-              {AGENT_CREATION_STEPS.map(step => (
-                <div 
-                  key={step.id} 
-                  className={`text-sm p-3 rounded-lg transition-all ${
-                    step.id === currentStep 
-                      ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300' 
-                      : step.id < currentStep 
-                      ? 'bg-green-50 text-green-700 border border-green-200' 
-                      : 'bg-slate-50 text-slate-500 border border-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
-                      step.id === currentStep 
-                        ? 'bg-indigo-600 text-white' 
-                        : step.id < currentStep 
-                        ? 'bg-green-600 text-white' 
-                        : 'bg-slate-300 text-white'
-                    }`}>
-                      {step.id}
-                    </div>
-                    <span>{step.label}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          {/* Add Collaborators Step */}
-          {/* Define Purpose Step */}
-          {/* {currentStep >= 1 && (
-            <Card className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Sparkles className="w-5 h-5 text-slate-900" />
-                  <h3 className="text-slate-900">Define Purpose</h3>
-                </div>
-              <div className="space-y-3">
-                <Textarea
-                  value={purposeText}
-                  onChange={(e) => setPurposeText(e.target.value)}
-                  placeholder="Describe the purpose of this confab (this will be written to PURPOSE.md)"
-                  className="text-sm min-h-[80px]"
-                />
-                <p className="text-xs text-slate-600">This will be saved to the repository as PURPOSE.md inside the confab directory.</p>
-              </div>
-            </Card>
-          )} */}
-
-          {/* {currentStep >= 2 && (
-            <Card className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Users className="w-5 h-5 text-slate-900" />
-                <h3 className="text-slate-900">Add Participants</h3>
-              </div>
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <Input
-                    type="email"
-                    placeholder="Enter email address"
-                    className="text-sm"
-                  />
-                  <Button size="sm" variant="outline">
-                    <Mail className="w-3 h-3" />
-                  </Button>
-                </div>
-                <p className="text-xs text-slate-600">
-                  Invite team members to participate in this confab
-                </p>
-                <div>
-                  <Label className="text-xs">Permission Level</Label>
-                  <Select defaultValue="editor">
-                    <SelectTrigger className="mt-1 text-xs h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="viewer">Viewer</SelectItem>
-                      <SelectItem value="editor">Editor</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </Card>
-          )} */}
-
-          {/* Configure Memory Step */}
-          {/* {currentStep >= 3 && (
-            <Card className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Shield className="w-5 h-5 text-slate-900" />
-                <h3 className="text-slate-900">Configure Memory</h3>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Checkbox checked={memoryEnabledLocal} onCheckedChange={(v:any) => setMemoryEnabledLocal(!!v)} />
-                  <Label className="text-sm">Enable long-term memory</Label>
-                </div>
-                <Textarea
-                  value={memoryNotes}
-                  onChange={(e) => setMemoryNotes(e.target.value)}
-                  placeholder="Notes about what the agent should remember (optional)"
-                  className="text-sm min-h-[80px]"
-                />
-                <p className="text-xs text-slate-600">Memory helps the agent remember important details across conversations.</p>
-              </div>
-            </Card>
-          )} */}
-
-          {/* GitHub Repository Information */}
-          <Card className="p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Github className="w-5 h-5 text-slate-900" />
-              <h3 className="text-slate-900">Repository Configuration</h3>
-            </div>
-            <div className="space-y-3">
-              {/* === [CLAUDE: Ollama Service Status Display] === */}
-              {!ollamaHealthy && (
-                <div className="p-3 bg-yellow-50 rounded-lg">
-                  <div className="flex items-center gap-2 mb-1">
-                    <AlertCircle className="w-4 h-4 text-yellow-600" />
-                    <span className="text-sm font-medium text-yellow-800">
-                      Ollama Service Status
-                    </span>
-                  </div>
-                  <p className="text-sm text-yellow-700">{ollamaError || 'Ollama is not available'}</p>
-                  <p className="text-xs text-yellow-600 mt-1">
-                    Ensure Ollama is running at http://localhost:11434 for dynamic chat responses
-                  </p>
-                </div>
-              )}
-              
-              {ollamaHealthy && (
-                <div className="p-3 bg-green-50 rounded-lg">
-                  <div className="flex items-center gap-2 mb-1">
-                    <CheckCircle className="w-4 h-4 text-green-600" />
-                    <span className="text-sm font-medium text-green-800">
-                      Ollama Service Active
-                    </span>
-                  </div>
-                  <p className="text-xs text-green-600">
-                    Using model: gemma3:4b | Connection: http://localhost:11434
-                  </p>
-                </div>
-              )}
-
-              <div className="p-3 bg-blue-50 rounded-lg">
-                <p className="text-sm text-blue-800">
-                  <strong>Repository Naming Convention:</strong>
-                </p>
-                <p className="text-sm text-blue-700 mt-1">
-                  {getRepoNamingConvention()}
-                </p>
-              </div>
-
-              {/* === [CLAUDE: ADDED Tools & APIs inputs for Step 4] === */}
-              {currentStep >= 4 && (
-                <div className="mt-3">
-                  <Label className="text-xs">API Key / Tool Secret</Label>
-                  <Input
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    type="password"
-                    placeholder="Optional: paste API key for external tool"
-                    className="mt-1 text-sm"
-                  />
-
-                  <div className="flex gap-2 mt-2">
-                    <Input
-                      value={repoOwnerInput}
-                      onChange={(e) => setRepoOwnerInput(e.target.value)}
-                      placeholder="Repository owner (optional)"
-                      className="text-sm"
-                    />
-                    <Input
-                      value={repoNameInput}
-                      onChange={(e) => setRepoNameInput(e.target.value)}
-                      placeholder="Repository name (optional)"
-                      className="text-sm"
-                    />
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1">If provided, these values will be used when creating the confab files (overrides connected GitHub settings).</p>
-                </div>
-              )}
-              
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={handleTestRepo}
-                  disabled={isTestingRepo}
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                >
-                  <TestTube className="w-4 h-4" />
-                  {isTestingRepo ? 'Testing...' : 'TEST'}
-                </Button>
-                <span className="text-sm text-slate-600">
-                  Initialize repository with dummy data
-                </span>
-
-                {currentStep >= 7 && (
-                  <div className="ml-2">
-                    <Button
-                      onClick={handleSaveConfab}
-                      disabled={isConfabCreating}
-                      size="sm"
-                      className="gap-2"
-                    >
-                      {isConfabCreating ? 'Saving...' : 'Save & Create'}
-                    </Button>
-                  </div>
-                )}
-              </div>
-              
-              {testResult && (
-                <div className="p-3 bg-green-50 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <CheckCircle className="w-4 h-4 text-green-600" />
-                    <span className="text-sm font-medium text-green-800">
-                      Test Successful
-                    </span>
-                  </div>
-                  <p className="text-sm text-green-700 mb-2">
-                    {testResult.message}
-                  </p>
-                  <div className="text-xs text-green-600">
-                    <p><strong>Repository:</strong> {testResult.repo_name}</p>
-                    <p><strong>Status:</strong> {testResult.status}</p>
-                    {testResult.dummy_data && (
-                      <p><strong>Test Files:</strong> {testResult.dummy_data.test_files?.join(', ')}</p>
-                    )}
-                  </div>
-                </div>
-              )}
-              
-              {testError && (
-                <div className="p-3 bg-red-50 rounded-lg">
-                  <div className="flex items-center gap-2 mb-1">
-                    <AlertCircle className="w-4 h-4 text-red-600" />
-                    <span className="text-sm font-medium text-red-800">
-                      Test Failed
-                    </span>
-                  </div>
-                  <p className="text-sm text-red-700">{testError}</p>
-                </div>
-              )}
-
-              {/* === [CLAUDE: ADDED Guardrails (Step 5) and Samples (Step 6) inside repo card] === */}
-              {currentStep >= 5 && (
-                <div className="p-3 bg-slate-50 rounded-lg mt-3">
-                  <h4 className="text-sm font-medium mb-2">Guardrails</h4>
-                  <Textarea
-                    value={guardrailsText}
-                    onChange={(e) => setGuardrailsText(e.target.value)}
-                    placeholder="Optional: add guardrails that will be saved to GUARDRAILS.md"
-                    className="text-sm min-h-[80px]"
-                  />
-                </div>
-              )}
-
-              {currentStep >= 6 && (
-                <div className="p-3 bg-slate-50 rounded-lg mt-3">
-                  <h4 className="text-sm font-medium mb-2">Sample Inputs / Outputs</h4>
-                  <Textarea
-                    value={sampleIO}
-                    onChange={(e) => setSampleIO(e.target.value)}
-                    placeholder={'Examples:\nUser: How do I reset my password?\nAssistant: Ask the user to confirm email...'}
-                    className="text-sm min-h-[80px]"
-                  />
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* Conversation Area */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* conversation area will occupy two columns */}
         <div className="lg:col-span-2">
           <Card className="flex flex-col min-h-[600px]">
             {/* Messages Area */}

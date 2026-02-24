@@ -1,0 +1,123 @@
+review @spec and agentchat.tsx and  also all code and then prepare the code for agentchat.tsx code working structure based on these instructions 
+User
+   ↓
+LangChain Agent
+   ↓
+LLM (gemma3:4b)
+   ↓
+Tool Decision
+   ↓
+Backend Tool Execution
+   ↓
+Step Update
+   ↓
+Final Response
+
+
+first you have to do remove the configuration steps from left side of front-end 
+
+Second make these all step as tools 
+ { id: 1, label: 'Define Purpose', keywords: ['what', 'do', 'help', 'agent', 'create', 'build'] },
+  { id: 2, label: 'Add Participants', keywords: ['participant', 'collaborator', 'team', 'member', 'invite', 'share', 'permission'] },
+  { id: 3, label: 'Configure Memory', keywords: ['memory', 'remember', 'conversation', 'history', 'context'] },
+  { id: 4, label: 'Add Tools & APIs', keywords: ['tool', 'api', 'access', 'integrate', 'connect'] },
+  { id: 5, label: 'Guardrails', keywords: ['guardrail', 'safety', 'limit', 'restrict', 'boundary', 'rule', 'policy'] },
+  { id: 6, label: 'Sample Inputs/Outputs', keywords: ['sample', 'example', 'input', 'output', 'test', 'response', 'demo'] },
+  { id: 7, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
+];
+
+convert in the tools like this take referernce from this 
+@Tool
+def define_purpose(confab_id: str, purpose_text: str):
+    update_purpose(confab_id, purpose_text)
+    mark_step_complete(confab_id, 1)
+    return "Purpose defined successfully."
+
+    @Tool
+def add_participant(confab_id: str, email: str):
+    add_user(confab_id, email)
+    mark_step_complete(confab_id, 2)
+    return "Participant added."
+
+    and also rest of them 
+
+    third give the clear instruction to the LLM 
+
+    System prompt me likho:
+
+You are a Confab Setup Agent.
+
+You must:
+- Detect which setup step the user is working on
+- Call the correct tool
+- Update step progress
+- Guide user to next step
+
+Available steps:
+1 Define Purpose
+2 Add Participants
+3 Configure Memory
+4 Add Tools & APIs
+5 Guardrails
+6 Sample Inputs/Outputs
+7 Review & Save
+
+
+make the chat this Fully Autonomous Agent
+and also those steps completed or left both shown inside the place where i doing the chats in sequenceal manner
+
+review all the code and add one more tool for that works for this button 
+  {/* repository info / test button */}
+        <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+          <p className="text-sm text-blue-800">
+            <strong>Repository Naming Convention:</strong>
+          </p>
+          <p className="text-sm text-blue-700 mt-1">
+            {getRepoNamingConvention()}
+          </p>
+          <div className="flex items-center gap-2 mt-2">
+            <Button
+              onClick={handleTestRepo}
+              disabled={isTestingRepo}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              <TestTube className="w-4 h-4" />
+              {isTestingRepo ? 'Testing...' : 'TEST'}
+            </Button>
+            <span className="text-sm text-slate-600">
+              Initialize repository with dummy data
+            </span>
+          </div>
+          {testResult && (
+            <div className="mt-3 p-3 bg-green-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle className="w-4 h-4 text-green-600" />
+                <span className="text-sm font-medium text-green-800">
+                  Test Successful
+                </span>
+              </div>
+              <p className="text-sm text-green-700">
+                {testResult.message}
+              </p>
+            </div>
+          )}
+          {testError && (
+            <div className="mt-3 p-3 bg-red-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertCircle className="w-4 h-4 text-red-600" />
+                <span className="text-sm font-medium text-red-800">
+                  Test Failed
+                </span>
+              </div>
+              <p className="text-sm text-red-700">
+                {testError}
+              </p>
+            </div>
+          )}
+        </div>
+
+        and in which ai ask the repository name or set default name and then give yes or no option if person says yes then upload into there git repository first check user have github id or not then work 
+
+
