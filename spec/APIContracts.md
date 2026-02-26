@@ -133,6 +133,42 @@ Deletes a confab from the database. GitHub files are not removed.
 - **Response:** Success message
 - **Errors:** 404 if not found
 
+### Chat / Agent Tools
+
+`POST /threads/{thread_id}/chat` (authenticated)
+
+Primary conversational endpoint used by the frontend agent UI. Accepts a user message
+and returns the assistant response along with optional tool messages produced by
+the system prompt logic.
+
+- **Request body:** `content` (the user utterance)
+- **Response:** `user_message` and `assistant_message` objects; may include
+  `tool_message` when the agent invoked one of the helper tools.
+
+The backend tools permit the agent to update the confab configuration step-by-step
+and, starting February 2026, automatically commit any written documents to the
+GitHub repository by opening a new branch and PR.  Available tool names (as
+shown to the model) include:
+
+| Tool Call | Description |
+|-----------|-------------|
+| `define_purpose` | save the purpose text and mark step 1; also commits `PURPOSE.md` |
+| `add_participant` | add an email to the participant list |
+| `configure_memory` | toggle memory settings and attach notes |
+| `add_tools_and_apis` | record an external API key |
+| `guardrails` | write guardrail text |
+| `sample_io` | save example input/output scenarios |
+| `review_and_save` | finalize confab and set status to `ready` |
+| `get_purpose` | return the current purpose markdown |
+| `search_knowledge_base` | query stored memory documents |
+| `update_knowledge_base` | save a new memory document and commit it |
+
+Tool results are embedded in the conversation in the form
+`[tool:<name>] <output>` and may also include a GitHub pull request link if a
+commit occurred.
+
+---
+
 ### Test Repository
 
 `POST /confabs/test-repo` (authenticated)

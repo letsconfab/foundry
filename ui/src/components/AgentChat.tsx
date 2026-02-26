@@ -52,6 +52,12 @@ interface AgentNode {
 // 5 Guardrails
 // 6 Sample Inputs/Outputs
 // 7 Review & Save
+//
+// The agent also has access to helper tools that let it read or write
+// configuration documents directly.  When a writing tool is used the
+// backend will open a GitHub branch and commit a markdown file (eg.
+// PURPOSE.md or a knowledge-base note).  The resulting pull request URL
+// comes back in the tool response.
 
 const PROMPT_SUGGESTIONS = [
   "Create a customer support agent that handles refunds and returns",
