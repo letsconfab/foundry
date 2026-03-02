@@ -6,7 +6,11 @@ from typing import Optional, Dict, Any
 
 import os
 import json, re
+import datetime
+import logging
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 from database import get_db, engine, Base
 from models import User, Confab, GitHubAccount, Thread, Message, ThreadMapping
@@ -18,20 +22,11 @@ from schemas import (
 )
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
-from confab_manager import (
-    create_confab_in_github,
-    update_confab_in_github,
-    create_github_repository,
-    initialize_confab_repository,
-    create_confab_file_in_github,  # used by chat tools to push single files
-    confab_manager,               # needed by _commit_file_for_confab
-)
+from confab_manager import create_confab_in_github, update_confab_in_github, create_github_repository, initialize_confab_repository
 # import the setup-step tools so we can execute them when the agent asks
 from agent_tools import (
     define_purpose, add_participant, configure_memory, add_tools_and_apis,
-    guardrails, sample_io, review_and_save,
-    # the following helpers are also exposed to the agent for extra flexibility
-    get_purpose, search_knowledge_base, update_knowledge_base,
+    guardrails, sample_io, review_and_save
 )
 # === [CLAUDE: Import Ollama service for dynamic chat responses] ===
 from ollama_service import ask_ollama, ollama_client
@@ -577,24 +572,23 @@ async def test_repo_initialization(
                 }
             }
         
-        # For GitHub users, determine the repo owner and name from the database
-        # (selected_org falls back to github_username if not set).
-        repo_owner = github_account.selected_org or github_account.github_username
-        repo_name = github_account.selected_repo
-
-        # Check if repository exists, if not create it.  We always use the
-        # selected repo name rather than defaulting to "confabs" here.
+        # For GitHub users, create/initialize the actual repository
+        repo_name = "confabs"
+        repo_owner = github_account.github_username
+        
+        # Check if repository exists, if not create it
         try:
+            # Try to create the repository
             repo_info = await create_github_repository(
                 repo_name=repo_name,
                 access_token=github_account.access_token,
-                description=f"Confabs repository for {repo_owner}",
+                description=f"Confabs repository for {github_account.github_username}",
                 private=False
             )
-        except Exception:
-            # Repository might already exist, just continue to initialization
+        except Exception as e:
+            # Repository might already exist, try to initialize it directly
             pass
-
+        
         # Initialize repository with confab structure
         init_result = await initialize_confab_repository(
             repo_owner=repo_owner,
@@ -691,14 +685,6 @@ You must:
 - Update step progress
 - Guide user to next step
 
-The agent also has access to several helper tools for inspecting or
-updating configuration documents directly.  Every time a setup step is
-completed the corresponding markdown file (PURPOSE.md, PARTICIPANTS.md,
-MEMORY.md, INTEGRATIONS.md, GUARDRAILS.md, SAMPLE_IO.md, REVIEW.md,
-or other knowledge‑base document) will be written to GitHub on a new
-branch and a pull request will be opened.  The PR link will be returned
-as part of the tool output.
-
 Available steps:
 1 Define Purpose
 2 Add Participants
@@ -707,12 +693,6 @@ Available steps:
 5 Guardrails
 6 Sample Inputs/Outputs
 7 Review & Save
-
-Helper tools:
-- get_purpose(confab_id)                 # returns the current purpose text
-- update_purpose(confab_id, purpose_text)  # save purpose (commits PURPOSE.md)
-- search_knowledge_base(confab_id, query)  # look up stored memory documents
-- update_knowledge_base(confab_id, file_name, information)  # save a memory file
 """
 
 
@@ -739,170 +719,22 @@ def _parse_tool_call(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-async def _commit_file_for_confab(
-    db: Session,
-    confab_id: int,
-    file_path: str,
-    content: str
-) -> str:
-    """Helper that looks up the user's GitHub account and commits a single file.
-
-    If the confab or account cannot be found the function returns an empty
-    string, otherwise it will return a message containing the pull request URL
-    or an error description.
-    """
-    # fetch confab and owner
-    confab = db.query(Confab).filter(Confab.id == confab_id).first()
-    if not confab:
-        return "[github] confab not found"
-    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
-    if not github_account:
-        return "[github] no GitHub connection for user"
-    repo_owner = github_account.selected_org or github_account.github_username
-    repo_name = github_account.selected_repo
-    try:
-        pr_url = await confab_manager.commit_confab_file(
-            confab_name=confab.name,
-            file_path=file_path,
-            content=content,
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            access_token=github_account.access_token,
-        )
-        return f"[github] pull request created: {pr_url}"
-    except Exception as e:
-        msg = str(e)
-        # if repository is missing, attempt to create it automatically
-        if "not found" in msg.lower():
-            try:
-                await create_github_repository(
-                    repo_name=repo_name,
-                    access_token=github_account.access_token,
-                    description=f"Confabs repository for {github_account.github_username}",
-                    private=False,
-                )
-                pr_url = await confab_manager.commit_confab_file(
-                    confab_name=confab.name,
-                    file_path=file_path,
-                    content=content,
-                    repo_owner=repo_owner,
-                    repo_name=repo_name,
-                    access_token=github_account.access_token,
-                )
-                return f"[github] repository created, pull request created: {pr_url}"
-            except Exception as e2:
-                return f"[github error creating repo] {str(e2)}"
-        return f"[github error] {msg}"
-
-
-async def _execute_tool(tool_name: str, args: Dict[str, Any], db: Session) -> str:
-    """Dispatch helper to run one of the agent_tools functions and perform GH commits."""
-    # purpose helpers
+def _execute_tool(tool_name: str, args: Dict[str, Any], db: Session) -> str:
+    """Dispatch helper to run one of the agent_tools functions."""
     if tool_name == "define_purpose":
-        result = define_purpose(db, args.get("confab_id"), args.get("purpose_text", ""))
-        # commit updated purpose file to GitHub
-        try:
-            commit_info = await _commit_file_for_confab(db, args.get("confab_id"), "PURPOSE.md", args.get("purpose_text", ""))
-            result += "\n" + commit_info
-        except Exception as e:
-            result += f"\n[github commit failed] {e}"
-        return result
-    elif tool_name == "get_purpose":
-        val = get_purpose(db, args.get("confab_id"))
-        return val or "(no purpose defined yet)"
-    # participant/memory/tools previously existing
+        return define_purpose(db, args.get("confab_id"), args.get("purpose_text", ""))
     elif tool_name == "add_participant":
-        # update DB
-        result = add_participant(db, args.get("confab_id"), args.get("email", ""))
-        # commit participant list to GitHub
-        try:
-            cid = args.get("confab_id")
-            confab = db.query(Confab).filter(Confab.id == cid).first()
-            if confab:
-                parts = (confab.config or {}).get("participants", [])
-                md = "# Participants\n\n" + "\n".join(f"- {e}" for e in parts)
-                ci = await _commit_file_for_confab(db, cid, "PARTICIPANTS.md", md)
-                result += "\n" + ci
-        except Exception as e:
-            result += f"\n[github commit failed] {e}"
-        return result
+        return add_participant(db, args.get("confab_id"), args.get("email", ""))
     elif tool_name == "configure_memory":
-        result = configure_memory(db, args.get("confab_id"), args.get("memory_notes", ""), args.get("enable", True))
-        try:
-            cid = args.get("confab_id")
-            confab = db.query(Confab).filter(Confab.id == cid).first()
-            if confab:
-                cfg = confab.config or {}
-                notes = cfg.get("custom_settings", {}).get("memory_notes", "")
-                enabled = cfg.get("conversation", {}).get("memory_enabled", False)
-                md = f"# Memory (enabled={enabled})\n\n{notes}"
-                ci = await _commit_file_for_confab(db, cid, "MEMORY.md", md)
-                result += "\n" + ci
-        except Exception as e:
-            result += f"\n[github commit failed] {e}"
-        return result
+        return configure_memory(db, args.get("confab_id"), args.get("memory_notes", ""), args.get("enable", True))
     elif tool_name == "add_tools_and_apis":
-        result = add_tools_and_apis(db, args.get("confab_id"), args.get("tool_name", ""), args.get("api_key", ""))
-        try:
-            cid = args.get("confab_id")
-            confab = db.query(Confab).filter(Confab.id == cid).first()
-            if confab:
-                apis = (confab.config or {}).get("integrations", {}).get("apis", [])
-                md = "# Integrations\n\n" + "\n".join(f"- {a.get('name')} : {a.get('key')}" for a in apis)
-                ci = await _commit_file_for_confab(db, cid, "INTEGRATIONS.md", md)
-                result += "\n" + ci
-        except Exception as e:
-            result += f"\n[github commit failed] {e}"
-        return result
+        return add_tools_and_apis(db, args.get("confab_id"), args.get("tool_name", ""), args.get("api_key", ""))
     elif tool_name == "guardrails":
-        result = guardrails(db, args.get("confab_id"), args.get("guardrails_text", ""))
-        try:
-            cid = args.get("confab_id")
-            confab = db.query(Confab).filter(Confab.id == cid).first()
-            if confab:
-                guard = (confab.config or {}).get("custom_settings", {}).get("guardrails", "")
-                md = f"# Guardrails\n\n{guard}"
-                ci = await _commit_file_for_confab(db, cid, "GUARDRAILS.md", md)
-                result += "\n" + ci
-        except Exception as e:
-            result += f"\n[github commit failed] {e}"
-        return result
+        return guardrails(db, args.get("confab_id"), args.get("guardrails_text", ""))
     elif tool_name == "sample_io":
-        result = sample_io(db, args.get("confab_id"), args.get("sample_text", ""))
-        try:
-            cid = args.get("confab_id")
-            confab = db.query(Confab).filter(Confab.id == cid).first()
-            if confab:
-                sample = (confab.config or {}).get("custom_settings", {}).get("sample_io", "")
-                md = f"# Sample I/O\n\n{sample}"
-                ci = await _commit_file_for_confab(db, cid, "SAMPLE_IO.md", md)
-                result += "\n" + ci
-        except Exception as e:
-            result += f"\n[github commit failed] {e}"
-        return result
+        return sample_io(db, args.get("confab_id"), args.get("sample_text", ""))
     elif tool_name == "review_and_save":
-        result = review_and_save(db, args.get("confab_id"))
-        try:
-            cid = args.get("confab_id")
-            ci = await _commit_file_for_confab(db, cid, "REVIEW.md", "# Review\n\nConfab marked ready.")
-            result += "\n" + ci
-        except Exception as e:
-            result += f"\n[github commit failed] {e}"
-        return result
-    # knowledge base helpers for memory
-    elif tool_name == "search_knowledge_base":
-        results = search_knowledge_base(db, args.get("confab_id"), args.get("query", ""))
-        return json.dumps(results)
-    elif tool_name == "update_knowledge_base":
-        success = update_knowledge_base(db, args.get("confab_id"), args.get("file_name", ""), args.get("information", ""))
-        msg = "Knowledge base updated." if success else "Failed to update knowledge base."
-        if success:
-            try:
-                ci = await _commit_file_for_confab(db, args.get("confab_id"), args.get("file_name", ""), args.get("information", ""))
-                msg += "\n" + ci
-            except Exception as e:
-                msg += f"\n[github commit failed] {e}"
-        return msg
+        return review_and_save(db, args.get("confab_id"))
     else:
         return f"Unknown tool: {tool_name}"
 
@@ -961,7 +793,7 @@ async def chat_with_ollama(
         # check for a tool call in the text
         tool_instr = _parse_tool_call(ai_response)
         if tool_instr:
-            tool_result = await _execute_tool(tool_instr.get("tool"), tool_instr.get("args", {}), db)
+            tool_result = _execute_tool(tool_instr.get("tool"), tool_instr.get("args", {}), db)
             # compute progress summary from confab config if available
             try:
                 cid = int(tool_instr.get("args", {}).get("confab_id"))
@@ -1116,6 +948,95 @@ async def get_confab_threads(
     threads = db.query(Thread).filter(Thread.id.in_(thread_ids)) if thread_ids else []
     
     return [ThreadResponse.model_validate(t) for t in threads]
+
+# === [CLAUDE: Import LangGraph Agent Runner] ===
+from agent_runner import run_langgraph_agent, get_agent_status
+
+@app.post("/agent/chat/{confab_id}")
+async def chat_with_langgraph_agent(
+    confab_id: int,
+    request: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    [CLAUDE: Main LangGraph Agent chat endpoint]
+    
+    This endpoint implements the new architecture:
+    User message -> LangGraph Agent -> LLM thinks -> Calls Tool (DB / GitHub / API) -> Gets result -> Thinks again -> More tools if needed -> Final response
+    
+    Architecture flow:
+    1. User sends message
+    2. LangGraph Agent processes message with LLM
+    3. Agent calls tools (get_purpose, update_purpose, search_knowledge_base, update_knowledge_base)
+    4. Agent thinks again based on tool results
+    5. Agent may call more tools if needed
+    6. Agent returns final response
+    """
+    # Validate confab ownership
+    confab = db.query(Confab).filter(
+        Confab.id == confab_id,
+        Confab.user_id == current_user.id
+    ).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    
+    # Extract message from request
+    user_message = request.get("message", "")
+    if not user_message:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message is required")
+    
+    try:
+        # Run the LangGraph agent
+        result = await run_langgraph_agent(confab_id, user_message, db)
+        
+        if result["success"]:
+            return {
+                "response": result["response"],
+                "tool_calls": result.get("tool_calls", []),
+                "confab_id": confab_id,
+                "timestamp": str(datetime.datetime.now()),
+                "architecture": "LangGraph with MCP integration"
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Agent execution failed")
+            )
+            
+    except Exception as e:
+        logger.error(f"Error in LangGraph agent chat: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Agent error: {str(e)}"
+        )
+
+@app.get("/agent/status")
+async def get_langgraph_agent_status(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    [CLAUDE: Get LangGraph Agent system status]
+    
+    Returns the current status of the LangGraph agent system including:
+    - Agent status (active/error)
+    - LLM provider information
+    - Available tools count
+    - Architecture information
+    """
+    try:
+        status = get_agent_status()
+        return {
+            "status": status,
+            "user": current_user.email,
+            "timestamp": str(datetime.datetime.now())
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": str(datetime.datetime.now())
+        }
 
 if __name__ == "__main__":
     import uvicorn

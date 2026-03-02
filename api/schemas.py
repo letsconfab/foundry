@@ -321,7 +321,7 @@ class ThreadMappingResponse(BaseModel):
 # === [CLAUDE: Ollama API Schemas for dynamic chat responses] ===
 class OllamaRequest(BaseModel):
     """Request to Ollama API for generating chat responses"""
-    model: str = Field(..., description="Model name (e.g., 'gemma3:4b')")
+    model: str = Field(..., description="Model name (e.g., 'qwen2.5:3b')")
     prompt: str = Field(..., description="User prompt to send to the model")
     stream: bool = Field(default=False, description="Whether to stream the response")
     temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")

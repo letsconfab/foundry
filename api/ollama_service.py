@@ -6,7 +6,7 @@ Ollama runs locally at http://localhost:11434 and provides LLM capabilities.
 Configuration:
 - OLLAMA_BASE_URL: http://localhost:11434
 - OLLAMA_API_KEY: ollama
-- OLLAMA_MODEL_NAME: gemma3:4b
+- OLLAMA_MODEL_NAME: qwen2.5:3b
 """
 
 import os
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Load Ollama configuration from environment
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "ollama")
-OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "gemma3:4b")
+OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:3b")
 
 class OllamaClient:
     """
@@ -59,6 +59,11 @@ class OllamaClient:
         try:
             logger.info(f"Generating response with Ollama model: {self.model}")
             
+            # [CLAUDE: Health check before generating]
+            is_healthy = await self.health_check()
+            if not is_healthy:
+                raise Exception(f"Ollama service is not responding at {self.base_url}. Ensure Ollama is running.")
+            
             # [CLAUDE: Format request for Ollama API]
             request_data = OllamaRequest(
                 model=self.model,
@@ -66,6 +71,8 @@ class OllamaClient:
                 stream=stream,
                 temperature=temperature
             )
+            
+            logger.debug(f"Ollama request - model: {self.model}, endpoint: {self.base_url}/api/generate")
 
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 # Use Ollama's generate endpoint
@@ -79,7 +86,7 @@ class OllamaClient:
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.error(f"Ollama API error (status {resp.status}): {error_text}")
-                        raise Exception(f"Ollama API error: {resp.status} - {error_text}")
+                        raise Exception(f"Ollama returned status {resp.status}. Model '{self.model}' may not be installed. Response: {error_text[:200]}")
 
                     # [CLAUDE: Parse Ollama response]
                     result = await resp.json()
@@ -90,10 +97,10 @@ class OllamaClient:
 
         except aiohttp.ClientConnectorError as e:
             logger.error(f"Failed to connect to Ollama at {self.base_url}: {e}")
-            raise Exception(f"Cannot connect to Ollama. Ensure it's running at {self.base_url}")
+            raise Exception(f"Cannot connect to Ollama at {self.base_url}. Ensure Ollama is running. Error: {str(e)}")
         except Exception as e:
-            logger.error(f"Error generating response from Ollama: {e}")
-            raise
+            logger.error(f"Error generating response from Ollama: {type(e).__name__}: {e}")
+            raise Exception(f"Ollama error: {str(e)}")
 
     async def health_check(self) -> bool:
         """
@@ -127,6 +134,27 @@ class OllamaClient:
         except Exception as e:
             logger.error(f"Error listing models: {e}")
             raise
+
+    async def validate_model(self) -> bool:
+        """
+        Validate that the configured model is available and working.
+
+        Returns:
+            True if model is available and ready, False otherwise
+        """
+        try:
+            models_response = await self.list_models()
+            available_models = [m.get("name") for m in models_response.get("models", [])]
+            
+            if self.model in available_models:
+                logger.info(f"Model '{self.model}' is available")
+                return True
+            else:
+                logger.warning(f"Model '{self.model}' not found. Available models: {available_models}")
+                return False
+        except Exception as e:
+            logger.error(f"Error validating model: {e}")
+            return False
 
 
 # [CLAUDE: Create global Ollama client instance]

@@ -26,7 +26,7 @@ This document describes comprehensive updates made to the Let's Confab platform 
 
 ### Key Improvements
 
-1. **Dynamic Chat Responses**: Chat responses now come from Ollama API (gemma3:4b model) instead of static predefined responses
+1. **Dynamic Chat Responses**: Chat responses now come from Ollama API (qwen2.5:3b model) instead of static predefined responses
 2. **Enhanced Database Schema**: Added 4th table (`thread_mapping`) to link confabs with conversation threads
 3. **Ollama Service Integration**: Complete backend service for interacting with Ollama API
 4. **Real-time Conversation Storage**: All chat messages are persisted in the database immediately
@@ -64,18 +64,18 @@ VITE_OLLAMA_BASE_URL=http://localhost:11434
 VITE_OLLAMA_API_KEY=ollama
 
 # Model name for Ollama
-VITE_OLLAMA_MODEL_NAME=gemma3:4b
+VITE_OLLAMA_MODEL_NAME=qwen2.5:3b
 
 # === BACKEND OLLAMA CONFIGURATION ===
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_API_KEY=ollama
-OLLAMA_MODEL_NAME=gemma3:4b
+OLLAMA_MODEL_NAME=qwen2.5:3b
 ```
 
 **What These Do:**
 - Frontend uses `VITE_` prefixed variables to communicate with Ollama
 - Backend uses the non-prefixed versions for server-side Ollama interactions
-- `gemma3:4b` is a lightweight 4B parameter model suitable for local development
+- `qwen2.5:3b` is a lightweight 3B parameter model suitable for local development
 
 ---
 
@@ -172,7 +172,7 @@ class ThreadMapping(Base):
 **New Schemas**:
 
 1. **`OllamaRequest`** - Request structure for Ollama API
-   - `model`: str - Model name (e.g., 'gemma3:4b')
+   - `model`: str - Model name (e.g., 'qwen2.5:3b')
    - `prompt`: str - User prompt
    - `stream`: bool - Whether to stream response
    - `temperature`: float - Sampling temperature
@@ -426,7 +426,7 @@ Added visual indicator in Repository Configuration section:
 
 2. **Pull Model**
    ```bash
-   ollama pull gemma3:4b
+   ollama pull qwen2.5:3b
    ```
 
 3. **Database Setup**
@@ -448,7 +448,7 @@ curl http://localhost:11434/api/tags
 {
   "models": [
     {
-      "name": "gemma3:4b:latest",
+      "name": "qwen2.5:3b:latest",
       "modified_at": "2024-01-01T00:00:00Z",
       "size": 2548900000,
       "digest": "..."
@@ -463,7 +463,7 @@ curl -X POST http://localhost:8001/ollama/generate \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
-    "model": "gemma3:4b",
+    "model": "qwen2.5:3b",
     "prompt": "What is a confab?",
     "stream": false
   }'
@@ -588,7 +588,7 @@ ollama serve
 **Check**:
 1. CPU usage during generation (normal if high)
 2. Network latency
-3. Model size (gemma3:4b is small, should be fast)
+3. Model size (qwen2.5:3b is small, should be fast)
 
 **Solution**:
 1. Give Ollama more time to think
@@ -628,7 +628,7 @@ Check `.env` `ALLOWED_ORIGINS` includes `http://localhost:3002`
 
 ### Performance Considerations
 
-- Ollama gemma3:4b: ~2.5GB model, fast responses
+- Ollama qwen2.5:3b: ~1.9GB model, fast responses
 - Message context limit: 10 messages (configurable)
 - Database queries: Indexed on thread_id, owner_user_id
 - Frontend debouncing: Not needed (sequential messages)

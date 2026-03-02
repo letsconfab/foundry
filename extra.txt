@@ -3,7 +3,7 @@ User
    ↓
 LangChain Agent
    ↓
-LLM (gemma3:4b)
+LLM (qwen2.5:3b)
    ↓
 Tool Decision
    ↓

@@ -235,6 +235,20 @@ class ApiClient {
     return this.request(`/confab/${confabId}/threads`);
   }
 
+  // === [CLAUDE: LangGraph Agent endpoints] ===
+  
+  async chatWithLangGraphAgent(confabId, message) {
+    console.log('API Client: Chatting with LangGraph agent for confab:', confabId);
+    return this.request(`/agent/chat/${confabId}`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
+  }
+
+  async getAgentStatus() {
+    return this.request('/agent/status');
+  }
+
   clearToken() {
     localStorage.removeItem('access_token');
   }
