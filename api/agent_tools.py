@@ -86,15 +86,15 @@ async def list_tools():
         },
         {
             "name": "store_user_information",
-            "description": "Store user information (name and phone number) in the confab's knowledge base.",
+            "description": "Store user information (name and email) in the confab's knowledge base.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "confab_id": {"type": "integer"},
                     "user_name": {"type": "string"},
-                    "phone_number": {"type": "string"}
+                    "email": {"type": "string"}
                 },
-                "required": ["confab_id", "user_name", "phone_number"]
+                "required": ["confab_id", "user_name", "email"]
             }
         },
         {
@@ -104,7 +104,7 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "confab_id": {"type": "integer"},
-                    "phone_number": {"type": "string"}
+                    "email": {"type": "string"}
                 },
                 "required": ["confab_id"]
             }
@@ -130,16 +130,16 @@ async def call_tool(name: str, arguments: dict):
         result = create_pull_request_tool(arguments.get("confab_id"), arguments.get("file_path"), arguments.get("content"), arguments.get("title", "File Update"))
         return {"content": [{"type": "text", "text": result}]}
     elif name == "store_user_information":
-        success = store_user_information(arguments.get("confab_id"), arguments.get("user_name"), arguments.get("phone_number"))
+        success = store_user_information(arguments.get("confab_id"), arguments.get("user_name"), arguments.get("email"))
         return {"content": [{"type": "text", "text": "User information stored successfully" if success else "Failed to store user information"}]}
     elif name == "get_user_information":
-        results = get_user_information(arguments.get("confab_id"), arguments.get("phone_number"))
+        results = get_user_information(arguments.get("confab_id"), arguments.get("email"))
         if results:
-            if arguments.get("phone_number") and len(results) == 1:
+            if arguments.get("email") and len(results) == 1:
                 user = results[0]
-                return {"content": [{"type": "text", "text": f"Found user: {user.get('name', 'Unknown')} - {user.get('phone_number', 'Unknown')}"}]}
+                return {"content": [{"type": "text", "text": f"Found user: {user.get('name', 'Unknown')} - {user.get('email', 'Unknown')}"}]}
             else:
-                user_list = "\n".join([f"- {user.get('name', 'Unknown')}: {user.get('phone_number', 'Unknown')}" for user in results])
+                user_list = "\n".join([f"- {user.get('name', 'Unknown')}: {user.get('email', 'Unknown')}" for user in results])
                 return {"content": [{"type": "text", "text": f"Found {len(results)} users:\n{user_list}"}]}
         else:
             return {"content": [{"type": "text", "text": "No user information found"}]}
@@ -147,7 +147,7 @@ async def call_tool(name: str, arguments: dict):
         return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 
 def get_purpose(confab_id: int) -> Optional[str]:
-    """Get the purpose markdown for a confab from GitHub repo's purpose.md file."""
+    """Get the purpose markdown for a confab from GitHub repo's confabs/{confab.name}/PURPOSE.md file."""
     print("get_purpose working successfully")
     try:
         from database import get_db
@@ -157,8 +157,14 @@ def get_purpose(confab_id: int) -> Optional[str]:
         if not confab:
             print(f"Confab with ID {confab_id} not found")
             return None
+        
+        # Ensure confab has a proper name
+        confab_name = confab.name
+        if not confab_name or confab_name.startswith("Agent Chat –"):
+            print(f"Confab {confab_id} has improper name: {confab_name}")
+            return None
             
-        # Try to get from GitHub first (purpose.md)
+        # Try to get from GitHub first (confabs/{confab.name}/PURPOSE.md)
         github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
         if github_account:
             try:
@@ -183,13 +189,21 @@ def get_purpose(confab_id: int) -> Optional[str]:
                 print(f"Looking for repository: {repo_name}")
                 
                 repo = g.get_repo(repo_name)
-                purpose_file = repo.get_contents("PURPOSE.md")
-                print("Successfully retrieved PURPOSE.md from GitHub")
+                purpose_file_path = f"confabs/{confab_name}/PURPOSE.md"
+                purpose_file = repo.get_contents(purpose_file_path)
+                print(f"Successfully retrieved PURPOSE.md from {purpose_file_path}")
                 return purpose_file.decoded_content.decode('utf-8')
             except Exception as e:
                 logger.warning(f"Could not fetch PURPOSE.md from GitHub: {e}")
                 print(f"GitHub access failed: {e}")
-                return None
+                # Try backward compatibility - check root PURPOSE.md
+                try:
+                    purpose_file = repo.get_contents("PURPOSE.md")
+                    print("Successfully retrieved PURPOSE.md from root (backward compatibility)")
+                    return purpose_file.decoded_content.decode('utf-8')
+                except Exception as fallback_error:
+                    print(f"Root PURPOSE.md also not found: {fallback_error}")
+                    return None
         else:
             print("No GitHub account connected for this user")
             return None
@@ -220,9 +234,9 @@ def update_purpose(confab_id: int, purpose_markdown: str) -> bool:
         print(f"Error in update_purpose: {e}")
         return False
 
-# Database tools for User Information Management (Phone Numbers and Names)
-def store_user_information(confab_id: int, user_name: str, phone_number: str) -> bool:
-    """Store user information (name and phone number) in the confab's knowledge base."""
+# Database tools for User Information Management (Email and Names)
+def store_user_information(confab_id: int, user_name: str, email: str) -> bool:
+    """Store user information (name and email) in the confab's knowledge base."""
     print("store_user_information working successfully")
     try:
         from database import get_db
@@ -241,18 +255,18 @@ def store_user_information(confab_id: int, user_name: str, phone_number: str) ->
         # Check if user already exists
         user_info = cfg["user_information"]
         for user in user_info:
-            if user.get("phone_number") == phone_number:
-                user["name"] = user_name  # Update name if phone exists
-                print(f"Updated existing user information for phone: {phone_number}")
+            if user.get("email") == email:
+                user["name"] = user_name  # Update name if email exists
+                print(f"Updated existing user information for email: {email}")
                 break
         else:
             # Add new user
             user_info.append({
                 "name": user_name,
-                "phone_number": phone_number,
+                "email": email,
                 "created_at": datetime.datetime.now().isoformat()
             })
-            print(f"Added new user information: {user_name} - {phone_number}")
+            print(f"Added new user information: {user_name} - {email}")
         
         cfg["user_information"] = user_info
         confab.config = cfg
@@ -268,7 +282,7 @@ def store_user_information(confab_id: int, user_name: str, phone_number: str) ->
         if 'db' in locals():
             db.close()
 
-def get_user_information(confab_id: int, phone_number: str = None) -> List[Dict[str, Any]]:
+def get_user_information(confab_id: int, email: str = None) -> List[Dict[str, Any]]:
     """Retrieve user information from the confab's knowledge base."""
     print("get_user_information working successfully")
     try:
@@ -283,13 +297,13 @@ def get_user_information(confab_id: int, phone_number: str = None) -> List[Dict[
         cfg = confab.config or {}
         user_info = cfg.get("user_information", [])
         
-        if phone_number:
+        if email:
             # Return specific user
             for user in user_info:
-                if user.get("phone_number") == phone_number:
-                    print(f"Found user information for phone: {phone_number}")
+                if user.get("email") == email:
+                    print(f"Found user information for email: {email}")
                     return [user]
-            print(f"No user found with phone: {phone_number}")
+            print(f"No user found with email: {email}")
             return []
         else:
             # Return all users
@@ -308,28 +322,28 @@ def get_user_information(confab_id: int, phone_number: str = None) -> List[Dict[
 class StoreUserInformationInput(BaseModel):
     confab_id: int = Field(description="The ID of the confab to store user information for")
     user_name: str = Field(description="The name of the user")
-    phone_number: str = Field(description="The phone number of the user")
+    email: str = Field(description="The email of the user")
 
 @tool(args_schema=StoreUserInformationInput)
-def store_user_information_tool(confab_id: int, user_name: str, phone_number: str) -> str:
-    """Store user information (name and phone number) in the confab's knowledge base."""
-    success = store_user_information(confab_id, user_name, phone_number)
+def store_user_information_tool(confab_id: int, user_name: str, email: str) -> str:
+    """Store user information (name and email) in the confab's knowledge base."""
+    success = store_user_information(confab_id, user_name, email)
     return "User information stored successfully" if success else "Failed to store user information"
 
 class GetUserInformationInput(BaseModel):
     confab_id: int = Field(description="The ID of the confab to search in")
-    phone_number: Optional[str] = Field(default=None, description="The phone number to search for (optional)")
+    email: Optional[str] = Field(default=None, description="The email to search for (optional)")
 
 @tool(args_schema=GetUserInformationInput)
-def get_user_information_tool(confab_id: int, phone_number: str = None) -> str:
+def get_user_information_tool(confab_id: int, email: str = None) -> str:
     """Retrieve user information from the confab's knowledge base."""
-    results = get_user_information(confab_id, phone_number)
+    results = get_user_information(confab_id, email)
     if results:
-        if phone_number and len(results) == 1:
+        if email and len(results) == 1:
             user = results[0]
-            return f"Found user: {user.get('name', 'Unknown')} - {user.get('phone_number', 'Unknown')}"
+            return f"Found user: {user.get('name', 'Unknown')} - {user.get('email', 'Unknown')}"
         else:
-            return f"Found {len(results)} users:\n" + "\n".join([f"- {user.get('name', 'Unknown')}: {user.get('phone_number', 'Unknown')}" for user in results])
+            return f"Found {len(results)} users:\n" + "\n".join([f"- {user.get('name', 'Unknown')}: {user.get('email', 'Unknown')}" for user in results])
     return "No user information found"
 
 # Database tools for Memory management
@@ -435,17 +449,183 @@ def update_knowledge_base_tool(confab_id: int, file_name: str, information: str)
     success = update_knowledge_base(confab_id, file_name, information)
     return "Knowledge base updated successfully" if success else "Failed to update knowledge base"
 
+def handle_branch_deleted(repo, branch_name: str, confab_id: int) -> str:
+    """Handle case where branch was deleted - recreate it."""
+    print(f"Branch {branch_name} was deleted, recreating it")
+    try:
+        # Get default branch and recreate the confab branch
+        default_branch = repo.default_branch
+        source_branch = repo.get_branch(default_branch)
+        
+        repo.create_git_ref(
+            ref=f'refs/heads/{branch_name}',
+            sha=source_branch.commit.sha
+        )
+        print(f"Recreated branch {branch_name} from {default_branch}")
+        return branch_name
+    except Exception as e:
+        print(f"Failed to recreate branch {branch_name}: {e}")
+        raise e
+
+def handle_merge_conflicts(repo, pr) -> bool:
+    """Handle merge conflicts by updating PR body with conflict information."""
+    try:
+        if not pr.mergeable:
+            # Check if there are conflicts
+            if pr.mergeable_state == "dirty":
+                conflict_message = f"""
+⚠️ **Merge Conflicts Detected**
+
+This pull request has merge conflicts that need to be resolved manually.
+
+**Conflicting files:**
+- Please check the Files Changed tab to see conflicts
+- Resolve conflicts locally or in GitHub UI
+- Update the branch with conflict resolution
+
+**Branch:** {pr.head.ref}
+**Base Branch:** {pr.base.ref}
+
+Once conflicts are resolved, this PR can be merged automatically.
+"""
+                pr.create_issue_comment(conflict_message)
+                print(f"Added conflict comment to PR #{pr.number}")
+                return False
+        return True
+    except Exception as e:
+        print(f"Error handling merge conflicts: {e}")
+        return False
+
+def check_branch_exists(repo, branch_name: str) -> bool:
+    """Check if a branch exists in the repository."""
+    try:
+        repo.get_branch(branch_name)
+        return True
+    except:
+        return False
+
+def check_pull_request_exists(repo, branch_name: str) -> Optional[Any]:
+    """Check if there's an open pull request for the given branch."""
+    try:
+        pulls = repo.get_pulls(state='open', head=branch_name)
+        for pr in pulls:
+            if pr.head.ref == branch_name:
+                return pr
+        return None
+    except:
+        return None
+
+def create_confab_branch(repo, confab_id: int) -> str:
+    """Create or get the confab-specific branch with edge case handling."""
+    branch_name = f"confab-{confab_id}"
+    
+    try:
+        if check_branch_exists(repo, branch_name):
+            print(f"Branch {branch_name} already exists")
+            return branch_name
+        
+        # Get default branch
+        default_branch = repo.default_branch
+        source_branch = repo.get_branch(default_branch)
+        
+        # Create new branch from default
+        repo.create_git_ref(
+            ref=f'refs/heads/{branch_name}',
+            sha=source_branch.commit.sha
+        )
+        print(f"Created branch {branch_name} from {default_branch}")
+        return branch_name
+        
+    except Exception as e:
+        print(f"Error creating branch {branch_name}: {e}")
+        # Try to handle the case where branch might have been deleted
+        try:
+            return handle_branch_deleted(repo, branch_name, confab_id)
+        except Exception as fallback_error:
+            print(f"Failed to handle branch creation error: {fallback_error}")
+            raise e
+
+def create_or_update_pull_request(repo, branch_name: str, confab_name: str, confab_id: int) -> Optional[Any]:
+    """Create a new PR or update existing one."""
+    # Check if PR already exists
+    existing_pr = check_pull_request_exists(repo, branch_name)
+    
+    if existing_pr:
+        print(f"PR already exists: #{existing_pr.number}")
+        return existing_pr
+    
+    # Create new PR
+    try:
+        pr = repo.create_pull(
+            title=f"Update confab {confab_name} (ID: {confab_id})",
+            body=f"Automated update for confab {confab_name} (ID: {confab_id})\n\nChanges made in the confabs/{confab_name}/ directory.",
+            head=branch_name,
+            base=repo.default_branch
+        )
+        print(f"Created PR #{pr.number}")
+        return pr
+    except Exception as e:
+        print(f"Failed to create PR: {e}")
+        return None
+
+def safe_merge_pull_request(repo, pr) -> bool:
+    """Safely merge a pull request if possible, with conflict handling."""
+    try:
+        # Refresh PR status
+        pr.update()
+        
+        if not pr.mergeable:
+            print(f"PR #{pr.number} is not mergeable (state: {pr.mergeable_state})")
+            # Handle merge conflicts
+            if not handle_merge_conflicts(repo, pr):
+                return False
+            
+            # Wait a moment and check again
+            import time
+            time.sleep(3)
+            pr.update()
+            
+            if not pr.mergeable:
+                print(f"PR #{pr.number} still not mergeable after conflict handling")
+                return False
+        
+        # Attempt merge
+        result = pr.merge()
+        if result.merged:
+            print(f"Successfully merged PR #{pr.number}")
+            return True
+        else:
+            print(f"Failed to merge PR #{pr.number}: {result.message}")
+            return False
+            
+    except Exception as e:
+        print(f"Error merging PR: {e}")
+        return False
+
 def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
-    """Ensure repository exists and purpose.md file is created."""
+    """Ensure repository exists and purpose.md file is created using confab-specific branch workflow."""
     try:
         from database import get_db
-        from confab_manager import create_github_repository, initialize_confab_repository
+        from confab_manager import create_github_repository
+        from agent_runner import slugify
         db = next(get_db())
         
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             print(f"Confab with ID {confab_id} not found in ensure_repo_and_purpose")
             return False
+        
+        # Ensure confab has a proper slugified name
+        if not confab.name or confab.name.startswith("Agent Chat –"):
+            print(f"Confab {confab_id} has invalid name: {confab.name}")
+            return False
+        
+        # Ensure the confab name is slugified
+        confab_name = slugify(confab.name)
+        if confab.name != confab_name:
+            confab.name = confab_name
+            db.commit()
+            print(f"Updated confab name to slugified version: {confab_name}")
             
         github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
         if not github_account:
@@ -483,7 +663,6 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                 # Repository doesn't exist or no access, try to create it
                 try:
                     print(f"Creating repository {full_repo_name}")
-                    from confab_manager import create_github_repository
                     repo_info = create_github_repository(
                         repo_name=repo_name,
                         access_token=github_account.access_token,
@@ -496,19 +675,91 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                     print(f"Failed to create repository {full_repo_name}: {create_error}")
                     return False
             
-            # Now create/update PURPOSE.md (changed from purpose.md)
+            # Create or get confab-specific branch
+            branch_name = create_confab_branch(repo, confab_id)
+            
+            # Check if this is the first time creating PURPOSE.md for this confab
+            purpose_file_path = f"confabs/{confab_name}/PURPOSE.md"
+            is_first_time = False
+            
             try:
-                file = repo.get_contents("PURPOSE.md")
-                repo.update_file("PURPOSE.md", "Update purpose", purpose_markdown, file.sha)
-                print("PURPOSE.md updated successfully")
+                # Try to get file from main branch to check if it exists
+                main_file = repo.get_contents(purpose_file_path, ref=repo.default_branch)
+                print(f"PURPOSE.md already exists in main branch")
+            except:
+                print(f"PURPOSE.md does not exist in main branch - first time creation")
+                is_first_time = True
+            
+            # Update/create file in the confab branch
+            try:
+                # Try to get file from the confab branch
+                file = repo.get_contents(purpose_file_path, ref=branch_name)
+                repo.update_file(
+                    purpose_file_path, 
+                    f"Update purpose for confab {confab_name}", 
+                    purpose_markdown, 
+                    file.sha,
+                    branch=branch_name
+                )
+                print(f"PURPOSE.md updated successfully in branch {branch_name}")
             except Exception as file_error:
-                # File might not exist, try to create it
+                # File might not exist in the branch, try to create it
                 try:
-                    repo.create_file("PURPOSE.md", "Create purpose", purpose_markdown)
-                    print("PURPOSE.md created successfully")
+                    repo.create_file(
+                        purpose_file_path, 
+                        f"Create purpose for confab {confab_name}", 
+                        purpose_markdown,
+                        branch=branch_name
+                    )
+                    print(f"PURPOSE.md created successfully in branch {branch_name}")
                 except Exception as create_file_error:
-                    print(f"Failed to create PURPOSE.md: {create_file_error}")
+                    print(f"Failed to create PURPOSE.md at {purpose_file_path}: {create_file_error}")
                     return False
+            
+            # Handle pull request logic
+            if is_first_time:
+                # First time - create PR and merge
+                print("First time creation - creating PR and merging")
+                pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
+                if pr:
+                    # Wait a moment for PR to be processed
+                    import time
+                    time.sleep(2)
+                    safe_merge_pull_request(repo, pr)
+                else:
+                    print("Failed to create PR for first-time setup")
+                    return False
+            else:
+                # Subsequent updates - check if PR exists and is open
+                existing_pr = check_pull_request_exists(repo, branch_name)
+                if existing_pr:
+                    print(f"Updating existing PR #{existing_pr.number}")
+                    # PR exists and is open, no need to create new one
+                else:
+                    # Check if there was a merged PR for this branch
+                    try:
+                        pulls = repo.get_pulls(state='closed', head=branch_name)
+                        merged_pr_found = False
+                        for pr in pulls:
+                            if pr.head.ref == branch_name and pr.merged:
+                                merged_pr_found = True
+                                break
+                        
+                        if merged_pr_found:
+                            print("Previous PR was merged, creating new PR for updates")
+                            pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
+                            if pr:
+                                import time
+                                time.sleep(2)
+                                safe_merge_pull_request(repo, pr)
+                        else:
+                            print("No existing PR found and no merged PR - creating new PR")
+                            pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
+                            
+                    except Exception as pr_check_error:
+                        print(f"Error checking PR history: {pr_check_error}")
+                        # Fallback: create new PR
+                        pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
                 
             return True
             
@@ -532,46 +783,92 @@ class UpdateFileInput(BaseModel):
 
 @tool(args_schema=UpdateFileInput)
 def update_file_tool(confab_id: int, file_path: str, content: str) -> str:
-    """Update a file in the GitHub repository and commit changes. This instruction is for updating any file and committing changes. Its primary objective is to facilitate the process of modifying or adding content to files in a structured manner within a project repository."""
+    """Update a file in GitHub repository using confab-specific branch workflow. This instruction is for updating any file and committing changes. Its primary objective is to facilitate the process of modifying or adding content to files in a structured manner within a project repository."""
     try:
         from database import get_db
+        from agent_runner import slugify
         db = next(get_db())
         
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             return "Confab not found"
+        
+        # Ensure confab has a proper slugified name
+        if not confab.name or confab.name.startswith("Agent Chat –"):
+            return "Confab has invalid name. Please set a proper confab name first."
+        
+        # Ensure confab name is slugified
+        confab_name = slugify(confab.name)
+        if confab.name != confab_name:
+            confab.name = confab_name
+            db.commit()
+            print(f"Updated confab name to slugified version: {confab_name}")
             
         github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
         if not github_account:
             return "No GitHub account connected"
             
-        confab_name = confab.name or f"confab-{confab_id}"
         repo_owner = github_account.selected_org or github_account.github_username
         repo_name = github_account.selected_repo
+        full_repo_name = f"{repo_owner}/{repo_name}"
         
-        # Use the existing update_purpose function for PURPOSE.md
+        # For PURPOSE.md, ensure it goes to confabs/{confab_name}/PURPOSE.md
         if file_path == "PURPOSE.md":
-            success = update_purpose(confab_id, content)
-            return "PURPOSE.md updated successfully" if success else "Failed to update PURPOSE.md"
+            file_path = f"confabs/{confab_name}/PURPOSE.md"
+            print(f"Set PURPOSE.md path to: {file_path}")
+        # For other files, if they don't already include the confabs prefix, add it
+        # Check if the path already starts with confabs/{confab_name}/ to prevent double prefixing
+        elif not file_path.startswith(f"confabs/{confab_name}/"):
+            original_path = file_path
+            file_path = f"confabs/{confab_name}/{file_path}"
+            print(f"Added confabs prefix to path: {original_path} -> {file_path}")
+        else:
+            print(f"Path already has confabs prefix: {file_path}")
         
-        # For other files, use direct GitHub API
+        # Use the new branch-based workflow
         try:
             from github import Github
-            import datetime
             
             g = Github(github_account.access_token)
-            repo = g.get_repo(f"{repo_owner}/{repo_name}")
+            repo = g.get_repo(full_repo_name)
             
-            # Create or update file directly in main branch
+            # Create or get confab-specific branch
+            branch_name = create_confab_branch(repo, confab_id)
+            
+            # Update/create file in the confab branch
             try:
-                existing_file = repo.get_contents(file_path)
-                repo.update_file(file_path, f"Update {file_path}", content, existing_file.sha)
-                print(f"{file_path} updated successfully")
-                return f"File {file_path} updated successfully"
+                # Try to get file from the confab branch
+                existing_file = repo.get_contents(file_path, ref=branch_name)
+                repo.update_file(
+                    file_path, 
+                    f"Update {file_path} for confab {confab_name}", 
+                    content, 
+                    existing_file.sha,
+                    branch=branch_name
+                )
+                print(f"{file_path} updated successfully in branch {branch_name}")
             except:
-                repo.create_file(file_path, f"Create {file_path}", content)
-                print(f"{file_path} created successfully")
-                return f"File {file_path} created successfully"
+                # File might not exist in the branch, try to create it
+                repo.create_file(
+                    file_path, 
+                    f"Create {file_path} for confab {confab_name}", 
+                    content,
+                    branch=branch_name
+                )
+                print(f"{file_path} created successfully in branch {branch_name}")
+            
+            # Handle pull request logic (similar to ensure_repo_and_purpose but for general files)
+            existing_pr = check_pull_request_exists(repo, branch_name)
+            if existing_pr:
+                print(f"File updated in existing PR #{existing_pr.number}")
+                return f"File {file_path} updated successfully in existing PR #{existing_pr.number}"
+            else:
+                # Create new PR for the file update
+                pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
+                if pr:
+                    return f"File {file_path} updated successfully in new PR #{pr.number}"
+                else:
+                    return f"File {file_path} updated successfully but failed to create PR"
             
         except Exception as e:
             return f"Failed to update file: {str(e)}"

@@ -10,6 +10,61 @@ from agent_tools import get_langchain_tools
 import datetime
 import re
 
+def slugify(text: str) -> str:
+    """
+    Convert text to a clean, URL-friendly slug.
+    
+    Args:
+        text: The input text to slugify
+        
+    Returns:
+        A slugified string suitable for folder names
+    """
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9 ]', '', text)
+    text = text.strip()
+    text = text.replace(" ", "-")
+    text = re.sub(r'-+', '-', text)
+    return text
+
+def generate_confab_name_from_purpose(purpose_text: str) -> str:
+    """
+    Generate a meaningful confab name from extracted purpose.
+    
+    Args:
+        purpose_text: The purpose description from AI
+        
+    Returns:
+        A clean, slugified confab name
+    """
+    # Extract key information from purpose
+    purpose_text = purpose_text.strip()
+    
+    # Look for patterns like "Create X agent", "Build Y bot", etc.
+    patterns = [
+        r'create\s+(.+?)\s+(?:agent|bot|assistant|system)',
+        r'build\s+(.+?)\s+(?:agent|bot|assistant|system)',
+        r'design\s+(.+?)\s+(?:agent|bot|assistant|system)',
+        r'develop\s+(.+?)\s+(?:agent|bot|assistant|system)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, purpose_text.lower())
+        if match:
+            name = match.group(1).strip()
+            return slugify(name)
+    
+    # If no pattern matches, extract first meaningful phrase
+    sentences = purpose_text.split('.')
+    if sentences:
+        first_sentence = sentences[0].strip()
+        # Take first 3-4 words and clean them
+        words = first_sentence.split()[:4]
+        return slugify(' '.join(words))
+    
+    # Fallback to generic name
+    return slugify("agent-assistant")
+
 logger = logging.getLogger(__name__)
 
 def format_purpose_markdown(purpose_text: str, confab_name: str = None) -> str:
@@ -84,7 +139,7 @@ Updated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 def store_purpose_to_file(confab_id: int, user_message: str, ai_response: str, db: Session) -> bool:
     """
-    Store user purpose and AI response to purpose.md file.
+    Store user purpose and AI response to PURPOSE.md file in confab folder.
     
     Args:
         confab_id: The confab ID
@@ -98,21 +153,40 @@ def store_purpose_to_file(confab_id: int, user_message: str, ai_response: str, d
     try:
         from agent_tools import update_file_tool
         
-        # Get confab name
+        # Get confab and ensure it has a slugified name
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
-        confab_name = confab.name if confab else f"Confab {confab_id}"
+        if not confab:
+            logger.error(f"Confab {confab_id} not found")
+            return False
+        
+        # Ensure confab has a proper name and slugify it
+        if not confab.name or confab.name.startswith("Agent Chat –"):
+            generated_name = generate_confab_name_from_purpose(ai_response)
+            confab.name = generated_name
+            db.commit()
+            logger.info(f"Generated confab name: {generated_name}")
+        
+        # Use slugified version to maintain consistency with update_file_tool
+        confab_name = slugify(confab.name)
+        
+        # Update confab name if it's not already slugified
+        if confab.name != confab_name:
+            confab.name = confab_name
+            db.commit()
+            logger.info(f"Updated confab name to slugified version: {confab_name}")
         
         # Format the purpose data
         formatted_purpose = format_purpose_markdown(ai_response, confab_name)
         
-        # Store in PURPOSE.md (not purpose.md)
+        # Store in confabs/{confab.name}/PURPOSE.md
+        file_path = f"confabs/{confab_name}/PURPOSE.md"
         result = update_file_tool.invoke({
             'confab_id': confab_id,
-            'file_path': 'PURPOSE.md',
+            'file_path': file_path,
             'content': formatted_purpose
         })
         
-        logger.info(f"Stored purpose to PURPOSE.md for confab {confab_id}: {result}")
+        logger.info(f"Stored purpose to {file_path} for confab {confab_id}: {result}")
         return True
         
     except Exception as e:

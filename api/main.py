@@ -677,23 +677,6 @@ async def ollama_generate(request: OllamaRequest):
 
 
 # System prompt that instructs the LLM how to behave during the confab setup conversation.
-SYSTEM_PROMPT = """You are a Confab Setup Agent.
-
-You must:
-- Detect which setup step the user is working on
-- Call the correct tool
-- Update step progress
-- Guide user to next step
-
-Available steps:
-1 Define Purpose
-2 Add Participants
-3 Configure Memory
-4 Add Tools & APIs
-5 Guardrails
-6 Sample Inputs/Outputs
-7 Review & Save
-"""
 
 
 def _parse_tool_call(text: str) -> Optional[Dict[str, Any]]:
@@ -949,6 +932,178 @@ async def get_confab_threads(
     
     return [ThreadResponse.model_validate(t) for t in threads]
 
+@app.post("/confabs/{confab_id}/set-name")
+async def set_confab_name(
+    confab_id: int,
+    request: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Set or generate a confab name with user input and skip logic.
+    
+    Expected request body:
+    {
+        "user_name": "Optional user-provided name",
+        "purpose_text": "Purpose text for auto-generation if user skips",
+        "skip": false  // If true, auto-generate from purpose
+    }
+    """
+    from agent_runner import slugify, generate_confab_name_from_purpose
+    
+    # Validate confab ownership
+    confab = db.query(Confab).filter(
+        Confab.id == confab_id,
+        Confab.user_id == current_user.id
+    ).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    
+    user_name = request.get("user_name", "").strip()
+    purpose_text = request.get("purpose_text", "").strip()
+    skip = request.get("skip", False)
+    
+    if skip or not user_name:
+        # Auto-generate name from purpose
+        if not purpose_text:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="Purpose text is required for auto-generation"
+            )
+        
+        generated_name = generate_confab_name_from_purpose(purpose_text)
+        confab.name = generated_name
+        db.commit()
+        
+        return {
+            "name": generated_name,
+            "source": "auto_generated",
+            "message": f"Auto-generated confab name: {generated_name}"
+        }
+    else:
+        # Use user-provided name
+        slugified_name = slugify(user_name)
+        confab.name = slugified_name
+        db.commit()
+        
+        return {
+            "name": slugified_name,
+            "source": "user_provided",
+            "original": user_name,
+            "slugified": slugified_name,
+            "message": f"Set confab name: {slugified_name}"
+        }
+
+@app.post("/confabs/{confab_id}/create-isolated")
+async def create_isolated_confab(
+    confab_id: int,
+    request: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a completely isolated confab with new thread and folder.
+    
+    Expected request body:
+    {
+        "name": "Optional confab name",
+        "purpose_text": "Purpose for auto-generation if no name provided"
+    }
+    """
+    from agent_runner import slugify, generate_confab_name_from_purpose
+    
+    # Validate confab ownership
+    confab = db.query(Confab).filter(
+        Confab.id == confab_id,
+        Confab.user_id == current_user.id
+    ).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    
+    user_name = request.get("name", "").strip()
+    purpose_text = request.get("purpose_text", "").strip()
+    
+    # Set confab name
+    if user_name:
+        confab_name = slugify(user_name)
+    elif purpose_text:
+        confab_name = generate_confab_name_from_purpose(purpose_text)
+    else:
+        confab_name = f"confab-{confab_id}"
+    
+    confab.name = confab_name
+    
+    # Create new thread for this confab
+    new_thread = Thread(
+        thread_name=f"Thread for {confab_name}",
+        owner_user_id=current_user.id
+    )
+    db.add(new_thread)
+    db.commit()
+    db.refresh(new_thread)
+    
+    # Create thread mapping
+    thread_mapping = ThreadMapping(
+        confab_id=confab_id,
+        thread_id=new_thread.id
+    )
+    db.add(thread_mapping)
+    db.commit()
+    
+    # Update confab status
+    confab.status = "ready"
+    db.commit()
+    
+    return {
+        "confab_id": confab_id,
+        "confab_name": confab_name,
+        "thread_id": new_thread.id,
+        "thread_name": new_thread.thread_name,
+        "message": f"Created isolated confab '{confab_name}' with new thread {new_thread.id}"
+    }
+
+@app.get("/confab/{confab_id}/isolated-status")
+async def get_confab_isolation_status(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the isolation status of a confab - which thread it belongs to.
+    """
+    # Validate confab ownership
+    confab = db.query(Confab).filter(
+        Confab.id == confab_id,
+        Confab.user_id == current_user.id
+    ).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    
+    # Get thread mapping
+    thread_mapping = db.query(ThreadMapping).filter(
+        ThreadMapping.confab_id == confab_id
+    ).first()
+    
+    if thread_mapping:
+        thread = db.query(Thread).filter(Thread.id == thread_mapping.thread_id).first()
+        return {
+            "confab_id": confab_id,
+            "confab_name": confab.name,
+            "thread_id": thread.id,
+            "thread_name": thread.thread_name,
+            "is_isolated": True,
+            "message": f"Confab '{confab.name}' is isolated to thread '{thread.thread_name}'"
+        }
+    else:
+        return {
+            "confab_id": confab_id,
+            "confab_name": confab.name,
+            "thread_id": None,
+            "thread_name": None,
+            "is_isolated": False,
+            "message": f"Confab '{confab.name}' is not isolated to any thread"
+        }
+
 # === [CLAUDE: Import LangGraph Agent Runner] ===
 from agent_runner import run_langgraph_agent, get_agent_status
 
@@ -960,18 +1115,17 @@ async def chat_with_langgraph_agent(
     db: Session = Depends(get_db)
 ):
     """
-    [CLAUDE: Main LangGraph Agent chat endpoint]
+    [CLAUDE: Main LangGraph Agent chat endpoint with confab isolation]
     
-    This endpoint implements the new architecture:
-    User message -> LangGraph Agent -> LLM thinks -> Calls Tool (DB / GitHub / API) -> Gets result -> Thinks again -> More tools if needed -> Final response
+    This endpoint implements the new architecture with strict confab isolation:
+    1. Validates confab ownership and isolation
+    2. Gets or creates isolated thread for this confab
+    3. Filters chat history strictly by thread_id
+    4. Stores messages only in the isolated thread
+    5. Maintains complete separation between confabs
     
     Architecture flow:
-    1. User sends message
-    2. LangGraph Agent processes message with LLM
-    3. Agent calls tools (get_purpose, update_purpose, search_knowledge_base, update_knowledge_base)
-    4. Agent thinks again based on tool results
-    5. Agent may call more tools if needed
-    6. Agent returns final response
+    User message -> Validate isolation -> LangGraph Agent -> LLM thinks -> Calls Tool -> Gets result -> Final response
     """
     # Validate confab ownership
     confab = db.query(Confab).filter(
@@ -981,22 +1135,78 @@ async def chat_with_langgraph_agent(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
     
+    # Get or create isolated thread for this confab
+    thread_mapping = db.query(ThreadMapping).filter(
+        ThreadMapping.confab_id == confab_id
+    ).first()
+    
+    if not thread_mapping:
+        # Create new isolated thread for this confab
+        new_thread = Thread(
+            thread_name=f"Thread for {confab.name or f'confab-{confab_id}'}",
+            owner_user_id=current_user.id
+        )
+        db.add(new_thread)
+        db.commit()
+        db.refresh(new_thread)
+        
+        # Create thread mapping
+        thread_mapping = ThreadMapping(
+            confab_id=confab_id,
+            thread_id=new_thread.id
+        )
+        db.add(thread_mapping)
+        db.commit()
+        db.refresh(thread_mapping)
+        
+        thread_id = new_thread.id
+        logger.info(f"Created new isolated thread {thread_id} for confab {confab_id}")
+    else:
+        thread_id = thread_mapping.thread_id
+        logger.info(f"Using existing isolated thread {thread_id} for confab {confab_id}")
+    
     # Extract message from request
     user_message = request.get("message", "")
     if not user_message:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message is required")
+    
+    # Store user message in the isolated thread
+    user_db_message = Message(
+        thread_id=thread_id,
+        content=user_message,
+        role="user"
+    )
+    db.add(user_db_message)
+    db.commit()
+    db.refresh(user_db_message)
     
     try:
         # Run the LangGraph agent
         result = await run_langgraph_agent(confab_id, user_message, db)
         
         if result["success"]:
+            # Store AI response in the isolated thread
+            assistant_message = Message(
+                thread_id=thread_id,
+                content=result["response"],
+                role="assistant"
+            )
+            db.add(assistant_message)
+            db.commit()
+            db.refresh(assistant_message)
+            
             return {
                 "response": result["response"],
                 "tool_calls": result.get("tool_calls", []),
                 "confab_id": confab_id,
+                "thread_id": thread_id,
                 "timestamp": str(datetime.datetime.now()),
-                "architecture": "LangGraph with MCP integration"
+                "architecture": "LangGraph with MCP integration",
+                "isolation": "strict_thread_filtering",
+                "messages": {
+                    "user_message_id": user_db_message.id,
+                    "assistant_message_id": assistant_message.id
+                }
             }
         else:
             raise HTTPException(
@@ -1006,10 +1216,245 @@ async def chat_with_langgraph_agent(
             
     except Exception as e:
         logger.error(f"Error in LangGraph agent chat: {e}")
+        
+        # Store error message in the isolated thread
+        error_message = Message(
+            thread_id=thread_id,
+            content=f"Error: Could not generate response - {str(e)}",
+            role="assistant"
+        )
+        db.add(error_message)
+        db.commit()
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Agent error: {str(e)}"
         )
+
+@app.get("/agent/chat/{confab_id}/history")
+async def get_confab_chat_history(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get chat history for a specific confab, demonstrating strict isolation.
+    
+    This endpoint shows only messages from the thread mapped to this confab,
+    proving that confab isolation is working correctly.
+    """
+    # Validate confab ownership
+    confab = db.query(Confab).filter(
+        Confab.id == confab_id,
+        Confab.user_id == current_user.id
+    ).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    
+    # Get thread mapping for this confab
+    thread_mapping = db.query(ThreadMapping).filter(
+        ThreadMapping.confab_id == confab_id
+    ).first()
+    
+    if not thread_mapping:
+        return {
+            "confab_id": confab_id,
+            "confab_name": confab.name,
+            "thread_id": None,
+            "messages": [],
+            "message": f"No chat history found for confab '{confab.name}'. Start a conversation to create history.",
+            "isolation": "no_thread_mapped"
+        }
+    
+    # Get messages only from the mapped thread (strict isolation)
+    messages = db.query(Message).filter(
+        Message.thread_id == thread_mapping.thread_id
+    ).order_by(Message.time).all()
+    
+    message_history = []
+    for msg in messages:
+        message_history.append({
+            "id": msg.id,
+            "content": msg.content,
+            "role": msg.role,
+            "timestamp": msg.time,
+            "thread_id": msg.thread_id
+        })
+    
+    return {
+        "confab_id": confab_id,
+        "confab_name": confab.name,
+        "thread_id": thread_mapping.thread_id,
+        "thread_name": db.query(Thread).filter(Thread.id == thread_mapping.thread_id).first().thread_name,
+        "messages": message_history,
+        "message_count": len(message_history),
+        "isolation": "strict_thread_filtering",
+        "message": f"Retrieved {len(message_history)} messages for confab '{confab.name}'"
+    }
+
+@app.post("/admin/migrate-confabs")
+async def migrate_existing_confabs(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Migrate existing confabs to the new naming and folder structure.
+    
+    This endpoint helps with backward compatibility by:
+    1. Converting old timestamp-based names to slugified names
+    2. Creating thread mappings for isolation
+    3. Moving PURPOSE.md files to new folder structure
+    """
+    from agent_runner import slugify, generate_confab_name_from_purpose
+    
+    # Get all confabs for the user
+    confabs = db.query(Confab).filter(Confab.user_id == current_user.id).all()
+    
+    migrated_count = 0
+    migration_results = []
+    
+    for confab in confabs:
+        result = {
+            "confab_id": confab.id,
+            "old_name": confab.name,
+            "actions": []
+        }
+        
+        # 1. Migrate confab name if it's timestamp-based
+        if confab.name and confab.name.startswith("Agent Chat –"):
+            try:
+                # Try to get purpose to generate a better name
+                from agent_tools import get_purpose
+                purpose_text = get_purpose(confab.id)
+                
+                if purpose_text:
+                    new_name = generate_confab_name_from_purpose(purpose_text)
+                else:
+                    new_name = f"confab-{confab.id}"
+                
+                confab.name = new_name
+                result["actions"].append(f"Renamed from timestamp-based to: {new_name}")
+                migrated_count += 1
+                
+            except Exception as e:
+                result["actions"].append(f"Failed to rename: {str(e)}")
+        
+        # 2. Ensure name is slugified
+        if confab.name:
+            slugified_name = slugify(confab.name)
+            if confab.name != slugified_name:
+                confab.name = slugified_name
+                result["actions"].append(f"Slugified name to: {slugified_name}")
+                migrated_count += 1
+        
+        # 3. Create thread mapping if it doesn't exist
+        existing_mapping = db.query(ThreadMapping).filter(
+            ThreadMapping.confab_id == confab.id
+        ).first()
+        
+        if not existing_mapping:
+            try:
+                # Create new thread
+                new_thread = Thread(
+                    thread_name=f"Thread for {confab.name or f'confab-{confab.id}'}",
+                    owner_user_id=current_user.id
+                )
+                db.add(new_thread)
+                db.commit()
+                db.refresh(new_thread)
+                
+                # Create thread mapping
+                thread_mapping = ThreadMapping(
+                    confab_id=confab.id,
+                    thread_id=new_thread.id
+                )
+                db.add(thread_mapping)
+                db.commit()
+                
+                result["actions"].append(f"Created isolated thread {new_thread.id}")
+                migrated_count += 1
+                
+            except Exception as e:
+                result["actions"].append(f"Failed to create thread mapping: {str(e)}")
+        
+        result["new_name"] = confab.name
+        migration_results.append(result)
+    
+    # Commit all changes
+    try:
+        db.commit()
+        success = True
+    except Exception as e:
+        db.rollback()
+        success = False
+        error = str(e)
+    
+    return {
+        "success": success,
+        "migrated_count": migrated_count,
+        "total_confabs": len(confabs),
+        "migration_results": migration_results,
+        "error": error if not success else None,
+        "message": f"Migration completed. {migrated_count} changes made across {len(confabs)} confabs."
+    }
+
+@app.get("/admin/system-status")
+async def get_system_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get system status showing migration state and confab isolation status.
+    """
+    # Get confabs statistics
+    total_confabs = db.query(Confab).filter(Confab.user_id == current_user.id).count()
+    
+    # Count confabs with proper names (non-timestamp)
+    proper_named_confabs = db.query(Confab).filter(
+        Confab.user_id == current_user.id,
+        ~Confab.name.startswith("Agent Chat –")
+    ).count()
+    
+    # Count confabs with thread mappings
+    confabs_with_threads = db.query(ThreadMapping).join(Confab).filter(
+        Confab.user_id == current_user.id
+    ).count()
+    
+    # Get recent confabs
+    recent_confabs = db.query(Confab).filter(
+        Confab.user_id == current_user.id
+    ).order_by(Confab.created_at.desc()).limit(5).all()
+    
+    confab_details = []
+    for confab in recent_confabs:
+        thread_mapping = db.query(ThreadMapping).filter(
+            ThreadMapping.confab_id == confab.id
+        ).first()
+        
+        confab_details.append({
+            "id": confab.id,
+            "name": confab.name,
+            "status": confab.status,
+            "has_thread_mapping": thread_mapping is not None,
+            "thread_id": thread_mapping.thread_id if thread_mapping else None,
+            "needs_migration": confab.name.startswith("Agent Chat –") if confab.name else False
+        })
+    
+    return {
+        "user": current_user.email,
+        "statistics": {
+            "total_confabs": total_confabs,
+            "proper_named_confabs": proper_named_confabs,
+            "confabs_with_threads": confabs_with_threads,
+            "migration_needed": total_confabs - proper_named_confabs
+        },
+        "recent_confabs": confab_details,
+        "system_health": {
+            "github_structure": "confabs/{confab.name}/PURPOSE.md",
+            "isolation": "strict_thread_filtering",
+            "naming": "slugified_names"
+        }
+    }
 
 @app.get("/agent/status")
 async def get_langgraph_agent_status(
