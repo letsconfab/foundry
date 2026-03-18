@@ -761,6 +761,7 @@ async def chat_with_ollama(
     messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.time).all()
 
     # Build prompt with conversation context
+    SYSTEM_PROMPT= ""
     context_prompt = SYSTEM_PROMPT + "\n\nBased on the following conversation, provide a helpful and coherent response.\n\n"
     for msg in messages[-10:]:  # Use last 10 messages for context
         role = "User" if msg.role == "user" else "Assistant"

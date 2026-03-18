@@ -202,7 +202,7 @@ def initialize_llm():
     try:
         # Try to import Ollama from langchain_community
         from langchain_community.llms import Ollama
-        return Ollama(model="qwen2.5:3b", base_url="http://localhost:11434", temperature=0.7)
+        return Ollama(model="qwen3:0.6b", base_url="http://localhost:11434", temperature=0.7)
     except ImportError:
         logger.error("Ollama not found. Please install langchain-community")
         raise
