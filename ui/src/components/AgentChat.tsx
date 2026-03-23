@@ -88,6 +88,9 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   // [CLAUDE: IMPLEMENTATION - Create confab_id on page load and link to thread_mapping]
   const [currentConfabId, setCurrentConfabId] = useState<number | null>(null);
   const [isConfabCreating, setIsConfabCreating] = useState(false);
+
+  // Loading state for resuming existing confab
+  const [isLoadingExisting, setIsLoadingExisting] = useState(!!existingConfabId);
   
   // Multi-Agent State (if we ever support it)
   const [multiAgentNodes, setMultiAgentNodes] = useState<AgentNode[]>([]);
@@ -126,8 +129,12 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   // Load existing confab data if resuming
   useEffect(() => {
     const loadExistingConfab = async () => {
-      if (!existingConfabId) return;
+      if (!existingConfabId) {
+        setIsLoadingExisting(false);
+        return;
+      }
 
+      setIsLoadingExisting(true);
       try {
         // Load existing confab
         const confab = await apiClient.getConfab(existingConfabId);
@@ -139,18 +146,24 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
           const thread = threads[0];
           setCurrentThreadId(thread.id);
           const msgs = await apiClient.getThreadMessages(thread.id);
-          setMessages(msgs.map((m: any) => ({
-            id: String(m.id),
-            role: m.role,
-            content: m.content,
-            timestamp: new Date(m.time),
-          })));
+          if (msgs.length > 0) {
+            setMessages(msgs.map((m: any) => ({
+              id: String(m.id),
+              role: m.role,
+              content: m.content,
+              timestamp: new Date(m.time),
+            })));
+          }
+          // If no messages but thread exists, keep the default welcome message
         }
+        // If no threads exist, keep the default welcome message
       } catch (error) {
         console.error('Failed to load existing confab:', error);
         // Reset to fresh state if resume fails
         setCurrentConfabId(null);
         setCurrentThreadId(null);
+      } finally {
+        setIsLoadingExisting(false);
       }
     };
 
@@ -386,13 +399,15 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-slate-900">Create New Confab</h2>
-              <p className="text-slate-600 text-sm">Chat with AI to build your confab</p>
+              <h2 className="text-slate-900">{existingConfabId ? 'Continue Building' : 'Create New Confab'}</h2>
+              <p className="text-slate-600 text-sm">
+                {existingConfabId ? 'Resume your conversation to continue building' : 'Chat with AI to build your confab'}
+              </p>
             </div>
           </div>
           <Badge variant="secondary" className="gap-1">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            Active
+            <div className={`w-2 h-2 rounded-full animate-pulse ${existingConfabId ? 'bg-amber-500' : 'bg-green-500'}`} />
+            {existingConfabId ? 'Resuming' : 'Active'}
           </Badge>
         </div>
         {/* repository info / test button */}
@@ -453,65 +468,76 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
           <Card className="flex flex-col min-h-[600px]">
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  {message.role === 'assistant' && (
-                    <Avatar className="w-8 h-8 flex-shrink-0">
-                      <AvatarFallback className="bg-gradient-to-br from-indigo-600 to-purple-600">
-                        <Bot className="w-4 h-4 text-white" />
-                      </AvatarFallback>
-                    </Avatar>
-                  )}
-                  <div
-                    className={`max-w-[80%] rounded-lg px-4 py-3 ${
-                      message.role === 'user'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 text-slate-900'
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
-                    <p
-                      className={`text-xs mt-1 ${
-                        message.role === 'user' ? 'text-indigo-200' : 'text-slate-500'
-                      }`}
-                    >
-                      {message.timestamp.toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </p>
+              {isLoadingExisting ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-center">
+                    <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-3" />
+                    <p className="text-slate-600">Loading your conversation...</p>
                   </div>
-                  {message.role === 'user' && (
-                    <div className="flex flex-col items-center gap-1">
+                </div>
+              ) : (
+                <>
+                  {messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      {message.role === 'assistant' && (
+                        <Avatar className="w-8 h-8 flex-shrink-0">
+                          <AvatarFallback className="bg-gradient-to-br from-indigo-600 to-purple-600">
+                            <Bot className="w-4 h-4 text-white" />
+                          </AvatarFallback>
+                        </Avatar>
+                      )}
+                      <div
+                        className={`max-w-[80%] rounded-lg px-4 py-3 ${
+                          message.role === 'user'
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 text-slate-900'
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                        <p
+                          className={`text-xs mt-1 ${
+                            message.role === 'user' ? 'text-indigo-200' : 'text-slate-500'
+                          }`}
+                        >
+                          {message.timestamp.toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </p>
+                      </div>
+                      {message.role === 'user' && (
+                        <div className="flex flex-col items-center gap-1">
+                          <Avatar className="w-8 h-8 flex-shrink-0">
+                            <AvatarFallback className="bg-slate-300">
+                              <User className="w-4 h-4 text-slate-600" />
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-xs text-slate-600">{user?.name ?? 'You'}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {isTyping && (
+                    <div className="flex gap-3 justify-start">
                       <Avatar className="w-8 h-8 flex-shrink-0">
-                        <AvatarFallback className="bg-slate-300">
-                          <User className="w-4 h-4 text-slate-600" />
+                        <AvatarFallback className="bg-gradient-to-br from-indigo-600 to-purple-600">
+                          <Bot className="w-4 h-4 text-white" />
                         </AvatarFallback>
                       </Avatar>
-                      <span className="text-xs text-slate-600">{user?.name ?? 'You'}</span>
+                      <div className="bg-slate-100 rounded-lg px-4 py-3 flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-slate-600" />
+                        <span className="text-slate-600">Assistant is thinking...</span>
+                      </div>
                     </div>
                   )}
-                </div>
-              ))}
-              
-              {isTyping && (
-                <div className="flex gap-3 justify-start">
-                  <Avatar className="w-8 h-8 flex-shrink-0">
-                    <AvatarFallback className="bg-gradient-to-br from-indigo-600 to-purple-600">
-                      <Bot className="w-4 h-4 text-white" />
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="bg-slate-100 rounded-lg px-4 py-3 flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin text-slate-600" />
-                    <span className="text-slate-600">Assistant is thinking...</span>
-                  </div>
-                </div>
+
+                  <div ref={messagesEndRef} />
+                </>
               )}
-              
-              <div ref={messagesEndRef} />
             </div>
 
             {/* Input Area */}

@@ -933,7 +933,7 @@ async def get_confab_threads(
     thread_ids = [m.thread_id for m in mappings]
     
     # Get the threads
-    threads = db.query(Thread).filter(Thread.id.in_(thread_ids)) if thread_ids else []
+    threads = db.query(Thread).filter(Thread.id.in_(thread_ids)).all() if thread_ids else []
     
     return [ThreadResponse.model_validate(t) for t in threads]
 
