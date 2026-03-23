@@ -166,7 +166,7 @@ async def main():
     print("✓ All tests passed successfully!")
     print("\nThe system is working correctly:")
     print("- GitHub integration with purpose.md files")
-    print("- Ollama LLM integration")
+    print("- Groq LLM integration")
     print("- Agent tools based on actual purpose data")
 
 if __name__ == "__main__":

@@ -101,25 +101,25 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
   const [testResult, setTestResult] = useState<any>(null);
   const [testError, setTestError] = useState('');
 
-  // === [CLAUDE: Ollama-related state for dynamic chat] ===
-  const [ollamaHealthy, setOllamaHealthy] = useState(false);
-  const [ollamaError, setOllamaError] = useState<string | null>(null);
+  // === [CLAUDE: LLM-related state for dynamic chat] ===
+  const [llmHealthy, setLlmHealthy] = useState(false);
+  const [llmError, setLlmError] = useState<string | null>(null);
 
-  // Check Ollama health on component mount
+  // Check LLM health on component mount
   useEffect(() => {
-    const checkOllama = async () => {
+    const checkLLM = async () => {
       try {
-        const health = await apiClient.ollamaHealthCheck();
-        setOllamaHealthy(health.healthy);
+        const health = await apiClient.llmHealthCheck();
+        setLlmHealthy(health.healthy);
         if (!health.healthy) {
-          setOllamaError('Ollama service is not available. Running at http://localhost:11434');
+          setLlmError('LLM service is not available');
         }
       } catch (error) {
-        setOllamaHealthy(false);
-        setOllamaError('Could not connect to Ollama service');
+        setLlmHealthy(false);
+        setLlmError('Could not connect to LLM service');
       }
     };
-    checkOllama();
+    checkLLM();
 
     // [CLAUDE: IMPLEMENTATION - Create confab on page load]
     // This creates a confab entry in the database when entering @agentchat page
@@ -246,46 +246,34 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
       let assistantContent = '';
       let response: any = null;
 
-      if (!ollamaHealthy) {
-        // Try LangGraph agent even if Ollama is not healthy (it might use different LLM)
+      // Try LangGraph agent if we have a confab, otherwise use direct LLM
+      if (currentConfabId != null) {
         try {
-          if (currentConfabId != null) {
-            response = await apiClient.chatWithLangGraphAgent(currentConfabId, content);
-            assistantContent = response.response || "I couldn't generate a response. Please try again.";
-          } else {
-            assistantContent = "I need a confab ID to process your request. Please create a confab first.";
-          }
+          response = await apiClient.chatWithLangGraphAgent(currentConfabId, content);
+          assistantContent = response.response || "I couldn't generate a response. Please try again.";
         } catch (langGraphError: any) {
           console.error('[CLAUDE: LangGraph Agent API error]', langGraphError);
-          assistantContent = `I encountered an error with the LangGraph agent: ${langGraphError.message || 'Unable to generate response'}. Please try again or check if the agent service is running.`;
+          // Fallback to direct LLM if LangGraph fails
+          try {
+            response = await apiClient.llmGenerateResponse(
+              `User asked: ${content}\n\nProvide a helpful response:`
+            );
+            assistantContent = response.response || "I couldn't generate a response. Please try again.";
+          } catch (llmError: any) {
+            console.error('[CLAUDE: LLM API error]', llmError);
+            assistantContent = `I encountered an error: ${llmError.message || 'Unable to generate response'}. Please try again.`;
+          }
         }
       } else {
-        // Ollama is healthy, but we still prefer LangGraph agent
+        // No confab selected - use direct LLM generation
         try {
-          if (currentConfabId != null) {
-            response = await apiClient.chatWithLangGraphAgent(currentConfabId, content);
-            assistantContent = response.response || "I couldn't generate a response. Please try again.";
-          } else {
-            assistantContent = "I need a confab ID to process your request. Please create a confab first.";
-          }
-        } catch (langGraphError: any) {
-          console.error('[CLAUDE: LangGraph Agent API error]', langGraphError);
-          // Fallback to Ollama if LangGraph fails
-          try {
-            if (tid != null) {
-              response = await apiClient.chatWithOllama(tid, content);
-              assistantContent = response.assistant_message?.content || "I couldn't generate a response. Please try again.";
-            } else {
-              // Fallback: use direct Ollama generation if no thread
-              response = await apiClient.ollamaGenerateResponse(
-                `User asked: ${content}\n\nProvide a helpful response about building an AI confab:`
-              );
-              assistantContent = response.response || "I couldn't generate a response. Please try again.";
-            }
-          } catch (ollamaError: any) {
-            console.error('[CLAUDE: Ollama API error]', ollamaError);
-            assistantContent = `I encountered errors with both LangGraph agent and Ollama: ${ollamaError.message || 'Unable to generate response'}. Please try again or check if the services are running.`;
-          }
+          response = await apiClient.llmGenerateResponse(
+            `User asked: ${content}\n\nProvide a helpful response about building an AI confab:`
+          );
+          assistantContent = response.response || "I couldn't generate a response. Please try again.";
+        } catch (llmError: any) {
+          console.error('[CLAUDE: LLM API error]', llmError);
+          assistantContent = `I encountered an error: ${llmError.message || 'Unable to generate response'}. Please try again.`;
         }
       }
 

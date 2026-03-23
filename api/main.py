@@ -1,14 +1,18 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables FIRST, before any custom module imports
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any
 
-import os
 import json, re
 import datetime
 import logging
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +22,7 @@ from schemas import (
     UserCreate, UserLogin, UserResponse, UserListItem, ConfabCreate, ConfabResponse,
     GitHubConnect, GitHubLogin, ConfabConfig, SimpleConfabConfig,
     ThreadCreate, ThreadResponse, MessageCreate, MessageResponse,
-    ThreadMappingCreate, ThreadMappingResponse, OllamaRequest, OllamaResponse,
+    ThreadMappingCreate, ThreadMappingResponse, LLMRequest, LLMResponse,
 )
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
@@ -28,11 +32,8 @@ from agent_tools import (
     define_purpose, add_participant, configure_memory, add_tools_and_apis,
     guardrails, sample_io, review_and_save
 )
-# === [CLAUDE: Import Ollama service for dynamic chat responses] ===
-from ollama_service import ask_ollama, ollama_client
-
-# Load environment variables
-load_dotenv()
+# === [CLAUDE: Import LLM service for dynamic chat responses] ===
+from llm_service import ask_llm, llm_client
 
 # Create database tables (with error handling)
 try:
@@ -619,60 +620,57 @@ async def test_repo_initialization(
         )
 
 
-# === [CLAUDE: Ollama API Endpoints for Dynamic Chat Responses] ===
-# These endpoints handle interactions with the Ollama LLM service
+# === [CLAUDE: LLM API Endpoints for Dynamic Chat Responses] ===
+# These endpoints handle interactions with the Groq LLM service
 
-@app.get("/ollama/health")
-async def ollama_health_check():
+@app.get("/llm/health")
+async def llm_health_check():
     """
-    Check if Ollama service is running and accessible.
-    Returns health status indicating if Ollama is available.
+    Check if LLM service is configured and accessible.
+    Returns health status indicating if Groq API is available.
     """
-    is_healthy = await ollama_client.health_check()
+    is_healthy = await llm_client.health_check()
     return {
-        "status": "healthy" if is_healthy else "unavailable",
-        "ollama_url": ollama_client.base_url,
-        "model": ollama_client.model,
+        "status": "healthy" if is_healthy else "not_configured",
+        "provider": "groq",
+        "model": llm_client.model,
         "healthy": is_healthy
     }
 
 
-@app.get("/ollama/models")
-async def ollama_list_models():
+@app.get("/llm/models")
+async def llm_list_models():
     """
-    Get list of available models in Ollama.
+    Get list of supported models.
     """
-    try:
-        models = await ollama_client.list_models()
-        return models
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cannot connect to Ollama: {str(e)}"
-        )
+    return {
+        "models": [
+            {"name": "qwen/qwen3-32b", "description": "Qwen 3 32B - Fast and capable"},
+            {"name": "llama-3.1-8b-instant", "description": "Llama 3.1 8B - Very fast"},
+            {"name": "llama-3.1-70b-versatile", "description": "Llama 3.1 70B - Most capable"},
+        ]
+    }
 
 
-@app.post("/ollama/generate")
-async def ollama_generate(request: OllamaRequest):
+@app.post("/llm/generate")
+async def llm_generate(request: LLMRequest):
     """
-    Generate a response from Ollama using the provided prompt.
-    
-    [CLAUDE: Direct endpoint for generating text with Ollama, useful for testing]
+    Generate a response from LLM using the provided prompt.
     """
     try:
-        response = await ask_ollama(
+        response = await ask_llm(
             prompt=request.prompt,
             temperature=request.temperature
         )
         return {
-            "model": ollama_client.model,
+            "model": llm_client.model,
             "response": response,
             "success": True
         }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Ollama service error: {str(e)}"
+            detail=f"LLM service error: {str(e)}"
         )
 
 
@@ -723,19 +721,19 @@ def _execute_tool(tool_name: str, args: Dict[str, Any], db: Session) -> str:
 
 
 @app.post("/threads/{thread_id}/chat")
-async def chat_with_ollama(
+async def chat_with_llm(
     thread_id: int,
     request: MessageCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    [CLAUDE: Main chat endpoint - takes user message, generates response from Ollama, and stores both in DB]
+    [CLAUDE: Main chat endpoint - takes user message, generates response from LLM, and stores both in DB]
 
     This endpoint:
     1. Validates the thread belongs to the current user
     2. Stores the user's message in the database
-    3. Calls Ollama to generate a response based on message history
+    3. Calls LLM to generate a response based on message history
     4. Stores the AI response in the database
     5. Returns both messages to the client
     """
@@ -757,7 +755,7 @@ async def chat_with_ollama(
     db.commit()
     db.refresh(user_message)
 
-    # [CLAUDE: Build context from message history for Ollama prompt]
+    # [CLAUDE: Build context from message history for LLM prompt]
     messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.time).all()
 
     # Build prompt with conversation context
@@ -768,8 +766,8 @@ async def chat_with_ollama(
         context_prompt += f"{role}: {msg.content}\n"
 
     try:
-        # [CLAUDE: Generate response from Ollama using the full context]
-        ai_response = await ask_ollama(
+        # [CLAUDE: Generate response from LLM using the full context]
+        ai_response = await ask_llm(
             prompt=context_prompt,
             temperature=0.7
         )
@@ -802,7 +800,7 @@ async def chat_with_ollama(
 
             # call the model again to continue conversation after tool
             context_prompt += f"Assistant: {ai_response}\nTool output: {tool_result}\n"
-            ai_response = await ask_ollama(
+            ai_response = await ask_llm(
                 prompt=context_prompt,
                 temperature=0.7
             )
@@ -826,7 +824,7 @@ async def chat_with_ollama(
             response_payload["tool_message"] = MessageResponse.model_validate(tool_message)
         return response_payload
     except Exception as e:
-        # [CLAUDE: If Ollama fails, still return the user message but with error for assistant]
+        # [CLAUDE: If LLM fails, still return the user message but with error for assistant]
         error_message = Message(
             thread_id=thread_id,
             content=f"Error: Could not generate response - {str(e)}",
@@ -838,7 +836,7 @@ async def chat_with_ollama(
 
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Ollama service error: {str(e)}"
+            detail=f"LLM service error: {str(e)}"
         )
 
 

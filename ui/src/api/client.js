@@ -187,35 +187,35 @@ class ApiClient {
     });
   }
 
-  // === [CLAUDE: Ollama API endpoints for dynamic chat responses] ===
-  
-  async chatWithOllama(threadId, message) {
-    console.log('API Client: Chatting with Ollama for thread:', threadId);
+  // === [CLAUDE: LLM API endpoints for dynamic chat responses] ===
+
+  async chatWithLLM(threadId, message) {
+    console.log('API Client: Chatting with LLM for thread:', threadId);
     return this.request(`/threads/${threadId}/chat`, {
       method: 'POST',
       body: JSON.stringify({ content: message, role: 'user' }),
     });
   }
 
-  async ollamaHealthCheck() {
+  async llmHealthCheck() {
     try {
-      return await this.request('/ollama/health');
+      return await this.request('/llm/health');
     } catch (error) {
-      console.error('API Client: Ollama health check failed:', error);
+      console.error('API Client: LLM health check failed:', error);
       return { status: 'unavailable', healthy: false };
     }
   }
 
-  async ollamaGenerateResponse(prompt) {
-    console.log('API Client: Generating Ollama response');
-    return this.request('/ollama/generate', {
+  async llmGenerateResponse(prompt) {
+    console.log('API Client: Generating LLM response');
+    return this.request('/llm/generate', {
       method: 'POST',
-      body: JSON.stringify({ prompt, stream: false }),
+      body: JSON.stringify({ prompt }),
     });
   }
 
-  async ollamaListModels() {
-    return this.request('/ollama/models');
+  async llmListModels() {
+    return this.request('/llm/models');
   }
 
   // === [CLAUDE: Thread mapping endpoints] ===

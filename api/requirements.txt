@@ -18,4 +18,5 @@ langchain==1.2.12
 langchain-core==1.2.19
 langchain-community==0.4.1
 langgraph==1.1.2
+langchain-groq>=0.2.0
 mcp==1.0.0

@@ -318,23 +318,20 @@ class ThreadMappingResponse(BaseModel):
         from_attributes = True
 
 
-# === [CLAUDE: Ollama API Schemas for dynamic chat responses] ===
-class OllamaRequest(BaseModel):
-    """Request to Ollama API for generating chat responses"""
-    model: str = Field(..., description="Model name (e.g., 'qwen2.5:3b')")
+class LLMRequest(BaseModel):
+    """Request to LLM API for generating chat responses"""
+    model: str = Field(default="qwen/qwen3-32b", description="Model name")
     prompt: str = Field(..., description="User prompt to send to the model")
-    stream: bool = Field(default=False, description="Whether to stream the response")
     temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
 
-class OllamaResponse(BaseModel):
-    """Response from Ollama API"""
+class LLMResponse(BaseModel):
+    """Response from LLM API"""
     model: str
-    created_at: Optional[str] = None
     response: str
-    done: bool = False
+    success: bool = True
 
 class ChatRequest(BaseModel):
-    """Request for chat completion using Ollama"""
+    """Request for chat completion using LLM"""
     thread_id: int
     message: str
     confab_id: Optional[int] = None

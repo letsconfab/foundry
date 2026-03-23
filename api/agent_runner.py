@@ -193,22 +193,28 @@ def store_purpose_to_file(confab_id: int, user_message: str, ai_response: str, d
         logger.error(f"Failed to store purpose to file: {e}")
         return False
 
-# LLM initialization function
-def initialize_llm():
-    """
-    Initialize and return the LLM instance.
-    This function uses Ollama service with qwen2.5:3b model.
-    """
-    try:
-        # Try to import Ollama from langchain_community
-        from langchain_community.llms import Ollama
-        return Ollama(model="qwen3:0.6b", base_url="http://localhost:11434", temperature=0.7)
-    except ImportError:
-        logger.error("Ollama not found. Please install langchain-community")
-        raise
+# Lazy-initialized LLM instance
+_llm_instance = None
 
-# Initialize the model
-model = initialize_llm()
+def get_llm():
+    """
+    Get the LLM instance, initializing lazily on first use.
+    Uses Groq API with qwen3-32b model.
+    """
+    global _llm_instance
+    if _llm_instance is None:
+        try:
+            from langchain_groq import ChatGroq
+            api_key = os.getenv("GROQ_API_KEY")
+            model_name = os.getenv("GROQ_MODEL_NAME", "qwen/qwen3-32b")
+            if not api_key:
+                logger.error("GROQ_API_KEY environment variable is not set")
+                raise ValueError("GROQ_API_KEY is required")
+            _llm_instance = ChatGroq(api_key=api_key, model=model_name, temperature=0.7)
+        except ImportError:
+            logger.error("ChatGroq not found. Please install langchain-groq")
+            raise
+    return _llm_instance
 
 async def run_langgraph_agent(confab_id: int, user_message: str, db: Session) -> Dict[str, Any]:
     """
@@ -272,7 +278,7 @@ Respond ONLY with purpose description:"""
         logger.info(f"Running agent for confab {confab_id} with message: {user_message}")
         
         # For now, just use the LLM without tool execution
-        response = model.invoke(prompt)
+        response = get_llm().invoke(prompt)
         
         # Store the purpose data to purpose.md file
         store_purpose_to_file(confab_id, user_message, str(response), db)
@@ -292,21 +298,6 @@ Respond ONLY with purpose description:"""
         logger.error(f"Error running agent: {e}")
         return {
             "success": False,
-            "error": str(e)
-        }
-
-async def get_agent_status() -> Dict[str, Any]:
-    """Get the current status of the agent system."""
-    try:
-        return {
-            "status": "active",
-            "llm_provider": type(model).__name__,
-            "tools_count": len(get_langchain_tools()),
-            "architecture": "Simple LLM with tools context"
-        }
-    except Exception as e:
-        return {
-            "status": "error",
             "error": str(e)
         }
 
@@ -344,7 +335,7 @@ async def run_stage(db: Session, confab_id: int, stage_id: str, user_input: str,
         if stage is None:
             raise ValueError("Stage not found in confab config")
 
-        # Use LangGraph agent instead of direct Ollama call
+        # Use LangGraph agent instead of direct LLM call
         prompt_template = stage.get("prompt_template") or "{input}"
         prompt = prompt_template.replace("{input}", user_input)
         
@@ -385,9 +376,10 @@ async def run_stage(db: Session, confab_id: int, stage_id: str, user_input: str,
 def get_agent_status() -> Dict[str, Any]:
     """Get the current status of the agent system."""
     try:
+        llm = get_llm() if _llm_instance else None
         return {
-            "status": "active",
-            "llm_provider": type(model).__name__,
+            "status": "active" if llm else "not_initialized",
+            "llm_provider": type(llm).__name__ if llm else "ChatGroq (not initialized)",
             "tools_count": len(get_langchain_tools()),
             "architecture": "LangGraph with MCP integration"
         }
