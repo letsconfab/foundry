@@ -23,6 +23,7 @@ function AppContent() {
   const [currentView, setCurrentView] = useState<View>('home');
   const [selectedConfabName, setSelectedConfabName] = useState('');
   const [selectedConfabVersion, setSelectedConfabVersion] = useState('1.0.0');
+  const [selectedConfabId, setSelectedConfabId] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     if (isLoggedIn && (currentView === 'home' || currentView === 'login' || currentView === 'register')) {
@@ -30,7 +31,7 @@ function AppContent() {
     }
   }, [isLoggedIn, currentView]);
 
-  const handleNavigate = (view: View, confabName?: string, version?: string) => {
+  const handleNavigate = (view: View, confabName?: string, version?: string, confabId?: number) => {
     setCurrentView(view);
     if (confabName) {
       setSelectedConfabName(confabName);
@@ -38,6 +39,8 @@ function AppContent() {
     if (version) {
       setSelectedConfabVersion(version);
     }
+    // Set confabId for resuming, or clear it for new confabs
+    setSelectedConfabId(confabId);
   };
 
   if (isLoading) {
@@ -69,7 +72,7 @@ function AppContent() {
                 {currentView === 'home' && <HeroSection onNavigate={handleNavigate} />}
                 {currentView === 'login' && <Login onNavigate={handleNavigate} />}
                 {currentView === 'register' && <Register onNavigate={handleNavigate} />}
-                {currentView === 'create' && <AgentChat onNavigate={handleNavigate} />}
+                {currentView === 'create' && <AgentChat onNavigate={handleNavigate} existingConfabId={selectedConfabId} />}
                 {currentView === 'dashboard' && <AgentDashboard onNavigate={handleNavigate} />}
                 {currentView === 'deploy' && <DeploymentPanel onNavigate={handleNavigate} />}
                 {currentView === 'multi-agent' && <MultiAgentBuilder onNavigate={handleNavigate} />}

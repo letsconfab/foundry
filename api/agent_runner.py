@@ -10,6 +10,19 @@ from agent_tools import get_langchain_tools
 import datetime
 import re
 
+
+def generate_placeholder_confab_name(user_id: int, db: Session) -> str:
+    """Generate 'untitled-confab' or 'untitled-confab-N' based on existing confabs."""
+    existing = db.query(Confab).filter(
+        Confab.user_id == user_id,
+        Confab.name.like('untitled-confab%')
+    ).count()
+    if existing == 0:
+        return 'untitled-confab'
+    # Second confab should be untitled-confab-1, not untitled-confab-2
+    return f'untitled-confab-{existing}'
+
+
 def slugify(text: str) -> str:
     """
     Convert text to a clean, URL-friendly slug.
@@ -163,6 +176,7 @@ def store_purpose_to_file(confab_id: int, user_message: str, ai_response: str, d
         if not confab.name or confab.name.startswith("Agent Chat –"):
             generated_name = generate_confab_name_from_purpose(ai_response)
             confab.name = generated_name
+            confab.status = 'draft'
             db.commit()
             logger.info(f"Generated confab name: {generated_name}")
         
@@ -172,6 +186,7 @@ def store_purpose_to_file(confab_id: int, user_message: str, ai_response: str, d
         # Update confab name if it's not already slugified
         if confab.name != confab_name:
             confab.name = confab_name
+            confab.status = 'draft'
             db.commit()
             logger.info(f"Updated confab name to slugified version: {confab_name}")
         

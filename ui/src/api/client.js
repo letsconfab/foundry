@@ -126,10 +126,16 @@ class ApiClient {
   }
 
   // Confab endpoints
-  async createConfab(confabData) {
+  async createConfab(options = {}) {
+    console.log('API Client: Creating confab with options:', options);
     return this.request('/confabs', {
       method: 'POST',
-      body: JSON.stringify(confabData),
+      body: JSON.stringify({
+        name: options.name || 'New Confab',
+        description: options.description || '',
+        generate_placeholder: options.generate_placeholder || false,
+        status: options.status || 'building',
+      }),
     });
   }
 

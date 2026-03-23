@@ -27,6 +27,7 @@ from schemas import (
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
 from confab_manager import create_confab_in_github, update_confab_in_github, create_github_repository, initialize_confab_repository
+from agent_runner import generate_placeholder_confab_name
 # import the setup-step tools so we can execute them when the agent asks
 from agent_tools import (
     define_purpose, add_participant, configure_memory, add_tools_and_apis,
@@ -289,13 +290,18 @@ async def create_confab(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Determine confab name - use placeholder if requested
+    confab_name = confab.name
+    if confab.generate_placeholder:
+        confab_name = generate_placeholder_confab_name(current_user.id, db)
+
     # Create confab in database
     db_confab = Confab(
-        name=confab.name,
+        name=confab_name,
         description=confab.description,
         user_id=current_user.id,
         version="1.0.0",
-        status="draft"
+        status=confab.status or "building"
     )
     
     db.add(db_confab)
@@ -316,7 +322,7 @@ async def create_confab(
     
     try:
         github_url = await create_confab_in_github(
-            confab_name=confab.name,
+            confab_name=confab_name,
             confab_data=confab.dict(),
             repo_owner=repo_owner,
             repo_name=repo_name,

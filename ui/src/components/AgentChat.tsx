@@ -13,6 +13,7 @@ type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab
 
 interface AgentChatProps {
   onNavigate: (view: View, confabName?: string) => void;
+  existingConfabId?: number;  // For resuming building confabs
 }
 
 interface Message {
@@ -67,7 +68,7 @@ const PROMPT_SUGGESTIONS = [
 ];
 
 
-export function AgentChat({ onNavigate }: AgentChatProps) {
+export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -120,35 +121,41 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
       }
     };
     checkLLM();
+  }, []);
 
-    // [CLAUDE: IMPLEMENTATION - Create confab on page load]
-    // This creates a confab entry in the database when entering @agentchat page
-    // The confab_id will be linked to the thread via thread_mapping on first message
-    const createInitialConfab = async () => {
-      if (isConfabCreating) return; // Prevent duplicate creation
-      
+  // Load existing confab data if resuming
+  useEffect(() => {
+    const loadExistingConfab = async () => {
+      if (!existingConfabId) return;
+
       try {
-        setIsConfabCreating(true);
-        const confabName = `Agent Chat – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
-        const confab = await apiClient.createConfab({
-          name: confabName,
-          description: 'Auto-generated confab for agent chat conversation',
-        });
-        
-        if (confab?.id) {
-          setCurrentConfabId(confab.id);
-          console.log('[CLAUDE: IMPLEMENTATION] Confab created with ID:', confab.id);
+        // Load existing confab
+        const confab = await apiClient.getConfab(existingConfabId);
+        setCurrentConfabId(confab.id);
+
+        // Load existing thread and messages
+        const threads = await apiClient.getConfabThreads(existingConfabId);
+        if (threads.length > 0) {
+          const thread = threads[0];
+          setCurrentThreadId(thread.id);
+          const msgs = await apiClient.getThreadMessages(thread.id);
+          setMessages(msgs.map((m: any) => ({
+            id: String(m.id),
+            role: m.role,
+            content: m.content,
+            timestamp: new Date(m.time),
+          })));
         }
       } catch (error) {
-        console.error('[CLAUDE: IMPLEMENTATION] Error creating confab:', error);
-        // Continue gracefully - confab creation is optional for demo
-      } finally {
-        setIsConfabCreating(false);
+        console.error('Failed to load existing confab:', error);
+        // Reset to fresh state if resume fails
+        setCurrentConfabId(null);
+        setCurrentThreadId(null);
       }
     };
-    
-    createInitialConfab();
-  }, []);
+
+    loadExistingConfab();
+  }, [existingConfabId]);
 
   // Determine GitHub repo naming convention
   const getRepoNamingConvention = () => {
@@ -202,6 +209,23 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
     setInput('');
     setIsTyping(true);
 
+    // Create confab on first message if not exists
+    // Track the confab ID locally to avoid race condition with state update
+    let confabId = currentConfabId;
+    if (confabId == null) {
+      try {
+        const confab = await apiClient.createConfab({
+          generate_placeholder: true,
+          status: 'building'
+        });
+        console.log('Created new confab:', confab);
+        confabId = confab.id;
+        setCurrentConfabId(confab.id);
+      } catch (error) {
+        console.error('Failed to create confab:', error);
+      }
+    }
+
     // === [CLAUDE: Initialize or use existing thread for conversation storage] ===
     let tid = currentThreadId;
     if (tid == null) {
@@ -217,18 +241,19 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
         // [CLAUDE: IMPLEMENTATION - Create thread_mapping on first message]
         // Links the confab (created when entering page) to the thread (created when sending first message)
         // This establishes the relationship: confab_id -> thread_id in thread_mapping table
-        if (tid != null && currentConfabId != null) {
+        // Use local confabId variable to avoid race condition with state update
+        if (tid != null && confabId != null) {
           try {
-            const mapping = await apiClient.createThreadMapping(currentConfabId, tid);
+            const mapping = await apiClient.createThreadMapping(confabId, tid);
             console.log('[CLAUDE: IMPLEMENTATION] Thread mapping created:', mapping);
           } catch (mappingError) {
             console.error('[CLAUDE: IMPLEMENTATION] Error creating thread mapping:', mappingError);
             // Continue gracefully - the thread is still created even if mapping fails
           }
-        } else if (tid != null && currentConfabId == null) {
+        } else if (tid != null && confabId == null) {
           console.warn('[CLAUDE: IMPLEMENTATION] Thread created but confab_id is missing:', {
             threadId: tid,
-            confabId: currentConfabId,
+            confabId: confabId,
           });
         }
       } catch {
@@ -247,9 +272,10 @@ export function AgentChat({ onNavigate }: AgentChatProps) {
       let response: any = null;
 
       // Try LangGraph agent if we have a confab, otherwise use direct LLM
-      if (currentConfabId != null) {
+      // Use local confabId variable to avoid race condition with state update
+      if (confabId != null) {
         try {
-          response = await apiClient.chatWithLangGraphAgent(currentConfabId, content);
+          response = await apiClient.chatWithLangGraphAgent(confabId, content);
           assistantContent = response.response || "I couldn't generate a response. Please try again.";
         } catch (langGraphError: any) {
           console.error('[CLAUDE: LangGraph Agent API error]', langGraphError);

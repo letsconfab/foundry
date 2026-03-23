@@ -1,6 +1,6 @@
 import React from 'react';
-import { useState } from 'react';
-import { Plus, Bot, MoreVertical, Share2, StopCircle, Trash2, Cloud, MessageSquare, Settings } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Bot, MoreVertical, Share2, StopCircle, Trash2, Cloud, MessageSquare, Settings, Wrench } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
@@ -10,65 +10,66 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import { apiClient } from '../api/client.js';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure';
 
 interface AgentDashboardProps {
-  onNavigate: (view: View, confabName?: string, version?: string) => void;
+  onNavigate: (view: View, confabName?: string, version?: string, confabId?: number) => void;
 }
 
-interface Agent {
-  id: string;
+interface Confab {
+  id: number;
   name: string;
-  description: string;
-  status: 'active' | 'draft' | 'deployed';
-  llmProvider: string;
-  cloudProvider?: string;
-  lastModified: Date;
+  description: string | null;
+  status: string;  // Can be 'building', 'draft', 'published', 'archived'
   version: string;
+  created_at: string;
+  updated_at: string | null;
+  github_url?: string;
 }
 
 export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
-  const [agents] = useState<Agent[]>([
-    {
-      id: '1',
-      name: 'Customer Support Bot',
-      description: 'Handles customer inquiries and provides product information',
-      status: 'deployed',
-      llmProvider: 'OpenAI GPT-4',
-      cloudProvider: 'AWS',
-      lastModified: new Date('2025-11-15'),
-      version: '1.0.0',
-    },
-    {
-      id: '2',
-      name: 'Data Analysis Bot',
-      description: 'Analyzes data patterns and generates insights',
-      status: 'active',
-      llmProvider: 'Anthropic Claude',
-      cloudProvider: 'GCP',
-      lastModified: new Date('2025-11-16'),
-      version: '1.0.1',
-    },
-    {
-      id: '3',
-      name: 'Code Review Assistant',
-      description: 'Reviews code and suggests improvements',
-      status: 'draft',
-      llmProvider: 'Google AI',
-      lastModified: new Date('2025-11-17'),
-      version: '0.9.0',
-    },
-  ]);
+  const [confabs, setConfabs] = useState<Confab[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const getStatusColor = (status: Agent['status']) => {
+  useEffect(() => {
+    const fetchConfabs = async () => {
+      try {
+        const data = await apiClient.getConfabs();
+        setConfabs(data);
+      } catch (error) {
+        console.error('Failed to fetch confabs:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchConfabs();
+  }, []);
+
+  const getStatusColor = (status: string) => {
     switch (status) {
-      case 'deployed':
+      case 'published':
         return 'bg-green-100 text-green-700';
-      case 'active':
-        return 'bg-blue-100 text-blue-700';
+      case 'building':
+        return 'bg-amber-100 text-amber-700';
       case 'draft':
+        return 'bg-blue-100 text-blue-700';
+      case 'archived':
         return 'bg-slate-100 text-slate-700';
+      default:
+        return 'bg-slate-100 text-slate-700';
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'building':
+        return 'Building...';
+      case 'published':
+        return 'Published';
+      default:
+        return status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown';
     }
   };
 
@@ -85,99 +86,124 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {agents.map((agent) => (
-          <Card key={agent.id} className="p-6 hover:shadow-lg transition-shadow">
-            <div className="flex items-start justify-between mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center">
-                <Bot className="w-6 h-6 text-white" />
-              </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon">
-                    <MoreVertical className="w-4 h-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem className="gap-2">
-                    <Share2 className="w-4 h-4" />
-                    Publish
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className="gap-2">
-                    <StopCircle className="w-4 h-4" />
-                    Stop
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className="gap-2 text-red-600">
-                    <Trash2 className="w-4 h-4" />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-
-            <h3 className="text-slate-900 mb-2">{agent.name}</h3>
-            {agent.status === 'deployed' && (
-              <Badge className="bg-green-100 text-green-700 mb-2">
-                Deployed
-              </Badge>
-            )}
-            <p className="text-slate-600 text-sm mb-4">{agent.description}</p>
-
-            <div className="space-y-2 mb-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-500">LLM Provider:</span>
-                <span className="text-slate-900">{agent.llmProvider}</span>
-              </div>
-              {agent.cloudProvider && (
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-500">Cloud:</span>
-                  <span className="text-slate-900">{agent.cloudProvider}</span>
+      {loading ? (
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+          <p className="text-slate-600">Loading confabs...</p>
+        </div>
+      ) : confabs.length === 0 ? (
+        <div className="text-center py-12">
+          <Bot className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+          <h3 className="text-slate-900 mb-2">No confabs yet</h3>
+          <p className="text-slate-600 mb-4">Create your first confab to get started</p>
+          <Button onClick={() => onNavigate('create')} className="gap-2">
+            <Plus className="w-4 h-4" />
+            Create Confab
+          </Button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {confabs.map((confab) => (
+            <Card key={confab.id} className="p-6 hover:shadow-lg transition-shadow">
+              <div className="flex items-start justify-between mb-4">
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                  confab.status === 'building'
+                    ? 'bg-gradient-to-br from-amber-500 to-orange-500'
+                    : 'bg-gradient-to-br from-indigo-600 to-purple-600'
+                }`}>
+                  {confab.status === 'building' ? (
+                    <Wrench className="w-6 h-6 text-white" />
+                  ) : (
+                    <Bot className="w-6 h-6 text-white" />
+                  )}
                 </div>
-              )}
-              <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-200">
-                <span className="text-xs text-slate-500">
-                  {agent.lastModified.toLocaleDateString()}
-                </span>
-                <span className="text-xs text-slate-500">v{agent.version}</span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon">
+                      <MoreVertical className="w-4 h-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem className="gap-2">
+                      <Share2 className="w-4 h-4" />
+                      Publish
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-2 text-red-600">
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
-            </div>
 
-            {/* Action Buttons */}
-            <div className="mt-4 flex gap-2">
-              {agent.status === 'deployed' ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 gap-2"
-                  onClick={() => onNavigate('confab-chat', agent.name, agent.version)}
-                >
-                  <MessageSquare className="w-3 h-3" />
-                  Chat
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 gap-2"
-                  onClick={() => onNavigate('deploy')}
-                >
-                  <Cloud className="w-3 h-3" />
-                  Deploy
-                </Button>
-              )}
-              {/* <Button
-                variant="outline"
-                size="sm"
-                className="flex-1 gap-2"
-                onClick={() => onNavigate('configure', agent.name, agent.version)}
-              >
-                <Settings className="w-3 h-3" />
-                Configure
-              </Button> */}
-            </div>
-          </Card>
-        ))}
-      </div>
+              <h3 className="text-slate-900 mb-2">{confab.name}</h3>
+              <Badge className={`${getStatusColor(confab.status)} mb-2`}>
+                {getStatusLabel(confab.status)}
+              </Badge>
+              <p className="text-slate-600 text-sm mb-4">{confab.description || 'No description'}</p>
+
+              <div className="space-y-2 mb-4">
+                <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-200">
+                  <span className="text-xs text-slate-500">
+                    {confab.updated_at ? new Date(confab.updated_at).toLocaleDateString() : 'Just now'}
+                  </span>
+                  <span className="text-xs text-slate-500">v{confab.version}</span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="mt-4 flex flex-col gap-2">
+                {confab.status === 'building' ? (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="gap-2"
+                    style={{ backgroundColor: '#d97706' }}
+                    onClick={() => onNavigate('create', confab.name, confab.version, confab.id)}
+                  >
+                    <Wrench className="w-3 h-3" />
+                    Continue Building
+                  </Button>
+                ) : null}
+                {confab.status === 'published' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 gap-2"
+                    onClick={() => onNavigate('confab-chat', confab.name, confab.version)}
+                  >
+                    <MessageSquare className="w-3 h-3" />
+                    Chat
+                  </Button>
+                )}
+                {confab.status === 'draft' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 gap-2"
+                    onClick={() => onNavigate('deploy')}
+                  >
+                    <Cloud className="w-3 h-3" />
+                    Deploy
+                  </Button>
+                )}
+                {/* Fallback for any status */}
+                {!['building', 'published', 'draft'].includes(confab.status) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 gap-2"
+                    onClick={() => onNavigate('create', confab.name, confab.version, confab.id)}
+                  >
+                    <Settings className="w-3 h-3" />
+                    Configure
+                  </Button>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

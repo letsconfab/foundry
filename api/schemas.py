@@ -249,6 +249,8 @@ class ConfabBase(BaseModel):
 
 class ConfabCreate(ConfabBase):
     config: Optional[Union[ConfabConfig, SimpleConfabConfig]] = None
+    status: Optional[str] = Field(default='building', description="Confab status: building, draft, published, archived")
+    generate_placeholder: Optional[bool] = Field(default=False, description="Generate placeholder name")
 
 class ConfabUpdate(BaseModel):
     name: Optional[str] = None
