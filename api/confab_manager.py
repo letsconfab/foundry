@@ -1,8 +1,31 @@
+"""
+DEPRECATED: This module is deprecated in favor of github_service.py
+
+To enable the new GitHubService, set the environment variable:
+    USE_NEW_GITHUB_SERVICE=true
+
+Migration timeline:
+1. Enable feature flag in development
+2. Run migrate_branches.py to convert existing branches
+3. Enable feature flag in production
+4. Remove this module after verification
+"""
+
 import httpx
+import warnings
 from typing import Dict, Any, Optional
 from base64 import b64encode
 import json
 from datetime import datetime
+
+# Deprecation warning
+warnings.warn(
+    "confab_manager module is deprecated. Use github_service.GitHubService instead. "
+    "Set USE_NEW_GITHUB_SERVICE=true to enable the new service.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 
 class ConfabManager:
     """Manages confab creation and updates in GitHub repositories."""

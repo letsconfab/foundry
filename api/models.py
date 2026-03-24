@@ -52,6 +52,7 @@ class Confab(Base):
 
     # Relationships
     user = relationship("User", back_populates="confabs")
+    thread_mappings = relationship("ThreadMapping", back_populates="confab")
 
 
 # Table 2: threads — thread_id (id), thread_name, createdAt, owner_user_id
@@ -95,5 +96,5 @@ class ThreadMapping(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    confab = relationship("Confab", foreign_keys=[confab_id])
+    confab = relationship("Confab", back_populates="thread_mappings", foreign_keys=[confab_id])
     thread = relationship("Thread", foreign_keys=[thread_id])

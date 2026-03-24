@@ -27,6 +27,13 @@ from schemas import (
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
 from confab_manager import create_confab_in_github, update_confab_in_github, create_github_repository, initialize_confab_repository
+# === [CLAUDE: Import unified GitHub service for feature-flagged migration] ===
+from github_service import (
+    GitHubService,
+    USE_NEW_GITHUB_SERVICE,
+    create_confab_in_github as new_create_confab_in_github,
+    update_confab_in_github as new_update_confab_in_github
+)
 from agent_runner import generate_placeholder_confab_name
 # import the setup-step tools so we can execute them when the agent asks
 from agent_tools import (
@@ -303,7 +310,8 @@ async def create_confab(
         description=confab.description,
         user_id=current_user.id,
         version="1.0.0",
-        status=confab.status or "building"
+        status=confab.status or "building",
+        config=confab.config.model_dump() if confab.config else {}
     )
     
     db.add(db_confab)
@@ -323,20 +331,32 @@ async def create_confab(
         repo_name = "confabs"
     
     try:
-        github_url = await create_confab_in_github(
-            confab_name=confab_name,
-            confab_data=confab.dict(),
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            access_token=github_account.access_token if github_account else None
-        )
-        
+        # Use new GitHubService when feature flag is enabled
+        if USE_NEW_GITHUB_SERVICE and github_account:
+            github_url = await new_create_confab_in_github(
+                confab_name=confab_name,
+                confab_data=confab.dict(),
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                access_token=github_account.access_token,
+                confab_id=db_confab.id  # Pass confab ID for new branch strategy
+            )
+        else:
+            github_url = await create_confab_in_github(
+                confab_name=confab_name,
+                confab_data=confab.dict(),
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                access_token=github_account.access_token if github_account else None
+            )
+
         db_confab.github_url = github_url
         db.commit()
     except Exception as e:
         # If GitHub creation fails, we still have the confab in DB
+        logger.warning(f"GitHub sync failed for confab {db_confab.id}: {e}")
         pass
-    
+
     return ConfabResponse(
         id=db_confab.id,
         name=db_confab.name,
@@ -417,7 +437,15 @@ async def update_confab(
     # Update confab in database
     confab.name = confab_update.name
     confab.description = confab_update.description
-    confab.version = str(float(confab.version) + 0.1)  # Increment version
+    if confab_update.config:
+        confab.config = confab_update.config.model_dump()
+    # Increment patch version (e.g., 1.0.0 -> 1.0.1)
+    try:
+        parts = confab.version.split(".")
+        parts[-1] = str(int(parts[-1]) + 1)
+        confab.version = ".".join(parts)
+    except (ValueError, IndexError):
+        confab.version = "1.0.1"  # Fallback
     db.commit()
     
     # Update confab in GitHub
@@ -425,12 +453,22 @@ async def update_confab(
         github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
         if github_account:
             try:
-                await update_confab_in_github(
-                    confab_name=confab.name,
-                    confab_data=confab_update.dict(),
-                    github_url=confab.github_url,
-                    access_token=github_account.access_token
-                )
+                # Use new GitHubService when feature flag is enabled
+                if USE_NEW_GITHUB_SERVICE:
+                    await new_update_confab_in_github(
+                        confab_name=confab.name,
+                        confab_data=confab_update.dict(),
+                        github_url=confab.github_url,
+                        access_token=github_account.access_token,
+                        confab_id=confab.id  # Pass confab ID for new branch strategy
+                    )
+                else:
+                    await update_confab_in_github(
+                        confab_name=confab.name,
+                        confab_data=confab_update.dict(),
+                        github_url=confab.github_url,
+                        access_token=github_account.access_token
+                    )
             except Exception as e:
                 pass  # Log error but don't fail the update
     
@@ -916,7 +954,7 @@ async def list_thread_mappings(
     return [ThreadMappingResponse.model_validate(m) for m in mappings]
 
 
-@app.get("/confab/{confab_id}/threads")
+@app.get("/confabs/{confab_id}/threads")
 async def get_confab_threads(
     confab_id: int,
     current_user: User = Depends(get_current_user),
@@ -1072,7 +1110,7 @@ async def create_isolated_confab(
         "message": f"Created isolated confab '{confab_name}' with new thread {new_thread.id}"
     }
 
-@app.get("/confab/{confab_id}/isolated-status")
+@app.get("/confabs/{confab_id}/isolated-status")
 async def get_confab_isolation_status(
     confab_id: int,
     current_user: User = Depends(get_current_user),

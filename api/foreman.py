@@ -15,7 +15,27 @@ from context_loader import ContextLoader, ForemanContext
 from resume_generator import ResumePromptGenerator, STAGE_PROMPTS, STEP_DESCRIPTIONS
 from llm_service import ask_llm
 
+# Import tool functions at module level (not runtime)
+from agent_tools import (
+    define_purpose, add_participant, configure_memory,
+    add_tools_and_apis, guardrails, sample_io, review_and_save,
+    update_purpose
+)
+
 logger = logging.getLogger(__name__)
+
+# Tools registry - maps tool names to functions
+# Tools that require db session are marked with requires_db=True
+SETUP_TOOLS = {
+    "define_purpose": {"fn": define_purpose, "requires_db": True},
+    "add_participant": {"fn": add_participant, "requires_db": True},
+    "configure_memory": {"fn": configure_memory, "requires_db": True},
+    "add_tools_and_apis": {"fn": add_tools_and_apis, "requires_db": True},
+    "guardrails": {"fn": guardrails, "requires_db": True},
+    "sample_io": {"fn": sample_io, "requires_db": True},
+    "review_and_save": {"fn": review_and_save, "requires_db": True},
+    "update_purpose": {"fn": update_purpose, "requires_db": False},  # Different signature
+}
 
 
 # System prompt for the Foreman agent
@@ -293,49 +313,39 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
         user_message: str
     ) -> str:
         """Execute tool calls and generate enriched response."""
-        # Import tool execution from agent_tools
-        try:
-            from agent_tools import (
-                define_purpose, add_participant, configure_memory,
-                add_tools_and_apis, guardrails, sample_io, review_and_save,
-                update_purpose
-            )
+        results = []
 
-            tool_map = {
-                "define_purpose": define_purpose,
-                "add_participant": add_participant,
-                "configure_memory": configure_memory,
-                "add_tools_and_apis": add_tools_and_apis,
-                "guardrails": guardrails,
-                "sample_io": sample_io,
-                "review_and_save": review_and_save,
-                "update_purpose": update_purpose
-            }
+        for call in tool_calls:
+            tool_name = call.get("tool")
+            args = call.get("args", {})
 
-            results = []
-            for call in tool_calls:
-                tool_name = call.get("tool")
-                args = call.get("args", {})
+            if tool_name in SETUP_TOOLS:
+                try:
+                    tool_config = SETUP_TOOLS[tool_name]
+                    tool_fn = tool_config["fn"]
 
-                if tool_name in tool_map:
-                    try:
-                        # Add confab_id to args if not present
-                        if "confab_id" not in args:
-                            args["confab_id"] = self.confab_id
+                    # Add confab_id to args if not present
+                    if "confab_id" not in args:
+                        args["confab_id"] = self.confab_id
 
-                        result = tool_map[tool_name](**args)
-                        results.append(f"Tool '{tool_name}' executed: {result}")
-                        logger.info(f"Executed tool {tool_name} for confab {self.confab_id}")
-                    except Exception as e:
-                        results.append(f"Tool '{tool_name}' failed: {str(e)}")
-                        logger.error(f"Tool {tool_name} error: {e}")
+                    # Pass db to tools that require it (fixes the missing db bug)
+                    if tool_config["requires_db"]:
+                        result = tool_fn(db=self.db, **args)
+                    else:
+                        result = tool_fn(**args)
 
-            # If tools were executed, append results to response
-            if results:
-                return original_response + "\n\n[Tool execution results: " + "; ".join(results) + "]"
+                    results.append(f"Tool '{tool_name}' executed: {result}")
+                    logger.info(f"Executed tool {tool_name} for confab {self.confab_id}")
+                except Exception as e:
+                    results.append(f"Tool '{tool_name}' failed: {str(e)}")
+                    logger.error(f"Tool {tool_name} error: {e}")
+            else:
+                logger.warning(f"Unknown tool: {tool_name}")
+                results.append(f"Tool '{tool_name}' not found")
 
-        except ImportError as e:
-            logger.warning(f"Could not import agent_tools: {e}")
+        # If tools were executed, append results to response
+        if results:
+            return original_response + "\n\n[Tool execution results: " + "; ".join(results) + "]"
 
         return original_response
 

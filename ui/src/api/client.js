@@ -238,7 +238,7 @@ class ApiClient {
   }
 
   async getConfabThreads(confabId) {
-    return this.request(`/confab/${confabId}/threads`);
+    return this.request(`/confabs/${confabId}/threads`);
   }
 
   // === [CLAUDE: LangGraph Agent endpoints] ===
