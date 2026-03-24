@@ -10,6 +10,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
 import { apiClient } from '../api/client.js';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure';
@@ -32,6 +42,8 @@ interface Confab {
 export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
   const [confabs, setConfabs] = useState<Confab[]>([]);
   const [loading, setLoading] = useState(true);
+  const [confabToDelete, setConfabToDelete] = useState<Confab | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const fetchConfabs = async () => {
@@ -46,6 +58,20 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
     };
     fetchConfabs();
   }, []);
+
+  const handleDeleteConfab = async () => {
+    if (!confabToDelete) return;
+    setIsDeleting(true);
+    try {
+      await apiClient.deleteConfab(confabToDelete.id);
+      setConfabs(prev => prev.filter(c => c.id !== confabToDelete.id));
+      setConfabToDelete(null);
+    } catch (error) {
+      console.error('Failed to delete confab:', error);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -128,7 +154,10 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                       <Share2 className="w-4 h-4" />
                       Publish
                     </DropdownMenuItem>
-                    <DropdownMenuItem className="gap-2 text-red-600">
+                    <DropdownMenuItem
+                      className="gap-2 text-red-600"
+                      onClick={() => setConfabToDelete(confab)}
+                    >
                       <Trash2 className="w-4 h-4" />
                       Delete
                     </DropdownMenuItem>
@@ -204,6 +233,27 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
           ))}
         </div>
       )}
+
+      <AlertDialog open={!!confabToDelete} onOpenChange={(open) => !open && setConfabToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Confab</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{confabToDelete?.name}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfab}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

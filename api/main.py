@@ -457,16 +457,19 @@ async def delete_confab(
         Confab.id == confab_id,
         Confab.user_id == current_user.id
     ).first()
-    
+
     if not confab:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Confab not found"
         )
-    
+
+    # Delete related thread_mapping records first (cascade)
+    db.query(ThreadMapping).filter(ThreadMapping.confab_id == confab_id).delete()
+
     db.delete(confab)
     db.commit()
-    
+
     return {"message": "Confab deleted successfully"}
 
 
