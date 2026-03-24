@@ -16,6 +16,7 @@ import {
 } from './ui/dialog';
 import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
+import { MessageContent } from './MessageContent';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure' | 'review-chats';
 
@@ -282,7 +283,7 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
                       : 'bg-white text-slate-900'
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  <MessageContent content={message.content} variant={message.role} />
                 </Card>
                 
                 {/* Feedback buttons for assistant messages */}

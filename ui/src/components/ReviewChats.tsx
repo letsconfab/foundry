@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, MessageSquare, Bot, User, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
+import { MessageContent } from './MessageContent';
 import { apiClient } from '../api/client.js';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure' | 'review-chats';
@@ -189,7 +190,7 @@ export function ReviewChats({ onNavigate }: ReviewChatsProps) {
                               isUser ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-900'
                             }`}
                           >
-                            <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+                            <MessageContent content={msg.content} className="text-sm" variant={isUser ? 'user' : 'assistant'} />
                             <p className={`text-xs mt-1 ${isUser ? 'text-indigo-200' : 'text-slate-500'}`}>
                               {formatDate(msg.time)}
                             </p>

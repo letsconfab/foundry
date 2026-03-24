@@ -8,6 +8,7 @@ import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
+import { MessageContent } from './MessageContent';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'review-chats';
 
@@ -496,7 +497,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
                             : 'bg-slate-100 text-slate-900'
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{message.content}</p>
+                        <MessageContent content={message.content} variant={message.role} />
                         <p
                           className={`text-xs mt-1 ${
                             message.role === 'user' ? 'text-indigo-200' : 'text-slate-500'
