@@ -276,7 +276,9 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
     }
 
     // === [CLAUDE: Store user message in database if thread exists] ===
-    if (tid != null) {
+    // NOTE: Only store if NOT using LangGraph agent, as Foreman handles message storage
+    const usingLangGraphAgent = confabId != null;
+    if (tid != null && !usingLangGraphAgent) {
       apiClient.addMessage(tid, content, 'user').catch(() => {});
     }
 
@@ -289,6 +291,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
       // Use local confabId variable to avoid race condition with state update
       if (confabId != null) {
         try {
+          // Foreman/LangGraph agent handles message storage internally
           response = await apiClient.chatWithLangGraphAgent(confabId, content);
           assistantContent = response.response || "I couldn't generate a response. Please try again.";
         } catch (langGraphError: any) {
@@ -342,7 +345,8 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
       // step tracking is handled by the backend agent via tools
 
       // === [CLAUDE: Store AI response in database if thread exists] ===
-      if (tid != null) {
+      // NOTE: Only store if NOT using LangGraph agent, as Foreman handles message storage
+      if (tid != null && !usingLangGraphAgent) {
         apiClient.addMessage(tid, assistantContent, 'assistant').catch(() => {});
       }
     } catch (error) {
