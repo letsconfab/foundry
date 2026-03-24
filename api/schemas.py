@@ -353,3 +353,27 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     user_id: Optional[int] = None
+
+
+# Foreman Agent schemas
+class SetupProgressResponse(BaseModel):
+    """Setup progress for confab building flow."""
+    completed_steps: List[int] = []
+    current_stage: str = "purpose"
+    total_steps: int = 7
+    remaining_steps: List[int] = []
+
+
+class ForemanChatResponse(BaseModel):
+    """Response from Foreman agent chat endpoint."""
+    response: str
+    confab_id: int
+    thread_id: Optional[int] = None
+    is_resume: bool = False
+    setup_progress: Optional[SetupProgressResponse] = None
+    tool_calls: List[Dict[str, Any]] = []
+    timestamp: datetime
+    messages: Optional[Dict[str, int]] = None
+
+    class Config:
+        from_attributes = True

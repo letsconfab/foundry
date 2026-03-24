@@ -35,6 +35,8 @@ from agent_tools import (
 )
 # === [CLAUDE: Import LLM service for dynamic chat responses] ===
 from llm_service import ask_llm, llm_client
+# === [CLAUDE: Import Foreman agent for building confabs] ===
+from foreman import Foreman
 
 # Create database tables (with error handling)
 try:
@@ -1121,16 +1123,17 @@ async def chat_with_langgraph_agent(
 ):
     """
     [CLAUDE: Main LangGraph Agent chat endpoint with confab isolation]
-    
+
     This endpoint implements the new architecture with strict confab isolation:
     1. Validates confab ownership and isolation
-    2. Gets or creates isolated thread for this confab
-    3. Filters chat history strictly by thread_id
-    4. Stores messages only in the isolated thread
-    5. Maintains complete separation between confabs
-    
+    2. Routes 'building' status confabs through Foreman agent
+    3. Gets or creates isolated thread for this confab
+    4. Filters chat history strictly by thread_id
+    5. Stores messages only in the isolated thread
+    6. Maintains complete separation between confabs
+
     Architecture flow:
-    User message -> Validate isolation -> LangGraph Agent -> LLM thinks -> Calls Tool -> Gets result -> Final response
+    User message -> Validate isolation -> Foreman (if building) or LangGraph Agent -> Response
     """
     # Validate confab ownership
     confab = db.query(Confab).filter(
@@ -1139,12 +1142,35 @@ async def chat_with_langgraph_agent(
     ).first()
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-    
+
+    # === [CLAUDE: Route 'building' status confabs through Foreman agent] ===
+    if confab.status == "building":
+        foreman = Foreman(confab_id, db)
+        initialized = await foreman.initialize()
+
+        if not initialized:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not initialize Foreman agent"
+            )
+
+        user_message = request.get("message", "")
+
+        # Handle resume request (empty message or explicit resume flag)
+        if not user_message or request.get("resume", False):
+            logger.info(f"Generating resume prompt for confab {confab_id}")
+            return await foreman.generate_resume_prompt()
+
+        # Process regular message through Foreman
+        logger.info(f"Processing message through Foreman for confab {confab_id}")
+        return await foreman.process_message(user_message)
+
+    # === [CLAUDE: Original flow for non-building confabs] ===
     # Get or create isolated thread for this confab
     thread_mapping = db.query(ThreadMapping).filter(
         ThreadMapping.confab_id == confab_id
     ).first()
-    
+
     if not thread_mapping:
         # Create new isolated thread for this confab
         new_thread = Thread(
@@ -1154,7 +1180,7 @@ async def chat_with_langgraph_agent(
         db.add(new_thread)
         db.commit()
         db.refresh(new_thread)
-        
+
         # Create thread mapping
         thread_mapping = ThreadMapping(
             confab_id=confab_id,
@@ -1163,13 +1189,13 @@ async def chat_with_langgraph_agent(
         db.add(thread_mapping)
         db.commit()
         db.refresh(thread_mapping)
-        
+
         thread_id = new_thread.id
         logger.info(f"Created new isolated thread {thread_id} for confab {confab_id}")
     else:
         thread_id = thread_mapping.thread_id
         logger.info(f"Using existing isolated thread {thread_id} for confab {confab_id}")
-    
+
     # Extract message from request
     user_message = request.get("message", "")
     if not user_message:
