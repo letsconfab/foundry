@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, TestTube, CheckCircle, AlertCircle } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -101,33 +101,12 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   const [maxTurnsPerAgent, setMaxTurnsPerAgent] = useState('3');
   const [githubConnected, setGithubConnected] = useState(false);
 
-  // repository test helpers (same as ConfabConfigForm)
-  const [isTestingRepo, setIsTestingRepo] = useState(false);
-  const [testResult, setTestResult] = useState<any>(null);
-  const [testError, setTestError] = useState('');
-
-  // === [CLAUDE: LLM-related state for dynamic chat] ===
-  const [llmHealthy, setLlmHealthy] = useState(false);
-  const [llmError, setLlmError] = useState<string | null>(null);
-
-  // Check LLM health on component mount
-  useEffect(() => {
-    const checkLLM = async () => {
-      try {
-        const health = await apiClient.llmHealthCheck();
-        setLlmHealthy(health.healthy);
-        if (!health.healthy) {
-          setLlmError('LLM service is not available');
-        }
-      } catch (error) {
-        setLlmHealthy(false);
-        setLlmError('Could not connect to LLM service');
-      }
-    };
-    checkLLM();
-  }, []);
+  // Chat ready state (replaces LLM health check - API is assumed available)
+  const [chatReady, setChatReady] = useState(true);
 
   // Load existing confab data if resuming
+  // Note: getConfabThreads endpoint removed - we now need to track thread ID differently
+  // For now, we just load the confab and start fresh if needed
   useEffect(() => {
     const loadExistingConfab = async () => {
       if (!existingConfabId) {
@@ -140,24 +119,8 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
         // Load existing confab
         const confab = await apiClient.getConfab(existingConfabId);
         setCurrentConfabId(confab.id);
-
-        // Load existing thread and messages
-        const threads = await apiClient.getConfabThreads(existingConfabId);
-        if (threads.length > 0) {
-          const thread = threads[0];
-          setCurrentThreadId(thread.id);
-          const msgs = await apiClient.getThreadMessages(thread.id);
-          if (msgs.length > 0) {
-            setMessages(msgs.map((m: any) => ({
-              id: String(m.id),
-              role: m.role,
-              content: m.content,
-              timestamp: new Date(m.time),
-            })));
-          }
-          // If no messages but thread exists, keep the default welcome message
-        }
-        // If no threads exist, keep the default welcome message
+        // Note: Thread association now handled via ThreadParticipant model
+        // The thread ID would need to be passed explicitly or discovered via participants
       } catch (error) {
         console.error('Failed to load existing confab:', error);
         // Reset to fresh state if resume fails
@@ -170,29 +133,6 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
 
     loadExistingConfab();
   }, [existingConfabId]);
-
-  // Determine GitHub repo naming convention
-  const getRepoNamingConvention = () => {
-    if (user?.github_connected) {
-      return 'username/confabs (will be set based on your GitHub username)';
-    } else {
-      return 'letsconfab/confabs (for email users)';
-    }
-  };
-
-  const handleTestRepo = async () => {
-    setIsTestingRepo(true);
-    setTestError('');
-    setTestResult(null);
-    try {
-      const result = await apiClient.testRepoInitialization();
-      setTestResult(result);
-    } catch (error: any) {
-      setTestError(error.message || 'Failed to test repository initialization');
-    } finally {
-      setIsTestingRepo(false);
-    }
-  };
 
   const availableAgents = [
     { id: '1', name: 'Customer Support Agent', role: 'Support' },
@@ -252,110 +192,85 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
           await apiClient.addMessage(tid, messages[0].content, 'assistant');
         }
 
-        // [CLAUDE: IMPLEMENTATION - Create thread_mapping on first message]
-        // Links the confab (created when entering page) to the thread (created when sending first message)
-        // This establishes the relationship: confab_id -> thread_id in thread_mapping table
-        // Use local confabId variable to avoid race condition with state update
+        // Add confab as a participant in the thread (replaces thread_mapping)
         if (tid != null && confabId != null) {
           try {
-            const mapping = await apiClient.createThreadMapping(confabId, tid);
-            console.log('[CLAUDE: IMPLEMENTATION] Thread mapping created:', mapping);
-          } catch (mappingError) {
-            console.error('[CLAUDE: IMPLEMENTATION] Error creating thread mapping:', mappingError);
-            // Continue gracefully - the thread is still created even if mapping fails
+            await apiClient.addThreadParticipant(tid, 'confab', confabId, null, 'participant');
+            console.log('[CLAUDE: IMPLEMENTATION] Confab added as thread participant');
+            // Also add Foreman as system agent participant
+            await apiClient.addThreadParticipant(tid, 'system', null, 'foreman', 'participant');
+            console.log('[CLAUDE: IMPLEMENTATION] Foreman added as thread participant');
+          } catch (participantError) {
+            console.error('[CLAUDE: IMPLEMENTATION] Error adding thread participant:', participantError);
+            // Continue gracefully - the thread is still created even if participant add fails
           }
-        } else if (tid != null && confabId == null) {
-          console.warn('[CLAUDE: IMPLEMENTATION] Thread created but confab_id is missing:', {
-            threadId: tid,
-            confabId: confabId,
-          });
         }
       } catch {
         tid = null;
       }
     }
 
-    // === [CLAUDE: Store user message in database if thread exists] ===
-    // NOTE: Only store if NOT using LangGraph agent, as Foreman handles message storage
-    const usingLangGraphAgent = confabId != null;
-    if (tid != null && !usingLangGraphAgent) {
-      apiClient.addMessage(tid, content, 'user').catch(() => {});
-    }
-
-    // === [CLAUDE: Generate AI response from LangGraph Agent API] ===
+    // === [CLAUDE: Send message via unified chat endpoint] ===
+    // The chat endpoint handles message storage and agent responses
     try {
       let assistantContent = '';
       let response: any = null;
 
-      // Try LangGraph agent if we have a confab, otherwise use direct LLM
-      // Use local confabId variable to avoid race condition with state update
-      if (confabId != null) {
+      if (tid != null) {
         try {
-          // Foreman/LangGraph agent handles message storage internally
-          response = await apiClient.chatWithLangGraphAgent(confabId, content);
-          assistantContent = response.response || "I couldn't generate a response. Please try again.";
-        } catch (langGraphError: any) {
-          console.error('[CLAUDE: LangGraph Agent API error]', langGraphError);
-          // Fallback to direct LLM if LangGraph fails
-          try {
-            response = await apiClient.llmGenerateResponse(
-              `User asked: ${content}\n\nProvide a helpful response:`
-            );
-            assistantContent = response.response || "I couldn't generate a response. Please try again.";
-          } catch (llmError: any) {
-            console.error('[CLAUDE: LLM API error]', llmError);
-            assistantContent = `I encountered an error: ${llmError.message || 'Unable to generate response'}. Please try again.`;
+          // Use the unified chat endpoint - it handles everything
+          response = await apiClient.chat(tid, content);
+
+          // The response contains user_message and agent_responses
+          if (response.agent_responses && response.agent_responses.length > 0) {
+            // Add each agent response as a message
+            for (const agentResp of response.agent_responses) {
+              const agentMsg: Message = {
+                id: String(agentResp.id),
+                role: 'assistant',
+                content: agentResp.content,
+                timestamp: new Date(agentResp.created_at),
+              };
+              setMessages((prev) => [...prev, agentMsg]);
+            }
+            assistantContent = response.agent_responses[response.agent_responses.length - 1].content;
+          } else {
+            // No agent response yet - this shouldn't happen with Foreman
+            assistantContent = "Message sent. Waiting for agent response...";
           }
+        } catch (chatError: any) {
+          console.error('[CLAUDE: Chat API error]', chatError);
+          assistantContent = `I encountered an error: ${chatError.message || 'Unable to send message'}. Please try again.`;
+
+          // Add error as assistant message
+          const errorMsg: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: assistantContent,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, errorMsg]);
         }
       } else {
-        // No confab selected - use direct LLM generation
-        try {
-          response = await apiClient.llmGenerateResponse(
-            `User asked: ${content}\n\nProvide a helpful response about building an AI confab:`
-          );
-          assistantContent = response.response || "I couldn't generate a response. Please try again.";
-        } catch (llmError: any) {
-          console.error('[CLAUDE: LLM API error]', llmError);
-          assistantContent = `I encountered an error: ${llmError.message || 'Unable to generate response'}. Please try again.`;
-        }
+        // No thread - show error
+        assistantContent = "Could not create a conversation thread. Please try again.";
+        const errorMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: assistantContent,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMsg]);
       }
 
       setIsTyping(false);
-
-      // === [CLAUDE: Add AI response to messages state] ===
-      // if the backend returned a tool_message, display it first
-      if (response && response.tool_message) {
-        const toolMsg: Message = {
-          id: `tool-${Date.now()}`,
-          role: 'assistant',
-          content: response.tool_message.content,
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, toolMsg]);
-      }
-
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: assistantContent,
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
-      // step tracking is handled by the backend agent via tools
-
-      // === [CLAUDE: Store AI response in database if thread exists] ===
-      // NOTE: Only store if NOT using LangGraph agent, as Foreman handles message storage
-      if (tid != null && !usingLangGraphAgent) {
-        apiClient.addMessage(tid, assistantContent, 'assistant').catch(() => {});
-      }
     } catch (error) {
       console.error('[CLAUDE: Error in handleSend]', error);
       setIsTyping(false);
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `Error: Failed to generate response. ${error instanceof Error ? error.message : 'Unknown error'}`,
+        content: `Error: Failed to send message. ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -414,56 +329,6 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
             <div className={`w-2 h-2 rounded-full animate-pulse ${existingConfabId ? 'bg-amber-500' : 'bg-green-500'}`} />
             {existingConfabId ? 'Resuming' : 'Active'}
           </Badge>
-        </div>
-        {/* repository info / test button */}
-        <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-          <p className="text-sm text-blue-800">
-            <strong>Repository Naming Convention:</strong>
-          </p>
-          <p className="text-sm text-blue-700 mt-1">
-            {getRepoNamingConvention()}
-          </p>
-          <div className="flex items-center gap-2 mt-2">
-            <Button
-              onClick={handleTestRepo}
-              disabled={isTestingRepo}
-              variant="outline"
-              size="sm"
-              className="gap-2"
-            >
-              <TestTube className="w-4 h-4" />
-              {isTestingRepo ? 'Testing...' : 'TEST'}
-            </Button>
-            <span className="text-sm text-slate-600">
-              Initialize repository with dummy data
-            </span>
-          </div>
-          {testResult && (
-            <div className="mt-3 p-3 bg-green-50 rounded-lg">
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle className="w-4 h-4 text-green-600" />
-                <span className="text-sm font-medium text-green-800">
-                  Test Successful
-                </span>
-              </div>
-              <p className="text-sm text-green-700">
-                {testResult.message}
-              </p>
-            </div>
-          )}
-          {testError && (
-            <div className="mt-3 p-3 bg-red-50 rounded-lg">
-              <div className="flex items-center gap-2 mb-1">
-                <AlertCircle className="w-4 h-4 text-red-600" />
-                <span className="text-sm font-medium text-red-800">
-                  Test Failed
-                </span>
-              </div>
-              <p className="text-sm text-red-700">
-                {testError}
-              </p>
-            </div>
-          )}
         </div>
       </div>
 

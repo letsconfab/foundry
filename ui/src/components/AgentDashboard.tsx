@@ -36,7 +36,17 @@ interface Confab {
   version: string;
   created_at: string;
   updated_at: string | null;
-  github_url?: string;
+  // OASF fields (from new API)
+  purpose?: string | null;
+  guardrails?: Array<{ id: string; rule: string; severity: string; enabled: boolean }> | null;
+  tests?: Array<{ id: string; name: string; input: string; expected_behavior: string }> | null;
+  skills?: number[] | null;
+  domains?: string[] | null;
+  model_provider?: string | null;
+  model_name?: string | null;
+  temperature?: number;
+  github_path?: string | null;  // was github_url
+  github_synced_at?: string | null;
 }
 
 export function AgentDashboard({ onNavigate }: AgentDashboardProps) {

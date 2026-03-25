@@ -1,20 +1,27 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from typing import Optional, List, Dict, Any, Literal, Union
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
-# User schemas
+
+# =============================================================================
+# User Schemas
+# =============================================================================
+
 class UserBase(BaseModel):
     name: str
     email: EmailStr
     country: str
     timezone: str
 
+
 class UserCreate(UserBase):
     password: str
+
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class UserResponse(UserBase):
     id: int
@@ -23,26 +30,29 @@ class UserResponse(UserBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserListItem(BaseModel):
-    """Safe user fields for participants/list (from users table)."""
+    """Safe user fields for participants/list."""
     id: int
     name: str
     email: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
-# GitHub schemas
+
+# =============================================================================
+# GitHub Schemas
+# =============================================================================
+
 class GitHubUser(BaseModel):
     id: int
     login: str
     name: Optional[str] = None
     email: Optional[str] = None
     avatar_url: Optional[str] = None
+
 
 class GitHubRepo(BaseModel):
     id: int
@@ -52,12 +62,14 @@ class GitHubRepo(BaseModel):
     owner: Dict[str, Any]
     permissions: Dict[str, str]
 
+
 class GitHubConnect(BaseModel):
     github_id: int
     github_username: str
     access_token: str
     selected_repo: str
     selected_org: Optional[str] = None
+
 
 class GitHubLogin(BaseModel):
     github_id: int
@@ -66,314 +78,327 @@ class GitHubLogin(BaseModel):
     selected_repo: str = "confabs"
     selected_org: Optional[str] = None
 
+
 class GitHubRepoResponse(BaseModel):
     repos: List[GitHubRepo]
 
-# Confab Configuration Models
-class AgentCapabilities(BaseModel):
-    """Defines what the agent can do"""
-    text_generation: bool = True
-    code_generation: bool = False
-    data_analysis: bool = False
-    web_search: bool = False
-    file_processing: bool = False
-    image_analysis: bool = False
-    custom_tools: List[str] = Field(default_factory=list, description="List of custom tool names")
 
-class ModelConfiguration(BaseModel):
-    """AI model settings"""
-    model_config = ConfigDict(protected_namespaces=())
-    provider: Literal["openai", "anthropic", "google", "local"] = "openai"
-    model_name: str = Field(..., description="Model name (e.g., 'gpt-4', 'claude-3-sonnet')")
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
-    max_tokens: Optional[int] = Field(default=None, ge=1, le=100000, description="Maximum response tokens")
-    top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0, description="Nucleus sampling")
-    frequency_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0, description="Frequency penalty")
-    presence_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0, description="Presence penalty")
+# =============================================================================
+# Confab Schemas (OASF-aligned)
+# =============================================================================
 
-class KnowledgeBase(BaseModel):
-    """Knowledge base configuration"""
-    enabled: bool = False
-    type: Literal["documents", "database", "api", "website"] = "documents"
-    source: str = Field(..., description="Source location or connection string")
-    indexing_method: Literal["vector", "keyword", "hybrid"] = "vector"
-    chunk_size: int = Field(default=1000, ge=100, le=10000, description="Text chunk size")
-    overlap: int = Field(default=200, ge=0, le=1000, description="Chunk overlap size")
+class GuardrailRule(BaseModel):
+    """A single guardrail rule for the confab."""
+    id: str
+    rule: str
+    severity: Literal["error", "warning", "info"] = "error"
+    enabled: bool = True
 
-class ConversationSettings(BaseModel):
-    """Conversation behavior settings"""
-    system_prompt: str = Field(..., description="System prompt that defines agent behavior")
-    max_conversation_length: int = Field(default=50, ge=1, le=1000, description="Maximum message history")
-    memory_enabled: bool = True
-    context_window_size: int = Field(default=10, ge=1, le=100, description="Context window for responses")
-    greeting_message: Optional[str] = Field(default=None, description="Initial greeting message")
-    error_message: Optional[str] = Field(default=None, description="Error response template")
 
-class SecuritySettings(BaseModel):
-    """Security and moderation settings"""
-    content_filtering: bool = True
-    allowed_domains: List[str] = Field(default_factory=list, description="Allowed domains for web access")
-    blocked_keywords: List[str] = Field(default_factory=list, description="Blocked content keywords")
-    rate_limiting: bool = True
-    max_requests_per_minute: int = Field(default=60, ge=1, le=1000, description="Rate limit per user")
-    authentication_required: bool = True
+class TestScenario(BaseModel):
+    """A test scenario for validating confab behavior."""
+    id: str
+    name: str
+    input: str
+    expected_behavior: str
+    tags: List[str] = Field(default_factory=list)
 
-class IntegrationSettings(BaseModel):
-    """External service integrations"""
-    apis: List[Dict[str, Any]] = Field(default_factory=list, description="API integrations")
-    webhooks: List[Dict[str, Any]] = Field(default_factory=list, description="Webhook configurations")
-    databases: List[Dict[str, Any]] = Field(default_factory=list, description="Database connections")
-    storage: Optional[Dict[str, Any]] = Field(default=None, description="File storage settings")
 
-class DeploymentSettings(BaseModel):
-    """Deployment configuration"""
-    environment: Literal["development", "staging", "production"] = "development"
-    scaling: Dict[str, Any] = Field(default_factory=dict, description="Auto-scaling settings")
-    monitoring: bool = True
-    logging_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    health_checks: bool = True
-
-class ConfabConfig(BaseModel):
-    """Complete confab configuration"""
-    capabilities: AgentCapabilities = Field(default_factory=AgentCapabilities)
-    model: ModelConfiguration
-    knowledge_base: Optional[KnowledgeBase] = None
-    conversation: ConversationSettings
-    security: SecuritySettings = Field(default_factory=SecuritySettings)
-    integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
-    deployment: DeploymentSettings = Field(default_factory=DeploymentSettings)
-    custom_settings: Dict[str, Any] = Field(default_factory=dict, description="Additional custom configuration")
-    
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "capabilities": {
-                    "text_generation": True,
-                    "code_generation": True,
-                    "data_analysis": False,
-                    "web_search": True,
-                    "file_processing": False,
-                    "image_analysis": False,
-                    "custom_tools": ["calculator", "weather_api"],
-                },
-                "model": {
-                    "provider": "openai",
-                    "model_name": "gpt-4",
-                    "temperature": 0.7,
-                    "max_tokens": 2000,
-                    "top_p": 1.0,
-                    "frequency_penalty": 0.0,
-                    "presence_penalty": 0.0,
-                },
-                "knowledge_base": {
-                    "enabled": True,
-                    "type": "documents",
-                    "source": "./documents",
-                    "indexing_method": "vector",
-                    "chunk_size": 1000,
-                    "overlap": 200,
-                },
-                "conversation": {
-                    "system_prompt": "You are a helpful AI assistant specialized in software development. Provide clear, accurate, and well-structured responses.",
-                    "max_conversation_length": 50,
-                    "memory_enabled": True,
-                    "context_window_size": 10,
-                    "greeting_message": "Hello! I'm your software development assistant. How can I help you today?",
-                    "error_message": "I apologize, but I encountered an error. Please try rephrasing your question.",
-                },
-                "security": {
-                    "content_filtering": True,
-                    "allowed_domains": ["github.com", "stackoverflow.com"],
-                    "blocked_keywords": ["password", "secret", "token"],
-                    "rate_limiting": True,
-                    "max_requests_per_minute": 60,
-                    "authentication_required": True,
-                },
-                "integrations": {
-                    "apis": [
-                        {
-                            "name": "github_api",
-                            "url": "https://api.github.com",
-                            "auth_type": "token",
-                            "rate_limit": 5000,
-                        }
-                    ],
-                    "webhooks": [],
-                    "databases": [],
-                    "storage": {
-                        "type": "s3",
-                        "bucket": "confab-files",
-                        "region": "us-west-2",
-                    },
-                },
-                "deployment": {
-                    "environment": "development",
-                    "scaling": {"min_instances": 1, "max_instances": 5, "target_cpu": 70},
-                    "monitoring": True,
-                    "logging_level": "INFO",
-                    "health_checks": True,
-                },
-                "custom_settings": {
-                    "feature_flags": {"beta_features": True, "advanced_mode": False},
-                    "ui_preferences": {"theme": "dark", "language": "en"},
-                },
-            }
-        }
-    )
-
-# Simple configuration for basic use cases
-class SimpleConfabConfig(BaseModel):
-    """Simplified confab configuration for basic use cases"""
-    model_config = ConfigDict(
-        protected_namespaces=(),
-        json_schema_extra={
-            "example": {
-                "model_provider": "openai",
-                "model_name": "gpt-4",
-                "system_prompt": "You are a helpful AI assistant. Provide clear and accurate responses.",
-                "temperature": 0.7,
-                "max_tokens": 2000,
-            }
-        },
-    )
-    model_provider: Literal["openai", "anthropic", "google", "local"] = "openai"
-    model_name: str = "gpt-4"
-    system_prompt: str = Field(..., description="System prompt that defines agent behavior")
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(default=None, ge=1, le=100000)
-
-# Confab schemas
-class ConfabBase(BaseModel):
+class ConfabCreate(BaseModel):
+    """Create a new confab."""
     name: str
     description: Optional[str] = None
+    status: Literal["building", "draft", "published", "archived"] = "building"
 
-class ConfabCreate(ConfabBase):
-    config: Optional[Union[ConfabConfig, SimpleConfabConfig]] = None
-    status: Optional[str] = Field(default='building', description="Confab status: building, draft, published, archived")
-    generate_placeholder: Optional[bool] = Field(default=False, description="Generate placeholder name")
+    # Runtime config
+    model_provider: str = "groq"
+    model_name: str = "qwen/qwen3-32b"
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+
+    model_config = ConfigDict(protected_namespaces=())
+
 
 class ConfabUpdate(BaseModel):
+    """Update an existing confab."""
     name: Optional[str] = None
     description: Optional[str] = None
-    config: Optional[Union[ConfabConfig, SimpleConfabConfig]] = None
+    status: Optional[Literal["building", "draft", "published", "archived"]] = None
 
-class ConfabResponse(ConfabBase):
+    # Core content
+    purpose: Optional[str] = None
+    guardrails: Optional[List[GuardrailRule]] = None
+    tests: Optional[List[TestScenario]] = None
+
+    # OASF metadata
+    skills: Optional[List[int]] = None
+    domains: Optional[List[str]] = None
+
+    # Runtime config
+    model_provider: Optional[str] = None
+    model_name: Optional[str] = None
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
+class ConfabResponse(BaseModel):
+    """Confab response with all fields."""
     id: int
+    name: str
+    description: Optional[str] = None
     version: str
     status: str
-    github_url: Optional[str] = None
+
+    # OASF metadata
+    oasf_schema_version: str
+    skills: Optional[List[int]] = None
+    domains: Optional[List[str]] = None
+
+    # Core content
+    purpose: Optional[str] = None
+    guardrails: Optional[List[Dict[str, Any]]] = None
+    tests: Optional[List[Dict[str, Any]]] = None
+
+    # Runtime config
+    model_provider: Optional[str] = None
+    model_name: Optional[str] = None
+    temperature: float
+
+    # GitHub sync
+    github_path: Optional[str] = None
+    github_synced_at: Optional[datetime] = None
+
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
-# Thread schemas (table 2: thread_id, thread_name, createdAt, owner_user_id)
-class ThreadBase(BaseModel):
-    thread_name: str
 
-class ThreadCreate(ThreadBase):
-    pass
-
-class ThreadResponse(ThreadBase):
+class ConfabListItem(BaseModel):
+    """Lightweight confab for list views."""
     id: int
+    name: str
+    description: Optional[str] = None
+    version: str
+    status: str
     created_at: datetime
-    owner_user_id: int
+    updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
-# Message schemas (table 3: id, thread_id, content, time)
-class MessageBase(BaseModel):
+# =============================================================================
+# Confab Learning Schemas
+# =============================================================================
+
+class LearningCreate(BaseModel):
+    """Create a new learning for a confab."""
     content: str
-    role: Optional[Literal["user", "assistant"]] = "user"
+    summary: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    source: Literal["conversation", "manual", "import"] = "manual"
+    source_thread_id: Optional[int] = None
 
-class MessageCreate(MessageBase):
-    pass
+
+class LearningUpdate(BaseModel):
+    """Update an existing learning."""
+    content: Optional[str] = None
+    summary: Optional[str] = None
+    tags: Optional[List[str]] = None
+    status: Optional[Literal["draft", "approved"]] = None
+
+
+class LearningResponse(BaseModel):
+    """Learning response."""
+    id: int
+    confab_id: int
+    content: str
+    summary: Optional[str] = None
+    tags: Optional[List[str]] = None
+    status: str
+    author_type: str
+    author_id: Optional[int] = None
+    source: str
+    source_thread_id: Optional[int] = None
+    github_filename: Optional[str] = None
+    github_synced_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# Thread Schemas
+# =============================================================================
+
+class ThreadCreate(BaseModel):
+    """Create a new thread."""
+    name: str
+    # Initial participants can be added via separate endpoint
+
+
+class ThreadResponse(BaseModel):
+    """Thread response."""
+    id: int
+    name: str
+    owner_user_id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ThreadWithParticipants(ThreadResponse):
+    """Thread with participant list."""
+    participants: List["ParticipantResponse"] = Field(default_factory=list)
+
+
+# =============================================================================
+# Thread Participant Schemas
+# =============================================================================
+
+class ParticipantAdd(BaseModel):
+    """Add a participant to a thread."""
+    participant_type: Literal["user", "confab", "system"]
+    participant_id: Optional[int] = None  # NULL for system agents
+    system_agent_name: Optional[str] = None  # e.g., "foreman"
+    role: Literal["owner", "participant", "observer"] = "participant"
+
+
+class ParticipantResponse(BaseModel):
+    """Participant response."""
+    id: int
+    thread_id: int
+    participant_type: str
+    participant_id: Optional[int] = None
+    system_agent_name: Optional[str] = None
+    role: str
+    is_active: bool
+    joined_at: datetime
+    left_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# Message Schemas
+# =============================================================================
+
+class AddressedTo(BaseModel):
+    """Who a message is addressed to."""
+    type: Literal["user", "confab", "system"]
+    id: Optional[int] = None
+    name: Optional[str] = None  # for system agents
+
+
+class MessageCreate(BaseModel):
+    """Create a new message (used internally)."""
+    content: str
+    sender_type: Literal["user", "confab", "system"] = "user"
+    sender_id: Optional[int] = None
+    sender_name: Optional[str] = None
+    in_reply_to: Optional[int] = None
+    addressed_to: Optional[List[AddressedTo]] = None
+    role: Literal["user", "assistant"] = "user"
+
 
 class MessageResponse(BaseModel):
+    """Message response."""
     id: int
     thread_id: int
+    sender_type: str
+    sender_id: Optional[int] = None
+    sender_name: Optional[str] = None
+    in_reply_to: Optional[int] = None
+    depth: int
+    addressed_to: Optional[List[Dict[str, Any]]] = None
     content: str
-    time: datetime
-    role: Optional[str] = "user"
-
-    class Config:
-        from_attributes = True
-
-
-# === [CLAUDE: Thread Mapping Schemas - Maps confabs to threads] ===
-class ThreadMappingCreate(BaseModel):
-    """Create a mapping between a confab and a thread"""
-    confab_id: int
-    thread_id: int
-
-class ThreadMappingResponse(BaseModel):
-    """Response for thread mapping"""
-    id: int
-    confab_id: int
-    thread_id: int
+    role: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
-class LLMRequest(BaseModel):
-    """Request to LLM API for generating chat responses"""
-    model: str = Field(default="qwen/qwen3-32b", description="Model name")
-    prompt: str = Field(..., description="User prompt to send to the model")
-    temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
-
-class LLMResponse(BaseModel):
-    """Response from LLM API"""
-    model: str
-    response: str
-    success: bool = True
+# =============================================================================
+# Chat Schemas (unified endpoint)
+# =============================================================================
 
 class ChatRequest(BaseModel):
-    """Request for chat completion using LLM"""
-    thread_id: int
-    message: str
-    confab_id: Optional[int] = None
+    """Request to send a chat message."""
+    content: str
+    addressed_to: Optional[List[AddressedTo]] = None  # NULL = broadcast, infer from context
+    in_reply_to: Optional[int] = None  # for subthreading
+
 
 class ChatResponse(BaseModel):
-    """Response for chat completion"""
+    """Response from chat endpoint, includes user message and any agent responses."""
     thread_id: int
-    message_id: int
-    response: str
+    user_message: MessageResponse
+    agent_responses: List[MessageResponse] = Field(default_factory=list)
     timestamp: datetime
 
 
-# Auth schemas
+# =============================================================================
+# Auth Schemas
+# =============================================================================
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class TokenData(BaseModel):
     user_id: Optional[int] = None
 
 
-# Foreman Agent schemas
+# =============================================================================
+# Foreman Agent Schemas
+# =============================================================================
+
 class SetupProgressResponse(BaseModel):
     """Setup progress for confab building flow."""
-    completed_steps: List[int] = []
+    completed_steps: List[int] = Field(default_factory=list)
     current_stage: str = "purpose"
     total_steps: int = 7
-    remaining_steps: List[int] = []
+    remaining_steps: List[int] = Field(default_factory=list)
 
 
 class ForemanChatResponse(BaseModel):
-    """Response from Foreman agent chat endpoint."""
+    """Response from Foreman agent (via unified chat endpoint)."""
     response: str
     confab_id: int
-    thread_id: Optional[int] = None
-    is_resume: bool = False
+    thread_id: int
     setup_progress: Optional[SetupProgressResponse] = None
-    tool_calls: List[Dict[str, Any]] = []
+    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
     timestamp: datetime
-    messages: Optional[Dict[str, int]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# Admin Schemas
+# =============================================================================
+
+class SystemStatusResponse(BaseModel):
+    """System status for admin endpoint."""
+    database: str
+    llm_service: str
+    github_service: str
+    active_threads: int
+    total_confabs: int
+    total_users: int
+
+
+class GitHubSyncRequest(BaseModel):
+    """Request to sync confabs to GitHub."""
+    confab_ids: Optional[List[int]] = None  # NULL = sync all
+
+
+class GitHubSyncResponse(BaseModel):
+    """Response from GitHub sync."""
+    synced_count: int
+    failed_count: int
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# Forward reference update
+ThreadWithParticipants.model_rebuild()

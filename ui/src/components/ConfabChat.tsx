@@ -80,7 +80,7 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
         id: String(m.id),
         role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
         content: m.content,
-        timestamp: new Date(m.time),
+        timestamp: new Date(m.created_at),
         feedback: null,
       }));
       setMessages(loaded);

@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from github import Github
 
-from models import Confab, GitHubAccount, Message, ThreadMapping, Thread
+from models import Confab, GitHubAccount, Message, ThreadParticipant, Thread
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class ContextLoader:
         github_files = await self.load_github_files(confab, github_account)
         db_config = self.load_db_config(confab)
         thread_history, thread_id = await self.load_thread_history(confab.id)
-        setup_progress = self.analyze_setup_progress(db_config)
+        setup_progress = self.analyze_setup_progress(confab, db_config)
 
         return ForemanContext(
             confab=confab,
@@ -150,42 +150,44 @@ class ContextLoader:
             return None
 
     def load_db_config(self, confab: Confab) -> Dict[str, Any]:
-        """Extract config JSON from confab.config field."""
-        if confab.config is None:
-            return {}
-
-        if isinstance(confab.config, dict):
-            return confab.config
-
-        # Handle case where config might be stored as string
-        try:
-            import json
-            return json.loads(confab.config) if isinstance(confab.config, str) else {}
-        except (json.JSONDecodeError, TypeError):
-            logger.warning(f"Could not parse config for confab {confab.id}")
-            return {}
+        """Build config dict from confab's new structured fields."""
+        # Build config from the new OASF-aligned fields
+        config = {
+            "purpose": confab.purpose,
+            "guardrails": confab.guardrails,
+            "tests": confab.tests,
+            "model_provider": confab.model_provider,
+            "model_name": confab.model_name,
+            "temperature": confab.temperature,
+            "skills": confab.skills,
+            "domains": confab.domains,
+        }
+        # Filter out None values
+        return {k: v for k, v in config.items() if v is not None}
 
     async def load_thread_history(
         self,
         confab_id: int,
         limit: int = 20
     ) -> tuple[List[Message], Optional[int]]:
-        """Load recent messages from the confab's mapped thread."""
-        # Find thread mapping for this confab
-        thread_mapping = self.db.query(ThreadMapping).filter(
-            ThreadMapping.confab_id == confab_id
+        """Load recent messages from the confab's thread (via ThreadParticipant)."""
+        # Find thread where this confab is a participant
+        participant = self.db.query(ThreadParticipant).filter(
+            ThreadParticipant.participant_type == "confab",
+            ThreadParticipant.participant_id == confab_id,
+            ThreadParticipant.is_active == True
         ).first()
 
-        if not thread_mapping:
-            logger.info(f"No thread mapping found for confab {confab_id}")
+        if not participant:
+            logger.info(f"No thread found for confab {confab_id}")
             return [], None
 
-        thread_id = thread_mapping.thread_id
+        thread_id = participant.thread_id
 
-        # Fetch recent messages ordered by time
+        # Fetch recent messages ordered by created_at
         messages = self.db.query(Message).filter(
             Message.thread_id == thread_id
-        ).order_by(Message.time.desc()).limit(limit).all()
+        ).order_by(Message.created_at.desc()).limit(limit).all()
 
         # Reverse to get chronological order
         messages = list(reversed(messages))
@@ -193,16 +195,21 @@ class ContextLoader:
         logger.info(f"Loaded {len(messages)} messages for thread {thread_id}")
         return messages, thread_id
 
-    def analyze_setup_progress(self, config: Dict[str, Any]) -> SetupProgress:
-        """Determine which setup steps are complete based on config."""
+    def analyze_setup_progress(self, confab: Confab, config: Dict[str, Any]) -> SetupProgress:
+        """Determine which setup steps are complete based on confab.setup_progress or config."""
         progress = SetupProgress()
 
-        # Check for setup_steps_completed in config
-        completed = config.get("setup_steps_completed", [])
-        if isinstance(completed, list):
-            progress.completed_steps = [int(s) for s in completed if isinstance(s, (int, str))]
+        # First, check confab.setup_progress field (new method)
+        if confab.setup_progress and isinstance(confab.setup_progress, dict):
+            completed = confab.setup_progress.get("completed_steps", [])
+            if isinstance(completed, list):
+                progress.completed_steps = [int(s) for s in completed if isinstance(s, (int, str))]
+            current_stage = confab.setup_progress.get("current_stage")
+            if current_stage:
+                progress.current_stage = current_stage
+                return progress
 
-        # Determine current stage based on completed steps
+        # Fallback: determine current stage based on completed steps and config content
         progress.current_stage = self._determine_current_stage(progress.completed_steps, config)
 
         return progress

@@ -160,11 +160,7 @@ class ApiClient {
     });
   }
 
-  async testRepoInitialization() {
-    return this.request('/confabs/test-repo', {
-      method: 'POST',
-    });
-  }
+  // REMOVED: testRepoInitialization - endpoint no longer exists
 
   // Threads & messages (review chats) — tables: users, threads, messages
   async getThreads() {
@@ -174,7 +170,7 @@ class ApiClient {
   async createThread(threadName) {
     return this.request('/threads', {
       method: 'POST',
-      body: JSON.stringify({ thread_name: threadName }),
+      body: JSON.stringify({ name: threadName }),
     });
   }
 
@@ -193,67 +189,85 @@ class ApiClient {
     });
   }
 
-  // === [CLAUDE: LLM API endpoints for dynamic chat responses] ===
+  // === [CLAUDE: Unified chat endpoint - replaces all previous LLM/agent endpoints] ===
 
-  async chatWithLLM(threadId, message) {
-    console.log('API Client: Chatting with LLM for thread:', threadId);
+  /**
+   * Send a chat message to a thread.
+   * This is the unified chat endpoint that handles all messaging.
+   * @param {number} threadId - The thread ID
+   * @param {string} content - The message content
+   * @param {Array<{type: string, id?: number, name?: string}>} addressedTo - Optional array of recipients
+   * @param {number} inReplyTo - Optional message ID this is replying to
+   */
+  async chat(threadId, content, addressedTo = null, inReplyTo = null) {
+    console.log('API Client: Sending chat message to thread:', threadId);
+    const body = { content };
+    if (addressedTo) body.addressed_to = addressedTo;
+    if (inReplyTo) body.in_reply_to = inReplyTo;
     return this.request(`/threads/${threadId}/chat`, {
       method: 'POST',
-      body: JSON.stringify({ content: message, role: 'user' }),
+      body: JSON.stringify(body),
     });
   }
 
-  async llmHealthCheck() {
-    try {
-      return await this.request('/llm/health');
-    } catch (error) {
-      console.error('API Client: LLM health check failed:', error);
-      return { status: 'unavailable', healthy: false };
-    }
+  // === [CLAUDE: Thread participant endpoints] ===
+
+  async getThreadParticipants(threadId) {
+    return this.request(`/threads/${threadId}/participants`);
   }
 
-  async llmGenerateResponse(prompt) {
-    console.log('API Client: Generating LLM response');
-    return this.request('/llm/generate', {
+  async addThreadParticipant(threadId, participantType, participantId = null, systemAgentName = null, role = 'participant') {
+    return this.request(`/threads/${threadId}/participants`, {
       method: 'POST',
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({
+        participant_type: participantType,
+        participant_id: participantId,
+        system_agent_name: systemAgentName,
+        role: role,
+      }),
     });
   }
 
-  async llmListModels() {
-    return this.request('/llm/models');
+  // === [CLAUDE: Confab learning endpoints] ===
+
+  async getConfabLearnings(confabId) {
+    return this.request(`/confabs/${confabId}/learnings`);
   }
 
-  // === [CLAUDE: Thread mapping endpoints] ===
-  
-  async createThreadMapping(confabId, threadId) {
-    return this.request('/thread-mappings', {
+  async createConfabLearning(confabId, content, summary = null, tags = [], source = 'manual', sourceThreadId = null) {
+    return this.request(`/confabs/${confabId}/learnings`, {
       method: 'POST',
-      body: JSON.stringify({ confab_id: confabId, thread_id: threadId }),
+      body: JSON.stringify({
+        content,
+        summary,
+        tags,
+        source,
+        source_thread_id: sourceThreadId,
+      }),
     });
   }
 
-  async getThreadMappings() {
-    return this.request('/thread-mappings');
-  }
-
-  async getConfabThreads(confabId) {
-    return this.request(`/confabs/${confabId}/threads`);
-  }
-
-  // === [CLAUDE: LangGraph Agent endpoints] ===
-  
-  async chatWithLangGraphAgent(confabId, message) {
-    console.log('API Client: Chatting with LangGraph agent for confab:', confabId);
-    return this.request(`/agent/chat/${confabId}`, {
-      method: 'POST',
-      body: JSON.stringify({ message }),
+  async updateConfabLearning(confabId, learningId, updates) {
+    return this.request(`/confabs/${confabId}/learnings/${learningId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
     });
   }
 
-  async getAgentStatus() {
-    return this.request('/agent/status');
+  async deleteConfabLearning(confabId, learningId) {
+    return this.request(`/confabs/${confabId}/learnings/${learningId}`, {
+      method: 'DELETE',
+    });
   }
+
+  // REMOVED: chatWithLangGraphAgent - use chat() instead
+  // REMOVED: getAgentStatus - endpoint no longer exists
+  // REMOVED: llmHealthCheck - endpoint no longer exists
+  // REMOVED: llmGenerateResponse - endpoint no longer exists
+  // REMOVED: llmListModels - endpoint no longer exists
+  // REMOVED: createThreadMapping - replaced by addThreadParticipant
+  // REMOVED: getThreadMappings - endpoint no longer exists
+  // REMOVED: getConfabThreads - endpoint no longer exists
 
   clearToken() {
     localStorage.removeItem('access_token');

@@ -1,6 +1,6 @@
 /**
  * Review Chats — lists threads from DB (table: threads) and messages (table: messages).
- * Data: users (id, name, email, createdAt, password_hash), threads (thread_id, thread_name, createdAt, owner_user_id), messages (id, thread_id, content, time).
+ * Data: users (id, name, email, created_at), threads (id, name, created_at, owner_user_id), messages (id, thread_id, content, created_at, sender_type, sender_name).
  */
 import { useState, useEffect } from 'react';
 import { ArrowLeft, MessageSquare, Bot, User, Loader2 } from 'lucide-react';
@@ -17,7 +17,7 @@ interface ReviewChatsProps {
 
 interface ThreadRow {
   id: number;
-  thread_name: string;
+  name: string;  // was thread_name
   created_at: string;
   owner_user_id: number;
 }
@@ -26,8 +26,10 @@ interface MessageRow {
   id: number;
   thread_id: number;
   content: string;
-  time: string;
+  created_at: string;  // was time
   role?: string;
+  sender_type?: string;
+  sender_name?: string;
 }
 
 export function ReviewChats({ onNavigate }: ReviewChatsProps) {
@@ -133,7 +135,7 @@ export function ReviewChats({ onNavigate }: ReviewChatsProps) {
                         : 'hover:bg-slate-100 text-slate-700'
                     }`}
                   >
-                    <span className="block truncate">{t.thread_name}</span>
+                    <span className="block truncate">{t.name}</span>
                     <span className="text-xs text-slate-500">{formatDate(t.created_at)}</span>
                   </button>
                 </li>
@@ -154,7 +156,7 @@ export function ReviewChats({ onNavigate }: ReviewChatsProps) {
               <>
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-slate-900 font-medium truncate">
-                    {selectedThread?.thread_name ?? 'Thread'}
+                    {selectedThread?.name ?? 'Thread'}
                   </h3>
                   <Button
                     variant="ghost"
@@ -192,7 +194,7 @@ export function ReviewChats({ onNavigate }: ReviewChatsProps) {
                           >
                             <MessageContent content={msg.content} className="text-sm" variant={isUser ? 'user' : 'assistant'} />
                             <p className={`text-xs mt-1 ${isUser ? 'text-indigo-200' : 'text-slate-500'}`}>
-                              {formatDate(msg.time)}
+                              {formatDate(msg.created_at)}
                             </p>
                           </div>
                           {isUser && (

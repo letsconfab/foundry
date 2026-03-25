@@ -18,7 +18,7 @@ os.environ["SECRET_KEY"] = "test-secret-key-for-testing"
 
 from database import Base, get_db
 from main import app
-from models import User, Confab, GitHubAccount, Thread, Message, ThreadMapping
+from models import User, Confab, GitHubAccount, Thread, Message, ThreadParticipant
 from auth import get_password_hash, create_access_token
 
 
@@ -96,7 +96,7 @@ def test_confab(db: Session, test_user: User) -> Confab:
         user_id=test_user.id,
         version="1.0.0",
         status="building",
-        config={"test": True}
+        purpose="Test purpose",
     )
     db.add(confab)
     db.commit()
@@ -108,7 +108,7 @@ def test_confab(db: Session, test_user: User) -> Confab:
 def test_thread(db: Session, test_user: User) -> Thread:
     """Create a test thread."""
     thread = Thread(
-        thread_name="Test Thread",
+        name="Test Thread",
         owner_user_id=test_user.id
     )
     db.add(thread)

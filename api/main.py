@@ -1,58 +1,62 @@
+"""
+Let's Confab API - Simplified Route Structure
+
+Routes:
+- Auth: register, login, me, github/*
+- Confabs: CRUD + learnings
+- Threads: CRUD + participants + chat
+- Admin: system-status, sync-to-github
+"""
+
 import os
 from dotenv import load_dotenv
 
-# Load environment variables FIRST, before any custom module imports
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import Optional, Dict, Any
-
-import json, re
+from typing import Optional, List
 import datetime
 import logging
 
 logger = logging.getLogger(__name__)
 
 from database import get_db, engine, Base
-from models import User, Confab, GitHubAccount, Thread, Message, ThreadMapping
+from models import User, Confab, ConfabLearning, GitHubAccount, Thread, ThreadParticipant, Message
 from schemas import (
-    UserCreate, UserLogin, UserResponse, UserListItem, ConfabCreate, ConfabResponse,
-    GitHubConnect, GitHubLogin, ConfabConfig, SimpleConfabConfig,
-    ThreadCreate, ThreadResponse, MessageCreate, MessageResponse,
-    ThreadMappingCreate, ThreadMappingResponse, LLMRequest, LLMResponse,
+    # User
+    UserCreate, UserLogin, UserResponse, UserListItem,
+    # GitHub
+    GitHubConnect, GitHubLogin,
+    # Confab
+    ConfabCreate, ConfabUpdate, ConfabResponse, ConfabListItem,
+    # Learning
+    LearningCreate, LearningUpdate, LearningResponse,
+    # Thread
+    ThreadCreate, ThreadResponse, ThreadWithParticipants,
+    # Participant
+    ParticipantAdd, ParticipantResponse,
+    # Message & Chat
+    MessageResponse, ChatRequest, ChatResponse,
+    # Admin
+    SystemStatusResponse, GitHubSyncRequest, GitHubSyncResponse,
 )
 from auth import create_access_token, verify_token, get_password_hash, verify_password
-from github_oauth import github_auth_router, get_github_user, get_github_repos, get_github_primary_email
-from confab_manager import create_confab_in_github, update_confab_in_github, create_github_repository, initialize_confab_repository
-# === [CLAUDE: Import unified GitHub service for feature-flagged migration] ===
-from github_service import (
-    GitHubService,
-    USE_NEW_GITHUB_SERVICE,
-    create_confab_in_github as new_create_confab_in_github,
-    update_confab_in_github as new_update_confab_in_github
-)
-from agent_runner import generate_placeholder_confab_name
-# import the setup-step tools so we can execute them when the agent asks
-from agent_tools import (
-    define_purpose, add_participant, configure_memory, add_tools_and_apis,
-    guardrails, sample_io, review_and_save
-)
-# === [CLAUDE: Import LLM service for dynamic chat responses] ===
-from llm_service import ask_llm, llm_client
-# === [CLAUDE: Import Foreman agent for building confabs] ===
+from github_oauth import github_auth_router, get_github_repos, get_github_primary_email
+from github_service import GitHubService
+from llm_service import ask_llm
 from foreman import Foreman
+from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
 
-# Create database tables (with error handling)
+# Create database tables
 try:
     Base.metadata.create_all(bind=engine)
 except Exception as e:
     print(f"Warning: Could not connect to database: {e}")
-    print("API will start but database operations will fail until database is available.")
 
-app = FastAPI(title="Let's Confab API", version="1.0.0")
+app = FastAPI(title="Let's Confab API", version="2.0.0")
 
 # CORS middleware
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
@@ -69,13 +73,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Security
 security = HTTPBearer()
-
-# Include GitHub OAuth routes
 app.include_router(github_auth_router, prefix="/auth/github", tags=["github"])
 
-# Helper function to get current user
+
+# =============================================================================
+# Auth Helper
+# =============================================================================
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
@@ -83,116 +88,86 @@ async def get_current_user(
     token = credentials.credentials
     payload = verify_token(token)
     if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
     user = db.query(User).filter(User.id == payload.get("user_id")).first()
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
+
+
+# =============================================================================
+# Root
+# =============================================================================
 
 @app.get("/")
 async def root():
-    return {"message": "Let's Confab API"}
+    return {"message": "Let's Confab API", "version": "2.0.0"}
+
+
+# =============================================================================
+# Auth Routes
+# =============================================================================
 
 @app.post("/auth/register", response_model=UserResponse)
 async def register(user: UserCreate, db: Session = Depends(get_db)):
-    # Check if user already exists
     existing_user = db.query(User).filter(User.email == user.email).first()
     if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    # Create new user
-    hashed_password = get_password_hash(user.password)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
     db_user = User(
         name=user.name,
         email=user.email,
-        password_hash=hashed_password,
+        password_hash=get_password_hash(user.password),
         country=user.country,
         timezone=user.timezone
     )
-    
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    
-    # Create access token
+
     access_token = create_access_token(data={"user_id": db_user.id})
-    
     return UserResponse(
-        id=db_user.id,
-        name=db_user.name,
-        email=db_user.email,
-        country=db_user.country,
-        timezone=db_user.timezone,
-        github_connected=False,
-        access_token=access_token,
-        created_at=db_user.created_at,
-        updated_at=db_user.updated_at,
+        id=db_user.id, name=db_user.name, email=db_user.email,
+        country=db_user.country, timezone=db_user.timezone,
+        github_connected=False, access_token=access_token,
+        created_at=db_user.created_at, updated_at=db_user.updated_at,
     )
+
 
 @app.post("/auth/login", response_model=UserResponse)
 async def login(user: UserLogin, db: Session = Depends(get_db)):
-    # Find user by email
     db_user = db.query(User).filter(User.email == user.email).first()
     if not db_user or not verify_password(user.password, db_user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
-    # Create access token
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
     access_token = create_access_token(data={"user_id": db_user.id})
-    
     github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == db_user.id).first()
-    
+
     return UserResponse(
-        id=db_user.id,
-        name=db_user.name,
-        email=db_user.email,
-        country=db_user.country,
-        timezone=db_user.timezone,
-        github_connected=github_account is not None,
-        access_token=access_token,
-        created_at=db_user.created_at,
-        updated_at=db_user.updated_at,
+        id=db_user.id, name=db_user.name, email=db_user.email,
+        country=db_user.country, timezone=db_user.timezone,
+        github_connected=github_account is not None, access_token=access_token,
+        created_at=db_user.created_at, updated_at=db_user.updated_at,
     )
+
 
 @app.get("/auth/me", response_model=UserResponse)
-async def get_current_user_info(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+async def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
-    
     return UserResponse(
-        id=current_user.id,
-        name=current_user.name,
-        email=current_user.email,
-        country=current_user.country,
-        timezone=current_user.timezone,
+        id=current_user.id, name=current_user.name, email=current_user.email,
+        country=current_user.country, timezone=current_user.timezone,
         github_connected=github_account is not None,
-        created_at=current_user.created_at,
-        updated_at=current_user.updated_at,
+        created_at=current_user.created_at, updated_at=current_user.updated_at,
     )
 
 
-@app.get("/users", response_model=list[UserListItem])
-async def list_users(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """List users from the users table (for participants). Returns id, name, email only."""
+@app.get("/users", response_model=List[UserListItem])
+async def list_users(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     users = db.query(User).order_by(User.name).all()
     return [UserListItem.model_validate(u) for u in users]
+
 
 @app.post("/auth/github/connect")
 async def connect_github(
@@ -200,40 +175,34 @@ async def connect_github(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Check if GitHub account is already connected
-    existing_github = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
-    if existing_github:
-        # Update existing connection
-        existing_github.github_id = github_data.github_id
-        existing_github.github_username = github_data.github_username
-        existing_github.access_token = github_data.access_token
-        existing_github.selected_repo = github_data.selected_repo
-        existing_github.selected_org = github_data.selected_org
+    existing = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+    if existing:
+        existing.github_id = github_data.github_id
+        existing.github_username = github_data.github_username
+        existing.access_token = github_data.access_token
+        existing.selected_repo = github_data.selected_repo
+        existing.selected_org = github_data.selected_org
     else:
-        # Create new GitHub connection
-        github_account = GitHubAccount(
+        db.add(GitHubAccount(
             user_id=current_user.id,
             github_id=github_data.github_id,
             github_username=github_data.github_username,
             access_token=github_data.access_token,
             selected_repo=github_data.selected_repo,
             selected_org=github_data.selected_org
-        )
-        db.add(github_account)
-    
+        ))
     db.commit()
-    return {"message": "GitHub account connected successfully"}
+    return {"message": "GitHub account connected"}
+
 
 @app.post("/auth/github/login", response_model=UserResponse)
 async def github_login(github_data: GitHubLogin, db: Session = Depends(get_db)):
-    # Fetch email from GitHub so we can identify/create the app user
     github_email = await get_github_primary_email(github_data.access_token)
     if not github_email:
         github_email = f"{github_data.github_username}@users.noreply.github.com"
 
     db_user = db.query(User).filter(User.email == github_email).first()
     if not db_user:
-        # Create a new user with placeholder required fields
         db_user = User(
             name=github_data.github_username,
             email=github_email,
@@ -245,7 +214,6 @@ async def github_login(github_data: GitHubLogin, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(db_user)
 
-    # Upsert GitHubAccount association
     github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == db_user.id).first()
     if github_account:
         github_account.github_id = github_data.github_id
@@ -254,44 +222,43 @@ async def github_login(github_data: GitHubLogin, db: Session = Depends(get_db)):
         github_account.selected_repo = github_data.selected_repo
         github_account.selected_org = github_data.selected_org
     else:
-        github_account = GitHubAccount(
+        db.add(GitHubAccount(
             user_id=db_user.id,
             github_id=github_data.github_id,
             github_username=github_data.github_username,
             access_token=github_data.access_token,
             selected_repo=github_data.selected_repo,
             selected_org=github_data.selected_org,
-        )
-        db.add(github_account)
+        ))
     db.commit()
 
     access_token = create_access_token(data={"user_id": db_user.id})
     return UserResponse(
-        id=db_user.id,
-        name=db_user.name,
-        email=db_user.email,
-        country=db_user.country,
-        timezone=db_user.timezone,
-        github_connected=True,
-        access_token=access_token,
-        created_at=db_user.created_at,
-        updated_at=db_user.updated_at,
+        id=db_user.id, name=db_user.name, email=db_user.email,
+        country=db_user.country, timezone=db_user.timezone,
+        github_connected=True, access_token=access_token,
+        created_at=db_user.created_at, updated_at=db_user.updated_at,
     )
 
+
 @app.get("/auth/github/repos")
-async def get_user_github_repos(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+async def get_user_github_repos(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
     if not github_account:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="GitHub account not connected"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not connected")
     repos = await get_github_repos(github_account.access_token)
     return {"repos": repos}
+
+
+# =============================================================================
+# Confab Routes
+# =============================================================================
+
+@app.get("/confabs", response_model=List[ConfabListItem])
+async def list_confabs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    confabs = db.query(Confab).filter(Confab.user_id == current_user.id).order_by(Confab.created_at.desc()).all()
+    return [ConfabListItem.model_validate(c) for c in confabs]
+
 
 @app.post("/confabs", response_model=ConfabResponse)
 async def create_confab(
@@ -299,94 +266,20 @@ async def create_confab(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Determine confab name - use placeholder if requested
-    confab_name = confab.name
-    if confab.generate_placeholder:
-        confab_name = generate_placeholder_confab_name(current_user.id, db)
-
-    # Create confab in database
     db_confab = Confab(
-        name=confab_name,
+        name=confab.name,
         description=confab.description,
         user_id=current_user.id,
-        version="1.0.0",
-        status=confab.status or "building",
-        config=confab.config.model_dump() if confab.config else {}
+        status=confab.status,
+        model_provider=confab.model_provider,
+        model_name=confab.model_name,
+        temperature=confab.temperature,
     )
-    
     db.add(db_confab)
     db.commit()
     db.refresh(db_confab)
-    
-    # Create confab in GitHub
-    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
-    
-    if github_account:
-        # Use user's connected repo
-        repo_owner = github_account.selected_org or github_account.github_username
-        repo_name = github_account.selected_repo
-    else:
-        # Use default confabs repo
-        repo_owner = "letsconfab"
-        repo_name = "confabs"
-    
-    try:
-        # Use new GitHubService when feature flag is enabled
-        if USE_NEW_GITHUB_SERVICE and github_account:
-            github_url = await new_create_confab_in_github(
-                confab_name=confab_name,
-                confab_data=confab.dict(),
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                access_token=github_account.access_token,
-                confab_id=db_confab.id  # Pass confab ID for new branch strategy
-            )
-        else:
-            github_url = await create_confab_in_github(
-                confab_name=confab_name,
-                confab_data=confab.dict(),
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                access_token=github_account.access_token if github_account else None
-            )
+    return ConfabResponse.model_validate(db_confab)
 
-        db_confab.github_url = github_url
-        db.commit()
-    except Exception as e:
-        # If GitHub creation fails, we still have the confab in DB
-        logger.warning(f"GitHub sync failed for confab {db_confab.id}: {e}")
-        pass
-
-    return ConfabResponse(
-        id=db_confab.id,
-        name=db_confab.name,
-        description=db_confab.description,
-        version=db_confab.version,
-        status=db_confab.status,
-        github_url=db_confab.github_url,
-        created_at=db_confab.created_at,
-        updated_at=db_confab.updated_at
-    )
-
-@app.get("/confabs", response_model=list[ConfabResponse])
-async def get_user_confabs(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    confabs = db.query(Confab).filter(Confab.user_id == current_user.id).all()
-    return [
-        ConfabResponse(
-            id=confab.id,
-            name=confab.name,
-            description=confab.description,
-            version=confab.version,
-            status=confab.status,
-            github_url=confab.github_url,
-            created_at=confab.created_at,
-            updated_at=confab.updated_at
-        )
-        for confab in confabs
-    ]
 
 @app.get("/confabs/{confab_id}", response_model=ConfabResponse)
 async def get_confab(
@@ -394,96 +287,90 @@ async def get_confab(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
     if not confab:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Confab not found"
-        )
-    
-    return ConfabResponse(
-        id=confab.id,
-        name=confab.name,
-        description=confab.description,
-        version=confab.version,
-        status=confab.status,
-        github_url=confab.github_url,
-        created_at=confab.created_at,
-        updated_at=confab.updated_at
-    )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    return ConfabResponse.model_validate(confab)
+
 
 @app.put("/confabs/{confab_id}", response_model=ConfabResponse)
 async def update_confab(
     confab_id: int,
-    confab_update: ConfabCreate,
+    update: ConfabUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
     if not confab:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Confab not found"
-        )
-    
-    # Update confab in database
-    confab.name = confab_update.name
-    confab.description = confab_update.description
-    if confab_update.config:
-        confab.config = confab_update.config.model_dump()
-    # Increment patch version (e.g., 1.0.0 -> 1.0.1)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    # Update fields if provided
+    if update.name is not None:
+        confab.name = update.name
+    if update.description is not None:
+        confab.description = update.description
+    if update.status is not None:
+        confab.status = update.status
+    if update.purpose is not None:
+        confab.purpose = update.purpose
+    if update.guardrails is not None:
+        confab.guardrails = [g.model_dump() for g in update.guardrails]
+    if update.tests is not None:
+        confab.tests = [t.model_dump() for t in update.tests]
+    if update.skills is not None:
+        confab.skills = update.skills
+    if update.domains is not None:
+        confab.domains = update.domains
+    if update.model_provider is not None:
+        confab.model_provider = update.model_provider
+    if update.model_name is not None:
+        confab.model_name = update.model_name
+    if update.temperature is not None:
+        confab.temperature = update.temperature
+
+    # Increment version
     try:
         parts = confab.version.split(".")
         parts[-1] = str(int(parts[-1]) + 1)
         confab.version = ".".join(parts)
     except (ValueError, IndexError):
-        confab.version = "1.0.1"  # Fallback
+        confab.version = "1.0.1"
+
+    # Regenerate OASF yaml
+    confab.oasf_yaml = export_confab_to_oasf_yaml(confab, db)
+
     db.commit()
-    
-    # Update confab in GitHub
-    if confab.github_url:
-        github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
-        if github_account:
-            try:
-                # Use new GitHubService when feature flag is enabled
-                if USE_NEW_GITHUB_SERVICE:
-                    await new_update_confab_in_github(
-                        confab_name=confab.name,
-                        confab_data=confab_update.dict(),
-                        github_url=confab.github_url,
-                        access_token=github_account.access_token,
-                        confab_id=confab.id  # Pass confab ID for new branch strategy
-                    )
-                else:
-                    await update_confab_in_github(
-                        confab_name=confab.name,
-                        confab_data=confab_update.dict(),
-                        github_url=confab.github_url,
-                        access_token=github_account.access_token
-                    )
-            except Exception as e:
-                pass  # Log error but don't fail the update
-    
     db.refresh(confab)
-    
-    return ConfabResponse(
-        id=confab.id,
-        name=confab.name,
-        description=confab.description,
-        version=confab.version,
-        status=confab.status,
-        github_url=confab.github_url,
-        created_at=confab.created_at,
-        updated_at=confab.updated_at
-    )
+    return ConfabResponse.model_validate(confab)
+
+
+@app.get("/confabs/{confab_id}/export")
+async def export_confab_oasf(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Export a confab as OASF-compliant files.
+    Returns agent.oasf.yaml, PURPOSE.md, GUARDRAILS.md, TESTS.md
+    """
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    files = generate_all_export_files(confab, db)
+
+    # Also update the cached oasf_yaml
+    confab.oasf_yaml = files["agent.oasf.yaml"]
+    db.commit()
+
+    return {
+        "confab_id": confab_id,
+        "confab_name": confab.name,
+        "version": confab.version,
+        "files": files
+    }
+
 
 @app.delete("/confabs/{confab_id}")
 async def delete_confab(
@@ -491,36 +378,117 @@ async def delete_confab(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
     if not confab:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Confab not found"
-        )
-
-    # Delete related thread_mapping records first (cascade)
-    db.query(ThreadMapping).filter(ThreadMapping.confab_id == confab_id).delete()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
     db.delete(confab)
     db.commit()
+    return {"message": "Confab deleted"}
 
-    return {"message": "Confab deleted successfully"}
 
+# =============================================================================
+# Confab Learnings Routes
+# =============================================================================
 
-# --- Threads & Messages (review chats) ---
-# Table 2: threads (thread_id/id, thread_name, createdAt, owner_user_id)
-# Table 3: messages (id, thread_id, content, time)
-
-@app.get("/threads", response_model=list[ThreadResponse])
-async def list_threads(
+@app.get("/confabs/{confab_id}/learnings", response_model=List[LearningResponse])
+async def list_learnings(
+    confab_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """List all chat threads for the current user (for reviewing chats)."""
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    learnings = db.query(ConfabLearning).filter(ConfabLearning.confab_id == confab_id).order_by(ConfabLearning.created_at.desc()).all()
+    return [LearningResponse.model_validate(l) for l in learnings]
+
+
+@app.post("/confabs/{confab_id}/learnings", response_model=LearningResponse)
+async def create_learning(
+    confab_id: int,
+    learning: LearningCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    db_learning = ConfabLearning(
+        confab_id=confab_id,
+        content=learning.content,
+        summary=learning.summary,
+        tags=learning.tags,
+        source=learning.source,
+        source_thread_id=learning.source_thread_id,
+        author_type="user",
+        author_id=current_user.id,
+        status="draft",
+    )
+    db.add(db_learning)
+    db.commit()
+    db.refresh(db_learning)
+    return LearningResponse.model_validate(db_learning)
+
+
+@app.put("/confabs/{confab_id}/learnings/{learning_id}", response_model=LearningResponse)
+async def update_learning(
+    confab_id: int,
+    learning_id: int,
+    update: LearningUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    learning = db.query(ConfabLearning).filter(ConfabLearning.id == learning_id, ConfabLearning.confab_id == confab_id).first()
+    if not learning:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learning not found")
+
+    if update.content is not None:
+        learning.content = update.content
+    if update.summary is not None:
+        learning.summary = update.summary
+    if update.tags is not None:
+        learning.tags = update.tags
+    if update.status is not None:
+        learning.status = update.status
+
+    db.commit()
+    db.refresh(learning)
+    return LearningResponse.model_validate(learning)
+
+
+@app.delete("/confabs/{confab_id}/learnings/{learning_id}")
+async def delete_learning(
+    confab_id: int,
+    learning_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    learning = db.query(ConfabLearning).filter(ConfabLearning.id == learning_id, ConfabLearning.confab_id == confab_id).first()
+    if not learning:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learning not found")
+
+    db.delete(learning)
+    db.commit()
+    return {"message": "Learning deleted"}
+
+
+# =============================================================================
+# Thread Routes
+# =============================================================================
+
+@app.get("/threads", response_model=List[ThreadResponse])
+async def list_threads(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     threads = db.query(Thread).filter(Thread.owner_user_id == current_user.id).order_by(Thread.created_at.desc()).all()
     return [ThreadResponse.model_validate(t) for t in threads]
 
@@ -531,1029 +499,412 @@ async def create_thread(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new chat thread."""
-    db_thread = Thread(
-        thread_name=body.thread_name,
-        owner_user_id=current_user.id,
-    )
+    db_thread = Thread(name=body.name, owner_user_id=current_user.id)
     db.add(db_thread)
     db.commit()
     db.refresh(db_thread)
+
+    # Add owner as participant
+    owner_participant = ThreadParticipant(
+        thread_id=db_thread.id,
+        participant_type="user",
+        participant_id=current_user.id,
+        role="owner",
+    )
+    db.add(owner_participant)
+    db.commit()
+
     return ThreadResponse.model_validate(db_thread)
 
 
-@app.get("/threads/{thread_id}", response_model=ThreadResponse)
+@app.get("/threads/{thread_id}", response_model=ThreadWithParticipants)
 async def get_thread(
     thread_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get a single thread (for review)."""
-    thread = db.query(Thread).filter(
-        Thread.id == thread_id,
-        Thread.owner_user_id == current_user.id
-    ).first()
+    thread = db.query(Thread).filter(Thread.id == thread_id, Thread.owner_user_id == current_user.id).first()
     if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    return ThreadResponse.model_validate(thread)
+
+    participants = db.query(ThreadParticipant).filter(ThreadParticipant.thread_id == thread_id).all()
+
+    return ThreadWithParticipants(
+        id=thread.id,
+        name=thread.name,
+        owner_user_id=thread.owner_user_id,
+        created_at=thread.created_at,
+        participants=[ParticipantResponse.model_validate(p) for p in participants]
+    )
 
 
-@app.get("/threads/{thread_id}/messages", response_model=list[MessageResponse])
+@app.delete("/threads/{thread_id}")
+async def delete_thread(
+    thread_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    thread = db.query(Thread).filter(Thread.id == thread_id, Thread.owner_user_id == current_user.id).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    db.delete(thread)
+    db.commit()
+    return {"message": "Thread deleted"}
+
+
+# =============================================================================
+# Thread Participants Routes
+# =============================================================================
+
+@app.get("/threads/{thread_id}/participants", response_model=List[ParticipantResponse])
+async def list_participants(
+    thread_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    thread = db.query(Thread).filter(Thread.id == thread_id, Thread.owner_user_id == current_user.id).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    participants = db.query(ThreadParticipant).filter(ThreadParticipant.thread_id == thread_id, ThreadParticipant.is_active == True).all()
+    return [ParticipantResponse.model_validate(p) for p in participants]
+
+
+@app.post("/threads/{thread_id}/participants", response_model=ParticipantResponse)
+async def add_participant(
+    thread_id: int,
+    participant: ParticipantAdd,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    thread = db.query(Thread).filter(Thread.id == thread_id, Thread.owner_user_id == current_user.id).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    # Validate participant exists (for user/confab types)
+    if participant.participant_type == "user" and participant.participant_id:
+        if not db.query(User).filter(User.id == participant.participant_id).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User not found")
+    elif participant.participant_type == "confab" and participant.participant_id:
+        if not db.query(Confab).filter(Confab.id == participant.participant_id).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Confab not found")
+    elif participant.participant_type == "system" and not participant.system_agent_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System agent name required")
+
+    db_participant = ThreadParticipant(
+        thread_id=thread_id,
+        participant_type=participant.participant_type,
+        participant_id=participant.participant_id,
+        system_agent_name=participant.system_agent_name,
+        role=participant.role,
+    )
+    db.add(db_participant)
+    db.commit()
+    db.refresh(db_participant)
+    return ParticipantResponse.model_validate(db_participant)
+
+
+@app.delete("/threads/{thread_id}/participants/{participant_id}")
+async def remove_participant(
+    thread_id: int,
+    participant_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    thread = db.query(Thread).filter(Thread.id == thread_id, Thread.owner_user_id == current_user.id).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    participant = db.query(ThreadParticipant).filter(
+        ThreadParticipant.id == participant_id,
+        ThreadParticipant.thread_id == thread_id
+    ).first()
+    if not participant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found")
+
+    # Soft delete - mark as inactive
+    participant.is_active = False
+    participant.left_at = datetime.datetime.now(datetime.timezone.utc)
+    db.commit()
+    return {"message": "Participant removed"}
+
+
+# =============================================================================
+# Messages Routes
+# =============================================================================
+
+@app.get("/threads/{thread_id}/messages", response_model=List[MessageResponse])
 async def list_messages(
     thread_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """List messages in a thread (for reviewing chats)."""
-    thread = db.query(Thread).filter(
-        Thread.id == thread_id,
-        Thread.owner_user_id == current_user.id
-    ).first()
+    thread = db.query(Thread).filter(Thread.id == thread_id, Thread.owner_user_id == current_user.id).first()
     if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.time).all()
+
+    messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.created_at).all()
     return [MessageResponse.model_validate(m) for m in messages]
 
 
-@app.post("/threads/{thread_id}/messages", response_model=MessageResponse)
-async def add_message(
+# =============================================================================
+# Chat Route (unified endpoint with auto-response)
+# =============================================================================
+
+async def should_agent_respond(message_content: str, addressed_to: Optional[List], agent_participant: ThreadParticipant, thread_context: List[Message]) -> bool:
+    """Determine if an agent should respond to a message."""
+    # If explicitly addressed to this agent, respond
+    if addressed_to:
+        for addr in addressed_to:
+            if addr.get("type") == agent_participant.participant_type:
+                if agent_participant.participant_type == "system":
+                    if addr.get("name") == agent_participant.system_agent_name:
+                        return True
+                elif addr.get("id") == agent_participant.participant_id:
+                    return True
+        return False  # Addressed to someone else
+
+    # Broadcast message - infer from context
+    # For now, agents always respond to broadcasts in threads where they participate
+    return True
+
+
+@app.post("/threads/{thread_id}/chat", response_model=ChatResponse)
+async def chat(
     thread_id: int,
-    body: MessageCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Add a message to a thread."""
-    thread = db.query(Thread).filter(
-        Thread.id == thread_id,
-        Thread.owner_user_id == current_user.id
-    ).first()
-    if not thread:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    db_message = Message(
-        thread_id=thread_id,
-        content=body.content,
-        role=body.role or "user",
-    )
-    db.add(db_message)
-    db.commit()
-    db.refresh(db_message)
-    return MessageResponse.model_validate(db_message)
-
-@app.post("/confabs/test-repo")
-async def test_repo_initialization(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Test GitHub repository initialization with dummy data"""
-    try:
-        # Get GitHub account for the user
-        github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
-        
-        if not github_account:
-            # For users without GitHub, return a simulated success
-            return {
-                "message": "Test repository initialization simulated for email user",
-                "repo_name": "letsconfab/confabs",
-                "status": "simulated",
-                "dummy_data": {
-                    "purpose": "Test confab for demonstration purposes",
-                    "created_at": "2024-01-01T00:00:00Z",
-                    "test_files": ["README.md", "config.json", "example.py"]
-                }
-            }
-        
-        # For GitHub users, create/initialize the actual repository
-        repo_name = "confabs"
-        repo_owner = github_account.github_username
-        
-        # Check if repository exists, if not create it
-        try:
-            # Try to create the repository
-            repo_info = await create_github_repository(
-                repo_name=repo_name,
-                access_token=github_account.access_token,
-                description=f"Confabs repository for {github_account.github_username}",
-                private=False
-            )
-        except Exception as e:
-            # Repository might already exist, try to initialize it directly
-            pass
-        
-        # Initialize repository with confab structure
-        init_result = await initialize_confab_repository(
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            access_token=github_account.access_token
-        )
-        
-        if init_result["success"]:
-            return {
-                "message": f"Test repository '{repo_owner}/{repo_name}' initialized successfully",
-                "repo_name": f"{repo_owner}/{repo_name}",
-                "status": "success",
-                "dummy_data": {
-                    "purpose": f"Test confab for {github_account.github_username}",
-                    "created_at": "2024-01-01T00:00:00Z",
-                    "test_files": init_result["test_files"],
-                    "github_username": github_account.github_username,
-                    "pr_url": init_result.get("pr_url", "")
-                }
-            }
-        else:
-            raise Exception(init_result["error"])
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to test repository initialization: {str(e)}"
-        )
-
-
-# === [CLAUDE: LLM API Endpoints for Dynamic Chat Responses] ===
-# These endpoints handle interactions with the Groq LLM service
-
-@app.get("/llm/health")
-async def llm_health_check():
-    """
-    Check if LLM service is configured and accessible.
-    Returns health status indicating if Groq API is available.
-    """
-    is_healthy = await llm_client.health_check()
-    return {
-        "status": "healthy" if is_healthy else "not_configured",
-        "provider": "groq",
-        "model": llm_client.model,
-        "healthy": is_healthy
-    }
-
-
-@app.get("/llm/models")
-async def llm_list_models():
-    """
-    Get list of supported models.
-    """
-    return {
-        "models": [
-            {"name": "qwen/qwen3-32b", "description": "Qwen 3 32B - Fast and capable"},
-            {"name": "llama-3.1-8b-instant", "description": "Llama 3.1 8B - Very fast"},
-            {"name": "llama-3.1-70b-versatile", "description": "Llama 3.1 70B - Most capable"},
-        ]
-    }
-
-
-@app.post("/llm/generate")
-async def llm_generate(request: LLMRequest):
-    """
-    Generate a response from LLM using the provided prompt.
-    """
-    try:
-        response = await ask_llm(
-            prompt=request.prompt,
-            temperature=request.temperature
-        )
-        return {
-            "model": llm_client.model,
-            "response": response,
-            "success": True
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"LLM service error: {str(e)}"
-        )
-
-
-# System prompt that instructs the LLM how to behave during the confab setup conversation.
-
-
-def _parse_tool_call(text: str) -> Optional[Dict[str, Any]]:
-    """Look for a JSON-like tool call in the model output.
-
-    The agent is instructed to emit a JSON object such as:
-    {"tool": "define_purpose", "args": {"confab_id":123, "purpose_text":"..."}}
-    The function returns the parsed dictionary or None if nothing relevant is found.
-    """
-    try:
-        obj = json.loads(text.strip())
-        if isinstance(obj, dict) and "tool" in obj:
-            return obj
-    except Exception:
-        pass
-    # fallback: search for embedded JSON blob
-    m = re.search(r"\{\s*\"tool\".*\}", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except Exception:
-            return None
-    return None
-
-
-def _execute_tool(tool_name: str, args: Dict[str, Any], db: Session) -> str:
-    """Dispatch helper to run one of the agent_tools functions."""
-    if tool_name == "define_purpose":
-        return define_purpose(db, args.get("confab_id"), args.get("purpose_text", ""))
-    elif tool_name == "add_participant":
-        return add_participant(db, args.get("confab_id"), args.get("email", ""))
-    elif tool_name == "configure_memory":
-        return configure_memory(db, args.get("confab_id"), args.get("memory_notes", ""), args.get("enable", True))
-    elif tool_name == "add_tools_and_apis":
-        return add_tools_and_apis(db, args.get("confab_id"), args.get("tool_name", ""), args.get("api_key", ""))
-    elif tool_name == "guardrails":
-        return guardrails(db, args.get("confab_id"), args.get("guardrails_text", ""))
-    elif tool_name == "sample_io":
-        return sample_io(db, args.get("confab_id"), args.get("sample_text", ""))
-    elif tool_name == "review_and_save":
-        return review_and_save(db, args.get("confab_id"))
-    else:
-        return f"Unknown tool: {tool_name}"
-
-
-@app.post("/threads/{thread_id}/chat")
-async def chat_with_llm(
-    thread_id: int,
-    request: MessageCreate,
+    request: ChatRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    [CLAUDE: Main chat endpoint - takes user message, generates response from LLM, and stores both in DB]
+    Unified chat endpoint with automatic agent responses.
 
-    This endpoint:
-    1. Validates the thread belongs to the current user
-    2. Stores the user's message in the database
-    3. Calls LLM to generate a response based on message history
-    4. Stores the AI response in the database
-    5. Returns both messages to the client
+    1. Saves user message
+    2. Queries thread participants for agents (confabs, system)
+    3. For each agent, determines if it should respond (explicit addressing or inference)
+    4. Generates and saves agent responses
+    5. Returns all messages
     """
-    # Validate thread ownership
-    thread = db.query(Thread).filter(
-        Thread.id == thread_id,
-        Thread.owner_user_id == current_user.id
-    ).first()
+    thread = db.query(Thread).filter(Thread.id == thread_id, Thread.owner_user_id == current_user.id).first()
     if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
-    # [CLAUDE: Store user message in database]
+    # Calculate depth for subthreading
+    depth = 0
+    if request.in_reply_to:
+        parent = db.query(Message).filter(Message.id == request.in_reply_to).first()
+        if parent:
+            depth = parent.depth + 1
+
+    # Save user message
     user_message = Message(
         thread_id=thread_id,
+        sender_type="user",
+        sender_id=current_user.id,
+        sender_name=current_user.name,
         content=request.content,
-        role="user"
+        role="user",
+        in_reply_to=request.in_reply_to,
+        depth=depth,
+        addressed_to=[a.model_dump() for a in request.addressed_to] if request.addressed_to else None,
     )
     db.add(user_message)
     db.commit()
     db.refresh(user_message)
 
-    # [CLAUDE: Build context from message history for LLM prompt]
-    messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.time).all()
-
-    # Build prompt with conversation context
-    SYSTEM_PROMPT= ""
-    context_prompt = SYSTEM_PROMPT + "\n\nBased on the following conversation, provide a helpful and coherent response.\n\n"
-    for msg in messages[-10:]:  # Use last 10 messages for context
-        role = "User" if msg.role == "user" else "Assistant"
-        context_prompt += f"{role}: {msg.content}\n"
-
-    try:
-        # [CLAUDE: Generate response from LLM using the full context]
-        ai_response = await ask_llm(
-            prompt=context_prompt,
-            temperature=0.7
-        )
-
-        # check for a tool call in the text
-        tool_instr = _parse_tool_call(ai_response)
-        if tool_instr:
-            tool_result = _execute_tool(tool_instr.get("tool"), tool_instr.get("args", {}), db)
-            # compute progress summary from confab config if available
-            try:
-                cid = int(tool_instr.get("args", {}).get("confab_id"))
-                confab = db.query(Confab).filter(Confab.id == cid).first()
-                if confab:
-                    cfg = confab.config or {}
-                    completed = cfg.get("setup_steps_completed", [])
-                    remaining = [i for i in range(1, 8) if i not in completed]
-                    tool_result += f"\n[progress] completed steps: {completed}, remaining: {remaining}"
-            except Exception:
-                pass
-
-            # store the tool output as its own message in the thread
-            tool_message = Message(
-                thread_id=thread_id,
-                content=f"[tool:{tool_instr.get('tool')}] {tool_result}",
-                role="assistant"
-            )
-            db.add(tool_message)
-            db.commit()
-            db.refresh(tool_message)
-
-            # call the model again to continue conversation after tool
-            context_prompt += f"Assistant: {ai_response}\nTool output: {tool_result}\n"
-            ai_response = await ask_llm(
-                prompt=context_prompt,
-                temperature=0.7
-            )
-
-        # [CLAUDE: Store final AI response in database]
-        assistant_message = Message(
-            thread_id=thread_id,
-            content=ai_response,
-            role="assistant"
-        )
-        db.add(assistant_message)
-        db.commit()
-        db.refresh(assistant_message)
-
-        response_payload = {
-            "user_message": MessageResponse.model_validate(user_message),
-            "assistant_message": MessageResponse.model_validate(assistant_message),
-            "success": True
-        }
-        if tool_instr and tool_message is not None:
-            response_payload["tool_message"] = MessageResponse.model_validate(tool_message)
-        return response_payload
-    except Exception as e:
-        # [CLAUDE: If LLM fails, still return the user message but with error for assistant]
-        error_message = Message(
-            thread_id=thread_id,
-            content=f"Error: Could not generate response - {str(e)}",
-            role="assistant"
-        )
-        db.add(error_message)
-        db.commit()
-        db.refresh(error_message)
-
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"LLM service error: {str(e)}"
-        )
-
-
-@app.post("/thread-mappings", response_model=ThreadMappingResponse)
-async def create_thread_mapping(
-    mapping: ThreadMappingCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    [CLAUDE: Create a mapping between a confab and a thread]
-    
-    This links a conversation thread to a specific confab so we can track
-    which confab a conversation belongs to.
-    """
-    # Validate confab ownership
-    confab = db.query(Confab).filter(
-        Confab.id == mapping.confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-    
-    # Validate thread ownership
-    thread = db.query(Thread).filter(
-        Thread.id == mapping.thread_id,
-        Thread.owner_user_id == current_user.id
-    ).first()
-    if not thread:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    
-    # Create mapping
-    db_mapping = ThreadMapping(
-        confab_id=mapping.confab_id,
-        thread_id=mapping.thread_id
-    )
-    db.add(db_mapping)
-    db.commit()
-    db.refresh(db_mapping)
-    
-    return ThreadMappingResponse.model_validate(db_mapping)
-
-
-@app.get("/thread-mappings")
-async def list_thread_mappings(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    [CLAUDE: List all thread mappings for the current user's confabs and threads]
-    """
-    # Get all confabs for the user
-    user_confab_ids = db.query(Confab.id).filter(Confab.user_id == current_user.id).all()
-    user_confab_ids = [c[0] for c in user_confab_ids]
-    
-    # Get all threads for the user
-    user_thread_ids = db.query(Thread.id).filter(Thread.owner_user_id == current_user.id).all()
-    user_thread_ids = [t[0] for t in user_thread_ids]
-    
-    # Get mappings that involve the user's confabs and threads
-    mappings = db.query(ThreadMapping).filter(
-        ThreadMapping.confab_id.in_(user_confab_ids) if user_confab_ids else False,
-        ThreadMapping.thread_id.in_(user_thread_ids) if user_thread_ids else False
+    # Get agent participants
+    agent_participants = db.query(ThreadParticipant).filter(
+        ThreadParticipant.thread_id == thread_id,
+        ThreadParticipant.is_active == True,
+        ThreadParticipant.participant_type.in_(["confab", "system"])
     ).all()
-    
-    return [ThreadMappingResponse.model_validate(m) for m in mappings]
 
+    # Get thread context for inference
+    thread_messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.created_at).limit(20).all()
 
-@app.get("/confabs/{confab_id}/threads")
-async def get_confab_threads(
-    confab_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    [CLAUDE: Get all threads mapped to a specific confab]
-    """
-    # Validate confab ownership
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-    
-    # Get all thread mappings for this confab
-    mappings = db.query(ThreadMapping).filter(ThreadMapping.confab_id == confab_id).all()
-    thread_ids = [m.thread_id for m in mappings]
-    
-    # Get the threads
-    threads = db.query(Thread).filter(Thread.id.in_(thread_ids)).all() if thread_ids else []
-    
-    return [ThreadResponse.model_validate(t) for t in threads]
+    agent_responses = []
 
-@app.post("/confabs/{confab_id}/set-name")
-async def set_confab_name(
-    confab_id: int,
-    request: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Set or generate a confab name with user input and skip logic.
-    
-    Expected request body:
-    {
-        "user_name": "Optional user-provided name",
-        "purpose_text": "Purpose text for auto-generation if user skips",
-        "skip": false  // If true, auto-generate from purpose
-    }
-    """
-    from agent_runner import slugify, generate_confab_name_from_purpose
-    
-    # Validate confab ownership
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-    
-    user_name = request.get("user_name", "").strip()
-    purpose_text = request.get("purpose_text", "").strip()
-    skip = request.get("skip", False)
-    
-    if skip or not user_name:
-        # Auto-generate name from purpose
-        if not purpose_text:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
-                detail="Purpose text is required for auto-generation"
-            )
-        
-        generated_name = generate_confab_name_from_purpose(purpose_text)
-        confab.name = generated_name
-        db.commit()
-        
-        return {
-            "name": generated_name,
-            "source": "auto_generated",
-            "message": f"Auto-generated confab name: {generated_name}"
-        }
-    else:
-        # Use user-provided name
-        slugified_name = slugify(user_name)
-        confab.name = slugified_name
-        db.commit()
-        
-        return {
-            "name": slugified_name,
-            "source": "user_provided",
-            "original": user_name,
-            "slugified": slugified_name,
-            "message": f"Set confab name: {slugified_name}"
-        }
-
-@app.post("/confabs/{confab_id}/create-isolated")
-async def create_isolated_confab(
-    confab_id: int,
-    request: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Create a completely isolated confab with new thread and folder.
-    
-    Expected request body:
-    {
-        "name": "Optional confab name",
-        "purpose_text": "Purpose for auto-generation if no name provided"
-    }
-    """
-    from agent_runner import slugify, generate_confab_name_from_purpose
-    
-    # Validate confab ownership
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-    
-    user_name = request.get("name", "").strip()
-    purpose_text = request.get("purpose_text", "").strip()
-    
-    # Set confab name
-    if user_name:
-        confab_name = slugify(user_name)
-    elif purpose_text:
-        confab_name = generate_confab_name_from_purpose(purpose_text)
-    else:
-        confab_name = f"confab-{confab_id}"
-    
-    confab.name = confab_name
-    
-    # Create new thread for this confab
-    new_thread = Thread(
-        thread_name=f"Thread for {confab_name}",
-        owner_user_id=current_user.id
-    )
-    db.add(new_thread)
-    db.commit()
-    db.refresh(new_thread)
-    
-    # Create thread mapping
-    thread_mapping = ThreadMapping(
-        confab_id=confab_id,
-        thread_id=new_thread.id
-    )
-    db.add(thread_mapping)
-    db.commit()
-    
-    # Update confab status
-    confab.status = "ready"
-    db.commit()
-    
-    return {
-        "confab_id": confab_id,
-        "confab_name": confab_name,
-        "thread_id": new_thread.id,
-        "thread_name": new_thread.thread_name,
-        "message": f"Created isolated confab '{confab_name}' with new thread {new_thread.id}"
-    }
-
-@app.get("/confabs/{confab_id}/isolated-status")
-async def get_confab_isolation_status(
-    confab_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Get the isolation status of a confab - which thread it belongs to.
-    """
-    # Validate confab ownership
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-    
-    # Get thread mapping
-    thread_mapping = db.query(ThreadMapping).filter(
-        ThreadMapping.confab_id == confab_id
-    ).first()
-    
-    if thread_mapping:
-        thread = db.query(Thread).filter(Thread.id == thread_mapping.thread_id).first()
-        return {
-            "confab_id": confab_id,
-            "confab_name": confab.name,
-            "thread_id": thread.id,
-            "thread_name": thread.thread_name,
-            "is_isolated": True,
-            "message": f"Confab '{confab.name}' is isolated to thread '{thread.thread_name}'"
-        }
-    else:
-        return {
-            "confab_id": confab_id,
-            "confab_name": confab.name,
-            "thread_id": None,
-            "thread_name": None,
-            "is_isolated": False,
-            "message": f"Confab '{confab.name}' is not isolated to any thread"
-        }
-
-# === [CLAUDE: Import LangGraph Agent Runner] ===
-from agent_runner import run_langgraph_agent, get_agent_status
-
-@app.post("/agent/chat/{confab_id}")
-async def chat_with_langgraph_agent(
-    confab_id: int,
-    request: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    [CLAUDE: Main LangGraph Agent chat endpoint with confab isolation]
-
-    This endpoint implements the new architecture with strict confab isolation:
-    1. Validates confab ownership and isolation
-    2. Routes 'building' status confabs through Foreman agent
-    3. Gets or creates isolated thread for this confab
-    4. Filters chat history strictly by thread_id
-    5. Stores messages only in the isolated thread
-    6. Maintains complete separation between confabs
-
-    Architecture flow:
-    User message -> Validate isolation -> Foreman (if building) or LangGraph Agent -> Response
-    """
-    # Validate confab ownership
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-
-    # === [CLAUDE: Route 'building' status confabs through Foreman agent] ===
-    if confab.status == "building":
-        foreman = Foreman(confab_id, db)
-        initialized = await foreman.initialize()
-
-        if not initialized:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not initialize Foreman agent"
-            )
-
-        user_message = request.get("message", "")
-
-        # Handle resume request (empty message or explicit resume flag)
-        if not user_message or request.get("resume", False):
-            logger.info(f"Generating resume prompt for confab {confab_id}")
-            return await foreman.generate_resume_prompt()
-
-        # Process regular message through Foreman
-        logger.info(f"Processing message through Foreman for confab {confab_id}")
-        return await foreman.process_message(user_message)
-
-    # === [CLAUDE: Original flow for non-building confabs] ===
-    # Get or create isolated thread for this confab
-    thread_mapping = db.query(ThreadMapping).filter(
-        ThreadMapping.confab_id == confab_id
-    ).first()
-
-    if not thread_mapping:
-        # Create new isolated thread for this confab
-        new_thread = Thread(
-            thread_name=f"Thread for {confab.name or f'confab-{confab_id}'}",
-            owner_user_id=current_user.id
-        )
-        db.add(new_thread)
-        db.commit()
-        db.refresh(new_thread)
-
-        # Create thread mapping
-        thread_mapping = ThreadMapping(
-            confab_id=confab_id,
-            thread_id=new_thread.id
-        )
-        db.add(thread_mapping)
-        db.commit()
-        db.refresh(thread_mapping)
-
-        thread_id = new_thread.id
-        logger.info(f"Created new isolated thread {thread_id} for confab {confab_id}")
-    else:
-        thread_id = thread_mapping.thread_id
-        logger.info(f"Using existing isolated thread {thread_id} for confab {confab_id}")
-
-    # Extract message from request
-    user_message = request.get("message", "")
-    if not user_message:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message is required")
-    
-    # Store user message in the isolated thread
-    user_db_message = Message(
-        thread_id=thread_id,
-        content=user_message,
-        role="user"
-    )
-    db.add(user_db_message)
-    db.commit()
-    db.refresh(user_db_message)
-    
-    try:
-        # Run the LangGraph agent
-        result = await run_langgraph_agent(confab_id, user_message, db)
-        
-        if result["success"]:
-            # Store AI response in the isolated thread
-            assistant_message = Message(
-                thread_id=thread_id,
-                content=result["response"],
-                role="assistant"
-            )
-            db.add(assistant_message)
-            db.commit()
-            db.refresh(assistant_message)
-            
-            return {
-                "response": result["response"],
-                "tool_calls": result.get("tool_calls", []),
-                "confab_id": confab_id,
-                "thread_id": thread_id,
-                "timestamp": str(datetime.datetime.now()),
-                "architecture": "LangGraph with MCP integration",
-                "isolation": "strict_thread_filtering",
-                "messages": {
-                    "user_message_id": user_db_message.id,
-                    "assistant_message_id": assistant_message.id
-                }
-            }
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get("error", "Agent execution failed")
-            )
-            
-    except Exception as e:
-        logger.error(f"Error in LangGraph agent chat: {e}")
-        
-        # Store error message in the isolated thread
-        error_message = Message(
-            thread_id=thread_id,
-            content=f"Error: Could not generate response - {str(e)}",
-            role="assistant"
-        )
-        db.add(error_message)
-        db.commit()
-        
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Agent error: {str(e)}"
+    for agent in agent_participants:
+        # Check if agent should respond
+        should_respond = await should_agent_respond(
+            request.content,
+            [a.model_dump() for a in request.addressed_to] if request.addressed_to else None,
+            agent,
+            thread_messages
         )
 
-@app.get("/agent/chat/{confab_id}/history")
-async def get_confab_chat_history(
-    confab_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Get chat history for a specific confab, demonstrating strict isolation.
-    
-    This endpoint shows only messages from the thread mapped to this confab,
-    proving that confab isolation is working correctly.
-    """
-    # Validate confab ownership
-    confab = db.query(Confab).filter(
-        Confab.id == confab_id,
-        Confab.user_id == current_user.id
-    ).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-    
-    # Get thread mapping for this confab
-    thread_mapping = db.query(ThreadMapping).filter(
-        ThreadMapping.confab_id == confab_id
-    ).first()
-    
-    if not thread_mapping:
-        return {
-            "confab_id": confab_id,
-            "confab_name": confab.name,
-            "thread_id": None,
-            "messages": [],
-            "message": f"No chat history found for confab '{confab.name}'. Start a conversation to create history.",
-            "isolation": "no_thread_mapped"
-        }
-    
-    # Get messages only from the mapped thread (strict isolation)
-    messages = db.query(Message).filter(
-        Message.thread_id == thread_mapping.thread_id
-    ).order_by(Message.time).all()
-    
-    message_history = []
-    for msg in messages:
-        message_history.append({
-            "id": msg.id,
-            "content": msg.content,
-            "role": msg.role,
-            "timestamp": msg.time,
-            "thread_id": msg.thread_id
-        })
-    
-    return {
-        "confab_id": confab_id,
-        "confab_name": confab.name,
-        "thread_id": thread_mapping.thread_id,
-        "thread_name": db.query(Thread).filter(Thread.id == thread_mapping.thread_id).first().thread_name,
-        "messages": message_history,
-        "message_count": len(message_history),
-        "isolation": "strict_thread_filtering",
-        "message": f"Retrieved {len(message_history)} messages for confab '{confab.name}'"
-    }
+        if not should_respond:
+            continue
 
-@app.post("/admin/migrate-confabs")
-async def migrate_existing_confabs(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Migrate existing confabs to the new naming and folder structure.
-    
-    This endpoint helps with backward compatibility by:
-    1. Converting old timestamp-based names to slugified names
-    2. Creating thread mappings for isolation
-    3. Moving PURPOSE.md files to new folder structure
-    """
-    from agent_runner import slugify, generate_confab_name_from_purpose
-    
-    # Get all confabs for the user
-    confabs = db.query(Confab).filter(Confab.user_id == current_user.id).all()
-    
-    migrated_count = 0
-    migration_results = []
-    
-    for confab in confabs:
-        result = {
-            "confab_id": confab.id,
-            "old_name": confab.name,
-            "actions": []
-        }
-        
-        # 1. Migrate confab name if it's timestamp-based
-        if confab.name and confab.name.startswith("Agent Chat –"):
-            try:
-                # Try to get purpose to generate a better name
-                from agent_tools import get_purpose
-                purpose_text = get_purpose(confab.id)
-                
-                if purpose_text:
-                    new_name = generate_confab_name_from_purpose(purpose_text)
+        try:
+            # Generate response based on agent type
+            if agent.participant_type == "system" and agent.system_agent_name == "foreman":
+                # Get confab for foreman context (find first confab participant in thread)
+                confab_participant = db.query(ThreadParticipant).filter(
+                    ThreadParticipant.thread_id == thread_id,
+                    ThreadParticipant.participant_type == "confab"
+                ).first()
+
+                if confab_participant:
+                    foreman = Foreman(confab_participant.participant_id, db)
+                    await foreman.initialize()
+                    result = await foreman.process_message(request.content)
+                    response_content = result.get("response", "")
                 else:
-                    new_name = f"confab-{confab.id}"
-                
-                confab.name = new_name
-                result["actions"].append(f"Renamed from timestamp-based to: {new_name}")
-                migrated_count += 1
-                
-            except Exception as e:
-                result["actions"].append(f"Failed to rename: {str(e)}")
-        
-        # 2. Ensure name is slugified
-        if confab.name:
-            slugified_name = slugify(confab.name)
-            if confab.name != slugified_name:
-                confab.name = slugified_name
-                result["actions"].append(f"Slugified name to: {slugified_name}")
-                migrated_count += 1
-        
-        # 3. Create thread mapping if it doesn't exist
-        existing_mapping = db.query(ThreadMapping).filter(
-            ThreadMapping.confab_id == confab.id
-        ).first()
-        
-        if not existing_mapping:
-            try:
-                # Create new thread
-                new_thread = Thread(
-                    thread_name=f"Thread for {confab.name or f'confab-{confab.id}'}",
-                    owner_user_id=current_user.id
-                )
-                db.add(new_thread)
-                db.commit()
-                db.refresh(new_thread)
-                
-                # Create thread mapping
-                thread_mapping = ThreadMapping(
-                    confab_id=confab.id,
-                    thread_id=new_thread.id
-                )
-                db.add(thread_mapping)
-                db.commit()
-                
-                result["actions"].append(f"Created isolated thread {new_thread.id}")
-                migrated_count += 1
-                
-            except Exception as e:
-                result["actions"].append(f"Failed to create thread mapping: {str(e)}")
-        
-        result["new_name"] = confab.name
-        migration_results.append(result)
-    
-    # Commit all changes
-    try:
-        db.commit()
-        success = True
-    except Exception as e:
-        db.rollback()
-        success = False
-        error = str(e)
-    
-    return {
-        "success": success,
-        "migrated_count": migrated_count,
-        "total_confabs": len(confabs),
-        "migration_results": migration_results,
-        "error": error if not success else None,
-        "message": f"Migration completed. {migrated_count} changes made across {len(confabs)} confabs."
-    }
+                    response_content = "Foreman ready. Please add a confab to this conversation to begin building."
 
-@app.get("/admin/system-status")
-async def get_system_status(
+                sender_name = "Foreman"
+
+            elif agent.participant_type == "confab":
+                # Get confab and generate response
+                confab = db.query(Confab).filter(Confab.id == agent.participant_id).first()
+                if not confab:
+                    continue
+
+                # Build context prompt
+                context = f"You are {confab.name}. "
+                if confab.purpose:
+                    context += f"Your purpose: {confab.purpose}\n"
+                if confab.guardrails:
+                    context += f"Guardrails: {confab.guardrails}\n"
+
+                context += "\nConversation:\n"
+                for msg in thread_messages[-10:]:
+                    role = "User" if msg.role == "user" else "Assistant"
+                    context += f"{role}: {msg.content}\n"
+                context += f"User: {request.content}\n"
+
+                response_content = await ask_llm(prompt=context, temperature=confab.temperature)
+                sender_name = confab.name
+
+            else:
+                continue
+
+            # Save agent response
+            agent_message = Message(
+                thread_id=thread_id,
+                sender_type=agent.participant_type,
+                sender_id=agent.participant_id,
+                sender_name=sender_name,
+                content=response_content,
+                role="assistant",
+                in_reply_to=user_message.id,
+                depth=user_message.depth,
+            )
+            db.add(agent_message)
+            db.commit()
+            db.refresh(agent_message)
+
+            agent_responses.append(MessageResponse.model_validate(agent_message))
+
+        except Exception as e:
+            logger.error(f"Error generating response from agent {agent.id}: {e}")
+            continue
+
+    return ChatResponse(
+        thread_id=thread_id,
+        user_message=MessageResponse.model_validate(user_message),
+        agent_responses=agent_responses,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+
+
+# =============================================================================
+# Admin Routes
+# =============================================================================
+
+@app.get("/admin/system-status", response_model=SystemStatusResponse)
+async def get_system_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    total_users = db.query(User).count()
+    total_confabs = db.query(Confab).count()
+    active_threads = db.query(Thread).count()
+
+    return SystemStatusResponse(
+        database="healthy",
+        llm_service="healthy",
+        github_service="healthy",
+        active_threads=active_threads,
+        total_confabs=total_confabs,
+        total_users=total_users,
+    )
+
+
+@app.post("/admin/sync-to-github", response_model=GitHubSyncResponse)
+async def sync_to_github(
+    request: GitHubSyncRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get system status showing migration state and confab isolation status.
-    """
-    # Get confabs statistics
-    total_confabs = db.query(Confab).filter(Confab.user_id == current_user.id).count()
-    
-    # Count confabs with proper names (non-timestamp)
-    proper_named_confabs = db.query(Confab).filter(
-        Confab.user_id == current_user.id,
-        ~Confab.name.startswith("Agent Chat –")
-    ).count()
-    
-    # Count confabs with thread mappings
-    confabs_with_threads = db.query(ThreadMapping).join(Confab).filter(
-        Confab.user_id == current_user.id
-    ).count()
-    
-    # Get recent confabs
-    recent_confabs = db.query(Confab).filter(
-        Confab.user_id == current_user.id
-    ).order_by(Confab.created_at.desc()).limit(5).all()
-    
-    confab_details = []
-    for confab in recent_confabs:
-        thread_mapping = db.query(ThreadMapping).filter(
-            ThreadMapping.confab_id == confab.id
-        ).first()
-        
-        confab_details.append({
-            "id": confab.id,
-            "name": confab.name,
-            "status": confab.status,
-            "has_thread_mapping": thread_mapping is not None,
-            "thread_id": thread_mapping.thread_id if thread_mapping else None,
-            "needs_migration": confab.name.startswith("Agent Chat –") if confab.name else False
-        })
-    
-    return {
-        "user": current_user.email,
-        "statistics": {
-            "total_confabs": total_confabs,
-            "proper_named_confabs": proper_named_confabs,
-            "confabs_with_threads": confabs_with_threads,
-            "migration_needed": total_confabs - proper_named_confabs
-        },
-        "recent_confabs": confab_details,
-        "system_health": {
-            "github_structure": "confabs/{confab.name}/PURPOSE.md",
-            "isolation": "strict_thread_filtering",
-            "naming": "slugified_names"
-        }
-    }
+    """Sync confabs to GitHub as OASF-compliant artifacts."""
+    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+    if not github_account:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not connected")
 
-@app.get("/agent/status")
-async def get_langgraph_agent_status(
-    current_user: User = Depends(get_current_user)
-):
-    """
-    [CLAUDE: Get LangGraph Agent system status]
-    
-    Returns the current status of the LangGraph agent system including:
-    - Agent status (active/error)
-    - LLM provider information
-    - Available tools count
-    - Architecture information
-    """
-    try:
-        status = get_agent_status()
-        return {
-            "status": status,
-            "user": current_user.email,
-            "timestamp": str(datetime.datetime.now())
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e),
-            "timestamp": str(datetime.datetime.now())
-        }
+    # Get confabs to sync
+    query = db.query(Confab).filter(Confab.user_id == current_user.id)
+    if request.confab_ids:
+        query = query.filter(Confab.id.in_(request.confab_ids))
+    confabs = query.all()
+
+    synced = 0
+    failed = 0
+    errors = []
+
+    # Initialize GitHub service
+    repo_owner = github_account.selected_org or github_account.github_username
+    repo_name = github_account.selected_repo
+
+    github_service = GitHubService(
+        access_token=github_account.access_token,
+        repo_owner=repo_owner,
+        repo_name=repo_name
+    )
+
+    for confab in confabs:
+        try:
+            # Generate OASF export files
+            files = generate_all_export_files(confab, db)
+
+            # Determine confab folder path
+            confab_folder = confab.github_path or confab.name.lower().replace(" ", "-")
+
+            # Get or create branch for this confab
+            branch_name = f"confab-{confab.id}"
+            await github_service.get_or_create_branch(branch_name)
+
+            # Commit each file to GitHub
+            for filename, content in files.items():
+                file_path = f"confabs/{confab_folder}/{filename}"
+                await github_service.create_or_update_file(
+                    path=file_path,
+                    content=content,
+                    message=f"Update {filename} for {confab.name} (v{confab.version})",
+                    branch=branch_name
+                )
+
+            # Update sync state
+            confab.oasf_yaml = files["agent.oasf.yaml"]
+            confab.github_path = confab_folder
+            confab.github_synced_at = datetime.datetime.now(datetime.timezone.utc)
+            confab.github_sync_version = confab.version
+            synced += 1
+
+            logger.info(f"Synced confab {confab.id} to GitHub: {confab_folder}")
+
+        except Exception as e:
+            failed += 1
+            errors.append({"confab_id": confab.id, "error": str(e)})
+            logger.error(f"Failed to sync confab {confab.id}: {e}")
+
+    db.commit()
+
+    return GitHubSyncResponse(synced_count=synced, failed_count=failed, errors=errors)
+
+
+# =============================================================================
+# Entry Point
+# =============================================================================
 
 if __name__ == "__main__":
     import uvicorn

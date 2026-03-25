@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from models import Confab, Message, Thread, ThreadMapping, GitHubAccount
+from models import Confab, Message, Thread, ThreadParticipant, GitHubAccount
 from context_loader import ContextLoader, ForemanContext
 from resume_generator import ResumePromptGenerator, STAGE_PROMPTS, STEP_DESCRIPTIONS
 from llm_service import ask_llm
@@ -124,7 +124,9 @@ class Foreman:
             resume_msg = Message(
                 thread_id=thread_id,
                 content=resume_text,
-                role="assistant"
+                role="assistant",
+                sender_type="system",
+                sender_name="Foreman",
             )
             self.db.add(resume_msg)
             self.db.commit()
@@ -159,7 +161,9 @@ class Foreman:
         user_msg = Message(
             thread_id=thread_id,
             content=user_message,
-            role="user"
+            role="user",
+            sender_type="user",
+            sender_id=self.confab.user_id,
         )
         self.db.add(user_msg)
         self.db.commit()
@@ -185,7 +189,9 @@ class Foreman:
         assistant_msg = Message(
             thread_id=thread_id,
             content=response,
-            role="assistant"
+            role="assistant",
+            sender_type="system",
+            sender_name="Foreman",
         )
         self.db.add(assistant_msg)
         self.db.commit()
@@ -220,19 +226,39 @@ class Foreman:
 
         # Create new thread
         new_thread = Thread(
-            thread_name=f"Foreman session for {self.confab.name or f'confab-{self.confab_id}'}",
+            name=f"Foreman session for {self.confab.name or f'confab-{self.confab_id}'}",
             owner_user_id=self.confab.user_id
         )
         self.db.add(new_thread)
         self.db.commit()
         self.db.refresh(new_thread)
 
-        # Create thread mapping
-        mapping = ThreadMapping(
-            confab_id=self.confab_id,
-            thread_id=new_thread.id
+        # Add owner as participant
+        owner_participant = ThreadParticipant(
+            thread_id=new_thread.id,
+            participant_type="user",
+            participant_id=self.confab.user_id,
+            role="owner",
         )
-        self.db.add(mapping)
+        self.db.add(owner_participant)
+
+        # Add confab as participant
+        confab_participant = ThreadParticipant(
+            thread_id=new_thread.id,
+            participant_type="confab",
+            participant_id=self.confab_id,
+            role="participant",
+        )
+        self.db.add(confab_participant)
+
+        # Add foreman as system participant
+        foreman_participant = ThreadParticipant(
+            thread_id=new_thread.id,
+            participant_type="system",
+            system_agent_name="foreman",
+            role="participant",
+        )
+        self.db.add(foreman_participant)
         self.db.commit()
 
         self.context.thread_id = new_thread.id
@@ -396,13 +422,13 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 await self._persist_progress()
 
     async def _persist_progress(self) -> None:
-        """Persist setup progress to confab config in database."""
+        """Persist setup progress to confab.setup_progress JSON field in database."""
         try:
-            config = self.context.db_config.copy() if self.context.db_config else {}
-            config["setup_steps_completed"] = self.context.setup_progress.completed_steps
-
-            self.confab.config = config
+            self.confab.setup_progress = {
+                "completed_steps": self.context.setup_progress.completed_steps,
+                "current_stage": self.context.setup_progress.current_stage,
+            }
             self.db.commit()
             logger.info(f"Persisted progress for confab {self.confab_id}: {self.context.setup_progress.completed_steps}")
         except Exception as e:
-            logger.error(f"Failed to persist progress: {e}")
+            logger.error(f"Failed to persist progress for confab {self.confab_id}: {e}")
