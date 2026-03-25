@@ -192,17 +192,15 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
           await apiClient.addMessage(tid, messages[0].content, 'assistant');
         }
 
-        // Add confab as a participant in the thread (replaces thread_mapping)
-        if (tid != null && confabId != null) {
+        // Add Foreman as participant for the building phase
+        // Note: During building, only Foreman participates. The confab itself
+        // doesn't participate until it's deployed (status='published')
+        if (tid != null) {
           try {
-            await apiClient.addThreadParticipant(tid, 'confab', confabId, null, 'participant');
-            console.log('[CLAUDE: IMPLEMENTATION] Confab added as thread participant');
-            // Also add Foreman as system agent participant
             await apiClient.addThreadParticipant(tid, 'system', null, 'foreman', 'participant');
             console.log('[CLAUDE: IMPLEMENTATION] Foreman added as thread participant');
           } catch (participantError) {
             console.error('[CLAUDE: IMPLEMENTATION] Error adding thread participant:', participantError);
-            // Continue gracefully - the thread is still created even if participant add fails
           }
         }
       } catch {

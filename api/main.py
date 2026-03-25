@@ -39,7 +39,7 @@ from schemas import (
     # Participant
     ParticipantAdd, ParticipantResponse,
     # Message & Chat
-    MessageResponse, ChatRequest, ChatResponse,
+    MessageCreate, MessageResponse, ChatRequest, ChatResponse,
     # Admin
     SystemStatusResponse, GitHubSyncRequest, GitHubSyncResponse,
 )
@@ -646,6 +646,47 @@ async def list_messages(
 
     messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.created_at).all()
     return [MessageResponse.model_validate(m) for m in messages]
+
+
+@app.post("/threads/{thread_id}/messages", response_model=MessageResponse)
+async def add_message(
+    thread_id: int,
+    request: MessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Add a message to a thread without triggering agent responses.
+    Used for saving initial greetings, persisting messages, etc.
+    For full chat with agent responses, use POST /threads/{id}/chat instead.
+    """
+    thread = db.query(Thread).filter(Thread.id == thread_id, Thread.owner_user_id == current_user.id).first()
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    # Calculate depth for subthreading
+    depth = 0
+    if request.in_reply_to:
+        parent = db.query(Message).filter(Message.id == request.in_reply_to).first()
+        if parent:
+            depth = parent.depth + 1
+
+    message = Message(
+        thread_id=thread_id,
+        sender_type=request.sender_type,
+        sender_id=request.sender_id or (current_user.id if request.sender_type == "user" else None),
+        sender_name=request.sender_name or (current_user.name if request.sender_type == "user" else None),
+        content=request.content,
+        role=request.role,
+        in_reply_to=request.in_reply_to,
+        depth=depth,
+        addressed_to=[a.model_dump() for a in request.addressed_to] if request.addressed_to else None,
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+
+    return MessageResponse.model_validate(message)
 
 
 # =============================================================================
