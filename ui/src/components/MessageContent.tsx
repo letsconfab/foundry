@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Brain } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface MessageContentProps {
   content: string;
@@ -63,16 +65,27 @@ export function MessageContent({ content, className = '', variant = 'assistant' 
     : 'bg-slate-50 border border-slate-200 text-slate-600';
   const labelStyles = isUserVariant ? 'text-indigo-300' : 'text-slate-400';
 
+  // Markdown component classes based on variant
+  const markdownClasses = isUserVariant
+    ? 'markdown-content markdown-dark'
+    : 'markdown-content markdown-light';
+
   // If no think blocks, render content normally
   if (thinkBlocks.length === 0) {
-    return <p className={`whitespace-pre-wrap ${className}`}>{content}</p>;
+    return (
+      <div className={`${markdownClasses} ${className}`}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      </div>
+    );
   }
 
   return (
     <div className={className}>
       {/* Main response content */}
       {mainContent && (
-        <p className="whitespace-pre-wrap">{mainContent}</p>
+        <div className={markdownClasses}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{mainContent}</ReactMarkdown>
+        </div>
       )}
 
       {/* Collapsible think blocks */}
