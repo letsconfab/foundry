@@ -131,8 +131,6 @@ Let's start with the most important part: **What would you like this agent to do
   const [chatReady, setChatReady] = useState(true);
 
   // Load existing confab data if resuming
-  // Note: getConfabThreads endpoint removed - we now need to track thread ID differently
-  // For now, we just load the confab and start fresh if needed
   useEffect(() => {
     const loadExistingConfab = async () => {
       if (!existingConfabId) {
@@ -145,8 +143,39 @@ Let's start with the most important part: **What would you like this agent to do
         // Load existing confab
         const confab = await apiClient.getConfab(existingConfabId);
         setCurrentConfabId(confab.id);
-        // Note: Thread association now handled via ThreadParticipant model
-        // The thread ID would need to be passed explicitly or discovered via participants
+
+        // Find the thread with Foreman as participant (the building conversation)
+        const threads = await apiClient.getThreads();
+        for (const thread of threads) {
+          try {
+            const participants = await apiClient.getThreadParticipants(thread.id);
+            const hasForeman = participants.some(
+              (p: any) => p.participant_type === 'system' && p.system_agent_name === 'foreman'
+            );
+
+            if (hasForeman) {
+              // Found the thread - load messages
+              setCurrentThreadId(thread.id);
+              const threadMessages = await apiClient.getThreadMessages(thread.id);
+
+              if (threadMessages && threadMessages.length > 0) {
+                // Convert to Message format
+                const loadedMessages: Message[] = threadMessages.map((msg: any) => ({
+                  id: String(msg.id),
+                  role: msg.role as 'user' | 'assistant',
+                  content: msg.content,
+                  timestamp: new Date(msg.created_at),
+                  senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
+                }));
+                setMessages(loadedMessages);
+              }
+              break; // Found the thread, stop searching
+            }
+          } catch (participantError) {
+            // Thread might not have participants, continue searching
+            console.debug('Error checking thread participants:', participantError);
+          }
+        }
       } catch (error) {
         console.error('Failed to load existing confab:', error);
         // Reset to fresh state if resume fails
