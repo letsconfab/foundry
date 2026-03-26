@@ -75,7 +75,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
     {
       id: '1',
       role: 'assistant',
-      content: "Hi! I'm your AI confab builder assistant. Let's build your confab step by step through conversation.",
+      content: "Welcome to the Agent Foundry. I am the Foreman, and will walk you through the creation of this confab (Collaborative Agent).",
       timestamp: new Date(),
     },
   ]);
@@ -192,13 +192,18 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
           await apiClient.addMessage(tid, messages[0].content, 'assistant');
         }
 
-        // Add Foreman as participant for the building phase
-        // Note: During building, only Foreman participates. The confab itself
-        // doesn't participate until it's deployed (status='published')
+        // Add Foreman and Confab as participants for the building phase
+        // The confab participant is needed so Foreman can access its context
         if (tid != null) {
           try {
             await apiClient.addThreadParticipant(tid, 'system', null, 'foreman', 'participant');
             console.log('[CLAUDE: IMPLEMENTATION] Foreman added as thread participant');
+
+            // Also add the confab as a participant so Foreman can get its context
+            if (confabId != null) {
+              await apiClient.addThreadParticipant(tid, 'confab', confabId, null, 'participant');
+              console.log('[CLAUDE: IMPLEMENTATION] Confab added as thread participant');
+            }
           } catch (participantError) {
             console.error('[CLAUDE: IMPLEMENTATION] Error adding thread participant:', participantError);
           }
