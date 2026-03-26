@@ -156,6 +156,82 @@ Tests the GitHub integration by creating a dummy confab structure. For users wit
 
 ---
 
+## Document Store Endpoints
+
+### Upload Document
+
+`POST /confabs/{confab_id}/documents` (authenticated, multipart/form-data)
+
+Uploads and indexes a document for RAG retrieval.
+
+- **Request body:**
+  - `file` - File upload (required)
+  - `metadata` - JSON string with optional metadata
+- **Response:**
+  - `document_id` - Assigned document ID
+  - `filename` - Original filename
+  - `chunk_count` - Number of chunks created
+  - `status` - `indexed`, `duplicate`, or `failed`
+  - `error_message` - Error details if failed
+- **Errors:** 400 if processing fails, 404 if confab not found
+
+### List Documents
+
+`GET /confabs/{confab_id}/documents` (authenticated)
+
+Lists all documents in a confab's document store.
+
+- **Response:** Array of documents with id, filename, content_type, chunk_count, status, created_at
+
+### Get Document
+
+`GET /confabs/{confab_id}/documents/{document_id}` (authenticated)
+
+Gets details for a specific document.
+
+- **Response:** Full document object including raw_content for text files
+- **Errors:** 404 if not found
+
+### Delete Document
+
+`DELETE /confabs/{confab_id}/documents/{document_id}` (authenticated)
+
+Deletes a document and its chunks from the store.
+
+- **Response:** Success message
+- **Errors:** 404 if not found
+
+### Search Documents
+
+`POST /confabs/{confab_id}/documents/search` (authenticated)
+
+Performs semantic search across documents and learnings.
+
+- **Request body:**
+  - `query` - Search query (natural language)
+  - `top_k` - Number of results (default: 5, max: 20)
+  - `filter_type` - Optional: `document` or `learning`
+- **Response:**
+  - `results` - Array of search results with chunk_id, document_id, filename, content, score, chunk_index, source_type, metadata
+  - `query` - Original query
+  - `total_results` - Number of results returned
+
+### Get Document Store Stats
+
+`GET /confabs/{confab_id}/documents/stats` (authenticated)
+
+Gets statistics for the document store.
+
+- **Response:**
+  - `document_count` - Number of documents
+  - `total_chunks` - Total chunks across all documents
+  - `total_size_bytes` - Total content size
+  - `embedding_model` - Current embedding model
+  - `embedding_provider` - Current embedding provider
+  - `vector_store` - ChromaDB collection stats
+
+---
+
 ## Thread Endpoints
 
 ### List Threads

@@ -135,6 +135,43 @@ Knowledge learned during confab operation, synced to GitHub.
 | github_synced_at | timestamp | no | no | When last synced |
 | created_at | timestamp | auto | no | Set on creation |
 
+### ConfabDocument
+
+Document uploaded to a confab's document store for RAG retrieval. Stored locally (not synced to GitHub).
+
+| Attribute | Type | Required | Unique | Notes |
+|-----------|------|----------|--------|-------|
+| id | integer | auto | yes | Primary identifier |
+| confab_id | integer | yes | no | References Confab |
+| filename | string(500) | yes | no | Original filename |
+| content_type | string(100) | yes | no | MIME type: `text/plain`, `text/markdown`, `application/pdf` |
+| source | string(50) | yes | no | One of: `upload`, `url`, `manual`. Defaults to `upload`. |
+| source_url | string(2000) | no | no | URL if imported from web |
+| content_hash | string(64) | yes | no | SHA-256 hash for deduplication |
+| raw_content | text | no | no | Full content for text/markdown |
+| file_path | string(500) | no | no | Path to PDF file on disk |
+| chunk_count | integer | yes | no | Number of chunks generated |
+| status | string(20) | yes | no | One of: `pending`, `indexed`, `failed`. Defaults to `pending`. |
+| error_message | text | no | no | Error details if status is `failed` |
+| metadata_json | JSON | no | no | Custom metadata (author, date, tags) |
+| created_at | timestamp | auto | no | Set on creation |
+| updated_at | timestamp | auto | no | Set on update |
+
+### DocumentChunk
+
+Individual chunk of a document with reference to vector embedding in ChromaDB.
+
+| Attribute | Type | Required | Unique | Notes |
+|-----------|------|----------|--------|-------|
+| id | integer | auto | yes | Primary identifier |
+| document_id | integer | yes | no | References ConfabDocument |
+| chunk_index | integer | yes | no | Position in document (0-indexed) |
+| content | text | yes | no | Chunk text content |
+| start_char | integer | no | no | Start position in original document |
+| end_char | integer | no | no | End position in original document |
+| vector_id | string(100) | yes | no | ID in ChromaDB collection |
+| created_at | timestamp | auto | no | Set on creation |
+
 ---
 
 ## Relationships
@@ -144,6 +181,8 @@ User (1) ──── (0..1) GitHub Account
 User (1) ──── (0..*)  Confab
 User (1) ──── (0..*)  Thread (ownership)
 Confab (1) ──── (0..*) ConfabLearning
+Confab (1) ──── (0..*) ConfabDocument
+ConfabDocument (1) ──── (0..*) DocumentChunk
 Thread (1) ──── (0..*) ThreadParticipant
 Thread (1) ──── (0..*) Message
 Message (1) ──── (0..*) Message (replies)

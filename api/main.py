@@ -484,6 +484,183 @@ async def delete_learning(
 
 
 # =============================================================================
+# Document Store Routes
+# =============================================================================
+
+from document_store import (
+    DocumentService,
+    DocumentUploadRequest,
+    DocumentResponse,
+    DocumentListItem,
+    DocumentUploadResponse,
+    DocumentSearchRequest,
+    DocumentSearchResponse,
+    ContextRequest,
+    ContextResponse,
+    DocumentStoreStats,
+)
+from fastapi import UploadFile, File, Form
+
+
+@app.post("/confabs/{confab_id}/documents", response_model=DocumentUploadResponse)
+async def upload_document(
+    confab_id: int,
+    file: UploadFile = File(...),
+    metadata: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload and index a document for RAG retrieval."""
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    # Read file content
+    content = await file.read()
+
+    # Parse metadata if provided
+    import json
+    meta = json.loads(metadata) if metadata else None
+
+    # Determine content type
+    content_type = file.content_type or "text/plain"
+    if file.filename.endswith(".md"):
+        content_type = "text/markdown"
+    elif file.filename.endswith(".pdf"):
+        content_type = "application/pdf"
+
+    # For text files, decode content
+    if content_type in ["text/plain", "text/markdown"]:
+        content = content.decode("utf-8")
+
+    service = DocumentService(db)
+    result = await service.upload_document(
+        confab_id=confab_id,
+        content=content,
+        filename=file.filename,
+        content_type=content_type,
+        metadata=meta
+    )
+
+    if result.status == "failed":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.error_message)
+
+    return DocumentUploadResponse(
+        document_id=result.document_id,
+        filename=result.filename,
+        chunk_count=result.chunk_count,
+        status=result.status,
+        error_message=result.error_message
+    )
+
+
+@app.get("/confabs/{confab_id}/documents", response_model=List[DocumentListItem])
+async def list_documents(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List all documents in a confab's document store."""
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    service = DocumentService(db)
+    docs = await service.list_documents(confab_id)
+    return [DocumentListItem(**doc) for doc in docs]
+
+
+@app.get("/confabs/{confab_id}/documents/stats", response_model=DocumentStoreStats)
+async def get_document_stats(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get document store statistics."""
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    service = DocumentService(db)
+    stats = await service.get_stats(confab_id)
+    return DocumentStoreStats(**stats)
+
+
+@app.get("/confabs/{confab_id}/documents/{document_id}", response_model=DocumentResponse)
+async def get_document(
+    confab_id: int,
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific document's details."""
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    service = DocumentService(db)
+    doc = await service.get_document(confab_id, document_id)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    return DocumentResponse(**doc)
+
+
+@app.delete("/confabs/{confab_id}/documents/{document_id}")
+async def delete_document(
+    confab_id: int,
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a document from the document store."""
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    service = DocumentService(db)
+    success = await service.delete_document(confab_id, document_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    return {"message": "Document deleted"}
+
+
+@app.post("/confabs/{confab_id}/documents/search", response_model=DocumentSearchResponse)
+async def search_documents(
+    confab_id: int,
+    body: DocumentSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Semantic search across a confab's documents."""
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    service = DocumentService(db)
+    results = await service.search(confab_id, body.query, body.top_k, body.filter_type)
+
+    return DocumentSearchResponse(
+        results=[
+            {
+                "chunk_id": r.chunk_id,
+                "document_id": r.document_id,
+                "filename": r.filename,
+                "content": r.content,
+                "score": r.score,
+                "chunk_index": r.chunk_index,
+                "source_type": r.source_type,
+                "metadata": r.metadata
+            }
+            for r in results
+        ],
+        query=body.query,
+        total_results=len(results)
+    )
+
+
+# =============================================================================
 # Thread Routes
 # =============================================================================
 

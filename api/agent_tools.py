@@ -108,6 +108,106 @@ async def list_tools():
                 },
                 "required": ["confab_id"]
             }
+        },
+        # Document Store Tools
+        {
+            "name": "upload_document",
+            "description": "Upload and index a document for RAG retrieval. Supports text, markdown, and PDF.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer", "description": "The confab to add the document to"},
+                    "content": {"type": "string", "description": "Document content (text/markdown) or base64-encoded (PDF)"},
+                    "filename": {"type": "string", "description": "Original filename with extension"},
+                    "content_type": {"type": "string", "enum": ["text/plain", "text/markdown", "application/pdf"]},
+                    "metadata": {"type": "object", "description": "Optional metadata (author, date, tags)"}
+                },
+                "required": ["confab_id", "content", "filename", "content_type"]
+            }
+        },
+        {
+            "name": "list_documents",
+            "description": "List all documents in a confab's document store.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer", "description": "The confab ID"}
+                },
+                "required": ["confab_id"]
+            }
+        },
+        {
+            "name": "delete_document",
+            "description": "Remove a document from the confab's document store.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"},
+                    "document_id": {"type": "integer", "description": "The document to delete"}
+                },
+                "required": ["confab_id", "document_id"]
+            }
+        },
+        {
+            "name": "search_documents",
+            "description": "Semantic search across a confab's documents. Returns relevant chunks.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"},
+                    "query": {"type": "string", "description": "Search query (natural language)"},
+                    "top_k": {"type": "integer", "default": 5, "description": "Number of results to return"},
+                    "filter_type": {"type": "string", "enum": ["document", "learning"], "description": "Filter by source type"}
+                },
+                "required": ["confab_id", "query"]
+            }
+        },
+        {
+            "name": "get_context_for_query",
+            "description": "Retrieve and format relevant document context for answering a user query. Combines search with context assembly for RAG.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"},
+                    "query": {"type": "string"},
+                    "max_tokens": {"type": "integer", "default": 2000, "description": "Maximum context length"}
+                },
+                "required": ["confab_id", "query"]
+            }
+        },
+        {
+            "name": "reindex_documents",
+            "description": "Re-index all documents in a confab (useful after embedding model change).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"}
+                },
+                "required": ["confab_id"]
+            }
+        },
+        {
+            "name": "sync_learnings",
+            "description": "Index all approved learnings for a confab into the vector store.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"}
+                },
+                "required": ["confab_id"]
+            }
+        },
+        {
+            "name": "clear_document_store",
+            "description": "Delete all documents and vectors from a confab's store.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"},
+                    "confirm": {"type": "boolean", "description": "Must be true to execute"}
+                },
+                "required": ["confab_id", "confirm"]
+            }
         }
     ]
 
@@ -143,6 +243,48 @@ async def call_tool(name: str, arguments: dict):
                 return {"content": [{"type": "text", "text": f"Found {len(results)} users:\n{user_list}"}]}
         else:
             return {"content": [{"type": "text", "text": "No user information found"}]}
+    # Document Store Tools
+    elif name == "upload_document":
+        result = await upload_document_tool(
+            arguments.get("confab_id"),
+            arguments.get("content"),
+            arguments.get("filename"),
+            arguments.get("content_type"),
+            arguments.get("metadata")
+        )
+        return {"content": [{"type": "text", "text": result}]}
+    elif name == "list_documents":
+        result = await list_documents_tool(arguments.get("confab_id"))
+        return {"content": [{"type": "text", "text": result}]}
+    elif name == "delete_document":
+        result = await delete_document_tool(arguments.get("confab_id"), arguments.get("document_id"))
+        return {"content": [{"type": "text", "text": result}]}
+    elif name == "search_documents":
+        result = await search_documents_tool(
+            arguments.get("confab_id"),
+            arguments.get("query"),
+            arguments.get("top_k", 5),
+            arguments.get("filter_type")
+        )
+        return {"content": [{"type": "text", "text": result}]}
+    elif name == "get_context_for_query":
+        result = await get_context_tool(
+            arguments.get("confab_id"),
+            arguments.get("query"),
+            arguments.get("max_tokens", 2000)
+        )
+        return {"content": [{"type": "text", "text": result}]}
+    elif name == "reindex_documents":
+        result = await reindex_documents_tool(arguments.get("confab_id"))
+        return {"content": [{"type": "text", "text": result}]}
+    elif name == "sync_learnings":
+        result = await sync_learnings_tool(arguments.get("confab_id"))
+        return {"content": [{"type": "text", "text": result}]}
+    elif name == "clear_document_store":
+        if not arguments.get("confirm"):
+            return {"content": [{"type": "text", "text": "Confirm must be true to clear document store."}]}
+        result = await clear_document_store_tool(arguments.get("confab_id"))
+        return {"content": [{"type": "text", "text": result}]}
     else:
         return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 
@@ -1043,3 +1185,165 @@ def review_and_save(db: Session, confab_id: int) -> str:
     db.commit()
     mark_step_complete(db, confab_id, 7)
     return "Review complete; confab marked ready."
+
+
+# =============================================================================
+# Document Store Tools
+# =============================================================================
+
+def _get_document_service():
+    """Get a DocumentService instance with a database session."""
+    from database import SessionLocal
+    from document_store import DocumentService
+    db = SessionLocal()
+    return DocumentService(db), db
+
+
+async def upload_document_tool(
+    confab_id: int,
+    content: str,
+    filename: str,
+    content_type: str,
+    metadata: dict = None
+) -> str:
+    """Upload and index a document for RAG retrieval."""
+    try:
+        service, db = _get_document_service()
+        result = await service.upload_document(
+            confab_id=confab_id,
+            content=content,
+            filename=filename,
+            content_type=content_type,
+            metadata=metadata
+        )
+        db.close()
+
+        if result.status == "indexed":
+            return f"Document '{filename}' uploaded successfully with {result.chunk_count} chunks."
+        elif result.status == "duplicate":
+            return f"Document already exists (duplicate content detected)."
+        else:
+            return f"Failed to upload document: {result.error_message}"
+    except Exception as e:
+        logger.error(f"Error uploading document: {e}")
+        return f"Error uploading document: {str(e)}"
+
+
+async def list_documents_tool(confab_id: int) -> str:
+    """List all documents in a confab's document store."""
+    try:
+        service, db = _get_document_service()
+        docs = await service.list_documents(confab_id)
+        db.close()
+
+        if not docs:
+            return "No documents found in this confab's document store."
+
+        lines = [f"Found {len(docs)} document(s):"]
+        for doc in docs:
+            status_icon = "✓" if doc["status"] == "indexed" else "⏳" if doc["status"] == "pending" else "✗"
+            lines.append(f"  {status_icon} [{doc['id']}] {doc['filename']} ({doc['chunk_count']} chunks)")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error listing documents: {e}")
+        return f"Error listing documents: {str(e)}"
+
+
+async def delete_document_tool(confab_id: int, document_id: int) -> str:
+    """Remove a document from the confab's document store."""
+    try:
+        service, db = _get_document_service()
+        success = await service.delete_document(confab_id, document_id)
+        db.close()
+
+        if success:
+            return f"Document {document_id} deleted successfully."
+        else:
+            return f"Document {document_id} not found."
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}")
+        return f"Error deleting document: {str(e)}"
+
+
+async def search_documents_tool(
+    confab_id: int,
+    query: str,
+    top_k: int = 5,
+    filter_type: str = None
+) -> str:
+    """Semantic search across a confab's documents."""
+    try:
+        service, db = _get_document_service()
+        results = await service.search(confab_id, query, top_k, filter_type)
+        db.close()
+
+        if not results:
+            return "No relevant documents found for this query."
+
+        lines = [f"Found {len(results)} relevant chunk(s):"]
+        for r in results:
+            score_pct = int(r.score * 100)
+            preview = r.content[:100] + "..." if len(r.content) > 100 else r.content
+            lines.append(f"\n[{r.source_type}] {r.filename} (score: {score_pct}%)")
+            lines.append(f"  {preview}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error searching documents: {e}")
+        return f"Error searching documents: {str(e)}"
+
+
+async def get_context_tool(confab_id: int, query: str, max_tokens: int = 2000) -> str:
+    """Get formatted context for RAG."""
+    try:
+        service, db = _get_document_service()
+        result = await service.get_context_for_query(confab_id, query, max_tokens)
+        db.close()
+
+        if not result.context:
+            return "No relevant context found for this query."
+
+        # Return just the context for RAG use
+        return result.context
+    except Exception as e:
+        logger.error(f"Error getting context: {e}")
+        return f"Error getting context: {str(e)}"
+
+
+async def reindex_documents_tool(confab_id: int) -> str:
+    """Re-index all documents for a confab."""
+    try:
+        service, db = _get_document_service()
+        count = await service.reindex_documents(confab_id)
+        db.close()
+        return f"Re-indexed {count} document(s) for confab {confab_id}."
+    except Exception as e:
+        logger.error(f"Error reindexing documents: {e}")
+        return f"Error reindexing documents: {str(e)}"
+
+
+async def sync_learnings_tool(confab_id: int) -> str:
+    """Index all approved learnings for a confab."""
+    try:
+        service, db = _get_document_service()
+        count = await service.sync_learnings(confab_id)
+        db.close()
+        return f"Indexed {count} learning(s) for confab {confab_id}."
+    except Exception as e:
+        logger.error(f"Error syncing learnings: {e}")
+        return f"Error syncing learnings: {str(e)}"
+
+
+async def clear_document_store_tool(confab_id: int) -> str:
+    """Delete all documents and vectors for a confab."""
+    try:
+        service, db = _get_document_service()
+        success = await service.clear_document_store(confab_id)
+        db.close()
+
+        if success:
+            return f"Document store cleared for confab {confab_id}."
+        else:
+            return "Failed to clear document store."
+    except Exception as e:
+        logger.error(f"Error clearing document store: {e}")
+        return f"Error clearing document store: {str(e)}"

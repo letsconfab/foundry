@@ -93,6 +93,18 @@
 - **Responsive design** — Mobile-first with breakpoints and a mobile detection hook.
 - **Toast notifications** — Via Sonner.
 
+### Document Store (RAG)
+
+- **Document upload** — Upload text, markdown, and PDF files to a confab's knowledge base via REST API.
+- **Automatic chunking** — Documents are split into semantic chunks using LangChain's RecursiveCharacterTextSplitter.
+- **Embedding generation** — Supports multiple embedding providers: Sentence Transformers (local, default), Ollama, OpenAI.
+- **Vector storage** — Per-confab ChromaDB collections for isolated semantic search.
+- **Semantic search** — Natural language queries return relevant document chunks ranked by similarity.
+- **RAG context assembly** — `get_context_for_query` tool formats relevant chunks for LLM prompts.
+- **Learning indexing** — Approved ConfabLearning records are automatically indexed for RAG retrieval.
+- **MCP tool integration** — 8 document tools available to Foreman and deployed confabs.
+- **Deduplication** — Content-hash based duplicate detection prevents redundant uploads.
+
 ---
 
 ## Not Yet Implemented
@@ -117,6 +129,5 @@
 - Confab publishing and marketplace/sharing.
 - Real-time collaboration on confab editing.
 - Analytics and monitoring for deployed agents.
-- Knowledge base ingestion and indexing.
+- Document upload UI (API-only currently; frontend upload component not yet built).
 - Webhook and external API integration runtime.
-- File upload and PDF parsing during confab building.

@@ -59,6 +59,8 @@ When starting a new confab build:
 
 ### Tools Available
 
+**Setup Tools:**
+
 | Tool | Purpose | Marks Step Complete |
 |------|---------|---------------------|
 | `define_purpose` | Save purpose text to confab | Step 1 |
@@ -69,6 +71,19 @@ When starting a new confab build:
 | `sample_io` | Save example input/output scenarios | Step 6 |
 | `review_and_save` | Finalize confab, set status to `draft` | Step 7 |
 | `update_purpose` | Modify existing purpose | (No step) |
+
+**Document Store Tools:**
+
+| Tool | Purpose |
+|------|---------|
+| `upload_document` | Upload and index a document for RAG |
+| `list_documents` | List all documents in the confab's store |
+| `delete_document` | Remove a document from the store |
+| `search_documents` | Semantic search across documents |
+| `get_context_for_query` | Get formatted RAG context for a query |
+| `reindex_documents` | Re-embed all documents (after model change) |
+| `sync_learnings` | Index approved learnings into vector store |
+| `clear_document_store` | Delete all documents and vectors |
 
 ### Progress Tracking
 
