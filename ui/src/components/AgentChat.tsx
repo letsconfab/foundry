@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat, Pencil, Check } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -118,6 +118,11 @@ Let's start with the most important part: **What would you like this agent to do
 
   // Loading state for resuming existing confab
   const [isLoadingExisting, setIsLoadingExisting] = useState(!!existingConfabId);
+
+  // Confab name state (editable)
+  const [confabName, setConfabName] = useState<string>('New Confab');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editNameValue, setEditNameValue] = useState('');
   
   // Multi-Agent State (if we ever support it)
   const [multiAgentNodes, setMultiAgentNodes] = useState<AgentNode[]>([]);
@@ -143,6 +148,9 @@ Let's start with the most important part: **What would you like this agent to do
         // Load existing confab
         const confab = await apiClient.getConfab(existingConfabId);
         setCurrentConfabId(confab.id);
+        if (confab.name) {
+          setConfabName(confab.name);
+        }
 
         // Find the thread with Foreman as participant (the building conversation)
         const threads = await apiClient.getThreads();
@@ -218,6 +226,41 @@ Let's start with the most important part: **What would you like this agent to do
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Start editing the confab name
+  const startEditingName = () => {
+    setEditNameValue(confabName);
+    setIsEditingName(true);
+  };
+
+  // Save the edited confab name
+  const saveConfabName = async () => {
+    if (!editNameValue.trim() || !currentConfabId) {
+      setIsEditingName(false);
+      return;
+    }
+
+    try {
+      await apiClient.updateConfab(currentConfabId, { name: editNameValue.trim() });
+      setConfabName(editNameValue.trim());
+    } catch (error) {
+      console.error('Failed to update confab name:', error);
+    }
+    setIsEditingName(false);
+  };
+
+  // Refresh confab name from server (called after chat responses)
+  const refreshConfabName = async () => {
+    if (!currentConfabId) return;
+    try {
+      const confab = await apiClient.getConfab(currentConfabId);
+      if (confab.name && confab.name !== confabName) {
+        setConfabName(confab.name);
+      }
+    } catch (error) {
+      console.debug('Failed to refresh confab name:', error);
+    }
+  };
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -302,6 +345,9 @@ Let's start with the most important part: **What would you like this agent to do
               setMessages((prev) => [...prev, agentMsg]);
             }
             assistantContent = response.agent_responses[response.agent_responses.length - 1].content;
+
+            // Refresh confab name in case Foreman set it
+            refreshConfabName();
           } else {
             // No agent response yet - this shouldn't happen with Foreman
             assistantContent = "Message sent. Waiting for agent response...";
@@ -387,7 +433,43 @@ Let's start with the most important part: **What would you like this agent to do
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-slate-900">{existingConfabId ? 'Continue Building' : 'Create New Confab'}</h2>
+              <div className="flex items-center gap-2">
+                {isEditingName ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={editNameValue}
+                      onChange={(e) => setEditNameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveConfabName();
+                        if (e.key === 'Escape') setIsEditingName(false);
+                      }}
+                      className="text-slate-900 font-medium border border-slate-300 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      autoFocus
+                    />
+                    <button
+                      onClick={saveConfabName}
+                      className="p-1 hover:bg-slate-100 rounded"
+                      title="Save name"
+                    >
+                      <Check className="w-4 h-4 text-green-600" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <h2 className="text-slate-900">{confabName}</h2>
+                    {currentConfabId && (
+                      <button
+                        onClick={startEditingName}
+                        className="p-1 hover:bg-slate-100 rounded"
+                        title="Edit name"
+                      >
+                        <Pencil className="w-3.5 h-3.5 text-slate-400" />
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
               <p className="text-slate-600 text-sm">
                 {existingConfabId ? 'Resume your conversation to continue building' : 'Chat with AI to build your confab'}
               </p>

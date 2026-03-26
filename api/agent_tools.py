@@ -931,6 +931,27 @@ def mark_step_complete(db: Session, confab_id: int, step: int) -> bool:
     db.commit()
     return True
 
+def set_confab_name(db: Session, confab_id: int, name: str) -> str:
+    """Tool: set a descriptive placeholder name for the confab.
+
+    The name should be short (1-2 words) and descriptive of the agent's purpose.
+    A timestamp suffix will be added automatically if not present.
+    """
+    confab = db.query(Confab).filter(Confab.id == confab_id).first()
+    if not confab:
+        return "Confab not found."
+
+    # Add timestamp suffix if not already present (format: -YYYYMMDD-HHMM)
+    if not any(c.isdigit() for c in name[-8:]):
+        timestamp = datetime.datetime.now().strftime("-%Y%m%d-%H%M")
+        name = f"{name}{timestamp}"
+
+    confab.name = name
+    db.commit()
+    logger.info(f"Set confab {confab_id} name to: {name}")
+    return f"Confab name set to: {name}"
+
+
 def define_purpose(db: Session, confab_id: int, purpose_text: str) -> str:
     """Tool: save purpose and mark step 1."""
     update_purpose(confab_id, purpose_text)

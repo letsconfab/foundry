@@ -19,7 +19,7 @@ from llm_service import ask_llm
 from agent_tools import (
     define_purpose, add_participant, configure_memory,
     add_tools_and_apis, guardrails, sample_io, review_and_save,
-    update_purpose
+    update_purpose, set_confab_name
 )
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Tools registry - maps tool names to functions
 # Tools that require db session are marked with requires_db=True
 SETUP_TOOLS = {
+    "set_confab_name": {"fn": set_confab_name, "requires_db": True},
     "define_purpose": {"fn": define_purpose, "requires_db": True},
     "add_participant": {"fn": add_participant, "requires_db": True},
     "configure_memory": {"fn": configure_memory, "requires_db": True},
@@ -51,6 +52,14 @@ IMPORTANT: You must actively lead this conversation. Do not wait passively for t
 5. **Establish guardrails** - What are its safety boundaries?
 6. **Sample I/O** - Provide example interactions
 7. **Review** - Finalize the configuration
+
+## Naming the Confab
+IMPORTANT: After the user describes what their agent should do (step 1), you MUST generate a short placeholder name.
+- The name should be 1-2 words, descriptive of the agent's purpose
+- Examples: "SupportBot", "DataAnalyzer", "CodeReviewer", "MeetingSummarizer"
+- Use the set_confab_name tool to save it: {"tool": "set_confab_name", "args": {"name": "YourChosenName"}}
+- A timestamp will be added automatically (e.g., "SupportBot-20260326-1430")
+- The user can change this name later via the UI
 
 ## Your Behavior
 - LEAD the conversation - always end your response with a clear question for the next step
