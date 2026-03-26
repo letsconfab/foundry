@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from models import Confab, Message, Thread, ThreadParticipant, GitHubAccount
+from models import Confab, GitHubAccount
 from context_loader import ContextLoader, ForemanContext
 from resume_generator import ResumePromptGenerator, STAGE_PROMPTS, STEP_DESCRIPTIONS
 from llm_service import ask_llm
@@ -163,26 +163,15 @@ class Foreman:
         """
         Process a user message through the Foreman.
         Returns ForemanChatResponse-compatible dict.
+
+        NOTE: This method only generates the response. It does NOT save messages
+        to the database. The /chat endpoint in main.py handles all message
+        persistence to avoid duplicate messages.
         """
         if not self.initialized:
             raise RuntimeError("Foreman not initialized. Call initialize() first.")
 
-        # Ensure we have a thread
-        thread_id = await self._ensure_thread()
-
-        # Store user message
-        user_msg = Message(
-            thread_id=thread_id,
-            content=user_message,
-            role="user",
-            sender_type="user",
-            sender_id=self.confab.user_id,
-        )
-        self.db.add(user_msg)
-        self.db.commit()
-        self.db.refresh(user_msg)
-
-        # Build contextual prompt
+        # Build contextual prompt (uses thread history from context)
         prompt = self._build_contextual_prompt(user_message)
 
         # Call LLM
@@ -198,25 +187,12 @@ class Foreman:
             # Execute tools and get enriched response
             response = await self._execute_tools_and_respond(tool_calls, response, user_message)
 
-        # Store assistant response
-        assistant_msg = Message(
-            thread_id=thread_id,
-            content=response,
-            role="assistant",
-            sender_type="system",
-            sender_name="Foreman",
-        )
-        self.db.add(assistant_msg)
-        self.db.commit()
-        self.db.refresh(assistant_msg)
-
         # Update progress if needed
         await self._update_progress_from_response(user_message, response)
 
         return {
             "response": response,
             "confab_id": self.confab_id,
-            "thread_id": thread_id,
             "is_resume": False,
             "setup_progress": {
                 "completed_steps": self.context.setup_progress.completed_steps,
@@ -226,57 +202,7 @@ class Foreman:
             },
             "tool_calls": tool_calls,
             "timestamp": datetime.now().isoformat(),
-            "messages": {
-                "user_message_id": user_msg.id,
-                "assistant_message_id": assistant_msg.id
-            }
         }
-
-    async def _ensure_thread(self) -> int:
-        """Ensure a thread exists for this confab, create if needed."""
-        if self.context.thread_id:
-            return self.context.thread_id
-
-        # Create new thread
-        new_thread = Thread(
-            name=f"Foreman session for {self.confab.name or f'confab-{self.confab_id}'}",
-            owner_user_id=self.confab.user_id
-        )
-        self.db.add(new_thread)
-        self.db.commit()
-        self.db.refresh(new_thread)
-
-        # Add owner as participant
-        owner_participant = ThreadParticipant(
-            thread_id=new_thread.id,
-            participant_type="user",
-            participant_id=self.confab.user_id,
-            role="owner",
-        )
-        self.db.add(owner_participant)
-
-        # Add confab as participant
-        confab_participant = ThreadParticipant(
-            thread_id=new_thread.id,
-            participant_type="confab",
-            participant_id=self.confab_id,
-            role="participant",
-        )
-        self.db.add(confab_participant)
-
-        # Add foreman as system participant
-        foreman_participant = ThreadParticipant(
-            thread_id=new_thread.id,
-            participant_type="system",
-            system_agent_name="foreman",
-            role="participant",
-        )
-        self.db.add(foreman_participant)
-        self.db.commit()
-
-        self.context.thread_id = new_thread.id
-        logger.info(f"Created new thread {new_thread.id} for confab {self.confab_id}")
-        return new_thread.id
 
     def _build_contextual_prompt(self, user_message: str) -> str:
         """Build a prompt with full context for the LLM."""

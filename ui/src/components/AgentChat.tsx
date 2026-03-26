@@ -112,6 +112,9 @@ Let's start with the most important part: **What would you like this agent to do
   /** Thread id for storing this conversation in DB (threads + messages tables). */
   const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
 
+  /** Guard against rapid double-sends before React processes state updates */
+  const sendingRef = useRef(false);
+
   // [CLAUDE: IMPLEMENTATION - Create confab_id on page load and link to thread_mapping]
   const [currentConfabId, setCurrentConfabId] = useState<number | null>(null);
   const [isConfabCreating, setIsConfabCreating] = useState(false);
@@ -152,7 +155,7 @@ Let's start with the most important part: **What would you like this agent to do
           setConfabName(confab.name);
         }
 
-        // Find the thread with Foreman as participant (the building conversation)
+        // Find the thread for THIS specific confab (must have both Foreman AND this confab as participants)
         const threads = await apiClient.getThreads();
         for (const thread of threads) {
           try {
@@ -160,9 +163,12 @@ Let's start with the most important part: **What would you like this agent to do
             const hasForeman = participants.some(
               (p: any) => p.participant_type === 'system' && p.system_agent_name === 'foreman'
             );
+            const hasThisConfab = participants.some(
+              (p: any) => p.participant_type === 'confab' && p.participant_id === existingConfabId
+            );
 
-            if (hasForeman) {
-              // Found the thread - load messages
+            if (hasForeman && hasThisConfab) {
+              // Found the correct thread for this confab - load messages
               setCurrentThreadId(thread.id);
               const threadMessages = await apiClient.getThreadMessages(thread.id);
 
@@ -263,7 +269,8 @@ Let's start with the most important part: **What would you like this agent to do
   };
 
   const handleSend = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() || sendingRef.current) return;
+    sendingRef.current = true;  // Lock immediately, synchronously
     const content = input.trim();
 
     const userMessage: Message = {
@@ -302,17 +309,33 @@ Let's start with the most important part: **What would you like this agent to do
         const thread = await apiClient.createThread(name);
         tid = thread?.id ?? null;
         if (tid != null) setCurrentThreadId(tid);
-        if (tid != null && messages[0]?.role === 'assistant') {
-          await apiClient.addMessage(tid, messages[0].content, 'assistant');
-        }
 
-        // Add Foreman as participant for the building phase
+        // Add Foreman as participant FIRST (critical for chat to work)
         if (tid != null) {
           try {
             await apiClient.addThreadParticipant(tid, 'system', null, 'foreman', 'participant');
             console.log('[CLAUDE: IMPLEMENTATION] Foreman added as thread participant');
           } catch (participantError) {
             console.error('[CLAUDE: IMPLEMENTATION] Error adding thread participant:', participantError);
+          }
+        }
+
+        // Add confab as participant (links this thread to the specific confab for Continue Building)
+        if (tid != null && confabId != null) {
+          try {
+            await apiClient.addThreadParticipant(tid, 'confab', confabId, null, 'participant');
+            console.log('[CLAUDE: IMPLEMENTATION] Confab added as thread participant');
+          } catch (participantError) {
+            console.error('[CLAUDE: IMPLEMENTATION] Error adding confab participant:', participantError);
+          }
+        }
+
+        // Save welcome message with proper Foreman attribution (non-critical)
+        if (tid != null && messages[0]?.role === 'assistant') {
+          try {
+            await apiClient.addMessage(tid, messages[0].content, 'assistant', 'system', 'Foreman');
+          } catch (welcomeError) {
+            console.error('Failed to save welcome message:', welcomeError);
           }
         }
       } catch {
@@ -378,9 +401,11 @@ Let's start with the most important part: **What would you like this agent to do
       }
 
       setIsTyping(false);
+      sendingRef.current = false;  // Unlock
     } catch (error) {
       console.error('[CLAUDE: Error in handleSend]', error);
       setIsTyping(false);
+      sendingRef.current = false;  // Unlock on error
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',

@@ -182,10 +182,14 @@ class ApiClient {
     return this.request(`/threads/${threadId}/messages`);
   }
 
-  async addMessage(threadId, content, role = 'user') {
+  async addMessage(threadId, content, role = 'user', senderType = 'user', senderName = null) {
+    const body = { content, role, sender_type: senderType };
+    if (senderName) {
+      body.sender_name = senderName;
+    }
     return this.request(`/threads/${threadId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, role }),
+      body: JSON.stringify(body),
     });
   }
 
