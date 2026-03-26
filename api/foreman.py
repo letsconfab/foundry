@@ -57,7 +57,7 @@ IMPORTANT: You must actively lead this conversation. Do not wait passively for t
 IMPORTANT: After the user describes what their agent should do (step 1), you MUST generate a short placeholder name.
 - The name should be 1-2 words, descriptive of the agent's purpose
 - Examples: "SupportBot", "DataAnalyzer", "CodeReviewer", "MeetingSummarizer"
-- Use the set_confab_name tool to save it: {"tool": "set_confab_name", "args": {"name": "YourChosenName"}}
+- Use the set_confab_name tool to save it: {{"tool": "set_confab_name", "args": {{"name": "YourChosenName"}}}}
 - A timestamp will be added automatically (e.g., "SupportBot-20260326-1430")
 - The user can change this name later via the UI
 
