@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -23,6 +23,15 @@ interface Message {
   content: string;
   timestamp: Date;
   userName?: string;
+  senderName?: string;  // For detecting Foreman vs other agents
+}
+
+interface Participant {
+  id: string;
+  name: string;
+  type: 'user' | 'system';
+  email?: string;
+  systemAgentName?: string;
 }
 
 interface UploadedFile {
@@ -75,9 +84,26 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
     {
       id: '1',
       role: 'assistant',
-      content: "Welcome to the Agent Foundry. I am the Foreman, and will walk you through the creation of this confab (Collaborative Agent).",
+      content: `Welcome to the Agent Foundry. I am the Foreman, and will walk you through the creation of this confab (Collaborative Agent).
+
+I'll guide you through a simple 7-step process to configure your agent:
+1. **Define purpose** - What should your agent do?
+2. **Add participants** - Who can access it?
+3. **Configure memory** - Should it remember conversations?
+4. **Set up tools** - What external capabilities does it need?
+5. **Establish guardrails** - What are its safety boundaries?
+6. **Sample I/O** - Provide example interactions
+7. **Review** - Finalize your configuration
+
+Let's start with the most important part: **What would you like this agent to do?** Describe its main purpose and objectives.`,
       timestamp: new Date(),
+      senderName: 'Foreman',
     },
+  ]);
+
+  // Participants list for the sidebar (Foreman is always present)
+  const [participants, setParticipants] = useState<Participant[]>([
+    { id: 'foreman', name: 'Foreman', type: 'system', systemAgentName: 'foreman' }
   ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -133,6 +159,22 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
 
     loadExistingConfab();
   }, [existingConfabId]);
+
+  // Add logged-in user to participants list
+  useEffect(() => {
+    if (user) {
+      setParticipants(prev => {
+        // Check if user already in list
+        if (prev.some(p => p.type === 'user' && p.id === String(user.id))) {
+          return prev;
+        }
+        return [
+          ...prev,
+          { id: String(user.id), name: user.name, type: 'user', email: user.email }
+        ];
+      });
+    }
+  }, [user]);
 
   const availableAgents = [
     { id: '1', name: 'Customer Support Agent', role: 'Support' },
@@ -192,18 +234,11 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
           await apiClient.addMessage(tid, messages[0].content, 'assistant');
         }
 
-        // Add Foreman and Confab as participants for the building phase
-        // The confab participant is needed so Foreman can access its context
+        // Add Foreman as participant for the building phase
         if (tid != null) {
           try {
             await apiClient.addThreadParticipant(tid, 'system', null, 'foreman', 'participant');
             console.log('[CLAUDE: IMPLEMENTATION] Foreman added as thread participant');
-
-            // Also add the confab as a participant so Foreman can get its context
-            if (confabId != null) {
-              await apiClient.addThreadParticipant(tid, 'confab', confabId, null, 'participant');
-              console.log('[CLAUDE: IMPLEMENTATION] Confab added as thread participant');
-            }
           } catch (participantError) {
             console.error('[CLAUDE: IMPLEMENTATION] Error adding thread participant:', participantError);
           }
@@ -233,6 +268,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
                 role: 'assistant',
                 content: agentResp.content,
                 timestamp: new Date(agentResp.created_at),
+                senderName: agentResp.sender_name || 'Foreman',
               };
               setMessages((prev) => [...prev, agentMsg]);
             }
@@ -357,8 +393,14 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
                     >
                       {message.role === 'assistant' && (
                         <Avatar className="w-8 h-8 flex-shrink-0">
-                          <AvatarFallback className="bg-gradient-to-br from-indigo-600 to-purple-600">
-                            <Bot className="w-4 h-4 text-white" />
+                          <AvatarFallback className={message.senderName === 'Foreman'
+                            ? "bg-gradient-to-br from-amber-500 to-orange-600"
+                            : "bg-gradient-to-br from-indigo-600 to-purple-600"
+                          }>
+                            {message.senderName === 'Foreman'
+                              ? <HardHat className="w-4 h-4 text-white" />
+                              : <Bot className="w-4 h-4 text-white" />
+                            }
                           </AvatarFallback>
                         </Avatar>
                       )}
@@ -397,13 +439,13 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
                   {isTyping && (
                     <div className="flex gap-3 justify-start">
                       <Avatar className="w-8 h-8 flex-shrink-0">
-                        <AvatarFallback className="bg-gradient-to-br from-indigo-600 to-purple-600">
-                          <Bot className="w-4 h-4 text-white" />
+                        <AvatarFallback className="bg-gradient-to-br from-amber-500 to-orange-600">
+                          <HardHat className="w-4 h-4 text-white" />
                         </AvatarFallback>
                       </Avatar>
                       <div className="bg-slate-100 rounded-lg px-4 py-3 flex items-center gap-2">
                         <Loader2 className="w-4 h-4 animate-spin text-slate-600" />
-                        <span className="text-slate-600">Assistant is thinking...</span>
+                        <span className="text-slate-600">Foreman is thinking...</span>
                       </div>
                     </div>
                   )}
@@ -521,23 +563,41 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
               <Users className="w-5 h-5 text-slate-900" />
               <h3 className="text-slate-900">Participants</h3>
             </div>
-            {user ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-50 ring-1 ring-indigo-200">
+            <div className="space-y-3">
+              {participants.map((participant) => (
+                <div
+                  key={participant.id}
+                  className={`flex items-center gap-3 p-3 rounded-lg ${
+                    participant.type === 'system'
+                      ? 'bg-amber-50 ring-1 ring-amber-200'
+                      : 'bg-indigo-50 ring-1 ring-indigo-200'
+                  }`}
+                >
                   <Avatar className="w-9 h-9">
-                    <AvatarFallback className="bg-indigo-200 text-indigo-700">
-                      {user.name.split(' ').map(n => n[0]).join('') || '?'}
+                    <AvatarFallback className={
+                      participant.type === 'system'
+                        ? "bg-gradient-to-br from-amber-500 to-orange-600"
+                        : "bg-indigo-200 text-indigo-700"
+                    }>
+                      {participant.type === 'system' ? (
+                        <HardHat className="w-4 h-4 text-white" />
+                      ) : (
+                        participant.name.split(' ').map(n => n[0]).join('') || '?'
+                      )}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-900 truncate">{user.name}</p>
-                    <p className="text-xs text-slate-500 truncate">{user.email}</p>
+                    <p className="text-sm font-medium text-slate-900 truncate">{participant.name}</p>
+                    <p className="text-xs text-slate-500 truncate">
+                      {participant.email || (participant.type === 'system' ? 'System Agent' : '')}
+                    </p>
                   </div>
                 </div>
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500 py-2">Sign in to see your profile.</p>
-            )}
+              ))}
+              {participants.length === 0 && (
+                <p className="text-sm text-slate-500 py-2">No participants yet.</p>
+              )}
+            </div>
           </Card>
         </div>
       </div>

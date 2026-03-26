@@ -781,19 +781,19 @@ async def chat(
         try:
             # Generate response based on agent type
             if agent.participant_type == "system" and agent.system_agent_name == "foreman":
-                # Get confab for foreman context (find first confab participant in thread)
-                confab_participant = db.query(ThreadParticipant).filter(
-                    ThreadParticipant.thread_id == thread_id,
-                    ThreadParticipant.participant_type == "confab"
-                ).first()
+                # Get the user's most recent confab in 'building' status
+                confab = db.query(Confab).filter(
+                    Confab.user_id == current_user.id,
+                    Confab.status == "building"
+                ).order_by(Confab.created_at.desc()).first()
 
-                if confab_participant:
-                    foreman = Foreman(confab_participant.participant_id, db)
+                if confab:
+                    foreman = Foreman(confab.id, db)
                     await foreman.initialize()
                     result = await foreman.process_message(request.content)
                     response_content = result.get("response", "")
                 else:
-                    response_content = "Foreman ready. Please add a confab to this conversation to begin building."
+                    response_content = "No confab is currently being built. Please start a new confab to begin."
 
                 sender_name = "Foreman"
 
@@ -801,6 +801,10 @@ async def chat(
                 # Get confab and generate response
                 confab = db.query(Confab).filter(Confab.id == agent.participant_id).first()
                 if not confab:
+                    continue
+
+                # Skip confab responses during building phase - Foreman handles this
+                if confab.status == "building":
                     continue
 
                 # Build context prompt
