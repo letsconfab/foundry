@@ -50,11 +50,17 @@ All backend code lives in flat Python modules at the top of `/api`:
 | File | Responsibility |
 |------|---------------|
 | `main.py` | FastAPI app instance, all route definitions, CORS config |
-| `models.py` | SQLAlchemy ORM models (`User`, `GitHubAccount`, `Confab`) |
+| `models.py` | SQLAlchemy ORM models (`User`, `GitHubAccount`, `Confab`, `ConfabLearning`, `Thread`, `ThreadParticipant`, `Message`) |
 | `schemas.py` | Pydantic schemas for request/response validation |
 | `auth.py` | JWT token generation/verification, password hashing |
 | `github_oauth.py` | GitHub OAuth flow, GitHub API client functions |
-| `confab_manager.py` | GitHub repository operations (create repos, branches, PRs, files) |
+| `github_service.py` | GitHub repository operations (create repos, branches, PRs, files) |
+| `foreman.py` | Foreman system agent: context loading, tool execution, directive conversation |
+| `context_loader.py` | Loads full context for Foreman (confab state, thread history, progress) |
+| `resume_generator.py` | Generates resume prompts based on current setup progress |
+| `llm_service.py` | LLM API integration (Groq API with qwen/qwen3-32b model) |
+| `agent_tools.py` | Tool functions for confab setup (define_purpose, add_participant, etc.) |
+| `oasf_export.py` | OASF-compliant export generation (agent.oasf.yaml, .md files) |
 | `database.py` | Engine, session factory, `get_db()` dependency |
 
 ### Authentication Pattern
@@ -75,6 +81,37 @@ All backend code lives in flat Python modules at the top of `/api`:
 - Routes are defined directly in `main.py` (no separate router modules, except the GitHub OAuth router).
 - Standard HTTP status codes: 400 (bad input), 401 (unauthorized), 404 (not found), 500 (server error), 502 (upstream failure).
 - Swagger docs at `/docs`, ReDoc at `/redoc`.
+
+### Thread Architecture
+
+Conversations use a participant-based threading model:
+
+1. **Thread** — A conversation container owned by a user.
+2. **ThreadParticipant** — Links users, confabs, or system agents to threads.
+   - `participant_type`: `user`, `confab`, or `system`
+   - `system_agent_name`: For system agents (e.g., `"foreman"`)
+   - `role`: `owner`, `participant`, or `observer`
+3. **Message** — Individual messages with sender info and subthread support.
+   - `in_reply_to`: Creates nested subthreads
+   - `addressed_to`: Explicit recipients (null = broadcast to all)
+
+**Agent Response Flow:**
+1. User message saved to thread
+2. Query for agent participants (confab or system types)
+3. For each agent, determine if it should respond (explicit addressing or inference)
+4. Generate and save responses
+5. Return all messages
+
+**Foreman Special Case:**
+- Foreman finds the user's confab by `user_id + status='building'`, not by thread participant
+- Confabs skip responding during building phase (only Foreman responds)
+
+### LLM Integration
+
+- **Provider:** Groq API
+- **Model:** qwen/qwen3-32b
+- **Temperature:** 0.7 (default)
+- All LLM calls go through `llm_service.py` which handles the Groq API communication.
 
 ### Environment Variables
 
