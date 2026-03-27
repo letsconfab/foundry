@@ -264,6 +264,55 @@ class ApiClient {
     });
   }
 
+  // === Document Store endpoints ===
+
+  async uploadDocument(confabId, file, metadata = null) {
+    const url = `${this.baseURL}/confabs/${confabId}/documents`;
+    const formData = new FormData();
+    formData.append('file', file);
+    if (metadata) {
+      formData.append('metadata', JSON.stringify(metadata));
+    }
+
+    const token = localStorage.getItem('access_token');
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async listDocuments(confabId) {
+    return this.request(`/confabs/${confabId}/documents`);
+  }
+
+  async getDocument(confabId, documentId) {
+    return this.request(`/confabs/${confabId}/documents/${documentId}`);
+  }
+
+  async deleteDocument(confabId, documentId) {
+    return this.request(`/confabs/${confabId}/documents/${documentId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async searchDocuments(confabId, query, topK = 5, filterType = null) {
+    return this.request(`/confabs/${confabId}/documents/search`, {
+      method: 'POST',
+      body: JSON.stringify({ query, top_k: topK, filter_type: filterType }),
+    });
+  }
+
+  async getDocumentStats(confabId) {
+    return this.request(`/confabs/${confabId}/documents/stats`);
+  }
+
   // REMOVED: chatWithLangGraphAgent - use chat() instead
   // REMOVED: getAgentStatus - endpoint no longer exists
   // REMOVED: llmHealthCheck - endpoint no longer exists

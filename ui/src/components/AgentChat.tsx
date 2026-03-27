@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat, Pencil, Check } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat, Pencil, Check, Trash2, FileText } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -35,8 +35,23 @@ interface Participant {
 }
 
 interface UploadedFile {
+  tempId: string;
   name: string;
   size: number;
+  id?: number;
+  status: 'pending' | 'uploading' | 'indexed' | 'duplicate' | 'failed';
+  error?: string;
+  chunkCount?: number;
+  file?: File;
+}
+
+interface DocumentListItem {
+  id: number;
+  filename: string;
+  content_type: string;
+  chunk_count: number;
+  status: string;
+  created_at?: string;
 }
 
 interface AgentNode {
@@ -109,6 +124,9 @@ Let's start with the most important part: **What would you like this agent to do
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [documents, setDocuments] = useState<DocumentListItem[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentError, setDocumentError] = useState<string | null>(null);
   /** Thread id for storing this conversation in DB (threads + messages tables). */
   const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
 
@@ -232,6 +250,26 @@ Let's start with the most important part: **What would you like this agent to do
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Load existing documents when confab is available
+  useEffect(() => {
+    if (!currentConfabId) return;
+    let cancelled = false;
+
+    setDocumentsLoading(true);
+    apiClient.listDocuments(currentConfabId)
+      .then((docs: DocumentListItem[]) => {
+        if (!cancelled) setDocuments(docs);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setDocumentError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setDocumentsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [currentConfabId]);
 
   // Start editing the confab name
   const startEditingName = () => {
@@ -427,16 +465,94 @@ Let's start with the most important part: **What would you like this agent to do
     setInput(suggestion);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files) {
-      const newFiles = Array.from(files).map(file => ({ name: file.name, size: file.size }));
-      setUploadedFiles(prev => [...prev, ...newFiles]);
+    if (!files || !currentConfabId) {
+      if (!currentConfabId) {
+        setDocumentError('Please wait for the confab to be created before uploading files');
+      }
+      return;
+    }
+
+    for (const file of Array.from(files)) {
+      const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+      if (!['.pdf', '.txt', '.md'].includes(ext)) {
+        setDocumentError(`Unsupported file type: ${file.name}`);
+        continue;
+      }
+
+      if (file.size > MAX_FILE_SIZE) {
+        setDocumentError(`File too large: ${file.name} (max 10MB)`);
+        continue;
+      }
+
+      const tempId = crypto.randomUUID();
+      const pending: UploadedFile = {
+        tempId,
+        name: file.name,
+        size: file.size,
+        status: 'uploading',
+        file,
+      };
+      setUploadedFiles(prev => [...prev, pending]);
+
+      let response;
+      try {
+        response = await apiClient.uploadDocument(currentConfabId, file);
+        setDocumentError(null);
+        setUploadedFiles(prev =>
+          prev.map(f => f.tempId === tempId ? {
+            ...f,
+            id: response.status === 'duplicate' ? undefined : response.document_id,
+            status: response.status,
+            chunkCount: response.chunk_count,
+            file: undefined,
+          } : f)
+        );
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Upload failed';
+        setUploadedFiles(prev =>
+          prev.map(f => f.tempId === tempId ? {
+            ...f,
+            status: 'failed',
+            error: errorMessage,
+          } : f)
+        );
+        continue;
+      }
+
+      try {
+        const docs = await apiClient.listDocuments(currentConfabId);
+        setDocuments(docs);
+      } catch {
+        // List refresh failure is non-critical
+      }
+    }
+    e.target.value = '';
+  };
+
+  const handleDeleteDocument = async (documentId: number) => {
+    if (!currentConfabId) return;
+    try {
+      await apiClient.deleteDocument(currentConfabId, documentId);
+      setDocumentError(null);
+      setDocuments(prev => prev.filter(d => d.id !== documentId));
+      setUploadedFiles(prev => prev.filter(f => f.id !== documentId));
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Delete failed';
+      setDocumentError(errorMessage);
     }
   };
 
-  const handleRemoveFile = (index: number) => {
-    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+  const handleRemoveFile = async (index: number) => {
+    const file = uploadedFiles[index];
+    if (file.id && currentConfabId) {
+      await handleDeleteDocument(file.id);
+    } else {
+      setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+    }
   };
 
 
@@ -649,42 +765,118 @@ Let's start with the most important part: **What would you like this agent to do
               
               {/* File Upload */}
               <div className="mt-4">
+                {/* Error Alert */}
+                {documentError && (
+                  <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
+                    <p className="text-sm text-red-700">{documentError}</p>
+                    <button onClick={() => setDocumentError(null)} className="text-red-400 hover:text-red-600">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-2">
                   <input
                     type="file"
                     multiple
+                    accept=".pdf,.txt,.md"
                     onChange={handleFileUpload}
                     className="hidden"
                     id="file-upload"
+                    disabled={!currentConfabId}
                   />
                   <label
                     htmlFor="file-upload"
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm cursor-pointer rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 transition-colors"
+                    className={`inline-flex items-center gap-2 px-3 py-2 text-sm cursor-pointer rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 transition-colors ${!currentConfabId ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     <Paperclip className="w-4 h-4" />
                     Upload Document
                   </label>
-                  <span className="text-xs text-slate-500">PDF, TXT, DOCX (optional)</span>
+                  <span className="text-xs text-slate-500">PDF, TXT, MD</span>
                 </div>
+
+                {!currentConfabId && (
+                  <p className="text-xs text-amber-600 mt-2">Send a message first to create the confab before uploading files</p>
+                )}
+
+                {/* Pending Uploads with Status */}
                 {uploadedFiles.length > 0 && (
                   <div className="mt-3 space-y-2">
                     {uploadedFiles.map((file, index) => (
-                      <div key={index} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
-                        <div className="flex items-center gap-2">
-                          <File className="w-4 h-4 text-slate-600" />
-                          <p className="text-sm text-slate-700">{file.name}</p>
-                          <span className="text-xs text-slate-500">
-                            ({(file.size / 1024).toFixed(1)} KB)
-                          </span>
+                      <div key={file.tempId} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <File className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-slate-700 truncate">{file.name}</p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500">({(file.size / 1024).toFixed(1)} KB)</span>
+                              {file.status === 'uploading' && (
+                                <Badge variant="secondary" className="text-xs">
+                                  <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                                  Uploading
+                                </Badge>
+                              )}
+                              {file.status === 'indexed' && (
+                                <Badge className="text-xs bg-green-100 text-green-700">
+                                  Indexed ({file.chunkCount} chunks)
+                                </Badge>
+                              )}
+                              {file.status === 'duplicate' && (
+                                <Badge className="text-xs bg-amber-100 text-amber-700">Duplicate</Badge>
+                              )}
+                              {file.status === 'failed' && (
+                                <Badge variant="destructive" className="text-xs">Failed: {file.error}</Badge>
+                              )}
+                            </div>
+                          </div>
                         </div>
                         <button
                           onClick={() => handleRemoveFile(index)}
-                          className="text-slate-400 hover:text-red-600 transition-colors"
+                          className="text-slate-400 hover:text-red-600 transition-colors ml-2"
+                          disabled={file.status === 'uploading'}
                         >
                           <X className="w-4 h-4" />
                         </button>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Loading Documents */}
+                {documentsLoading && (
+                  <div className="mt-3 flex items-center gap-2 text-slate-500">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Loading documents...</span>
+                  </div>
+                )}
+
+                {/* Existing Documents from Server */}
+                {documents.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="text-sm font-medium text-slate-700 mb-2">
+                      Uploaded Documents ({documents.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {documents.map((doc) => (
+                        <div key={doc.id} className="flex items-center justify-between p-2 bg-white border border-slate-200 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-slate-600" />
+                            <div>
+                              <p className="text-sm text-slate-700">{doc.filename}</p>
+                              <p className="text-xs text-slate-500">
+                                {doc.content_type} | {doc.chunk_count} chunks
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteDocument(doc.id)}
+                            className="text-slate-400 hover:text-red-600 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

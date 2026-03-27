@@ -14,6 +14,7 @@ from models import Confab, GitHubAccount
 from context_loader import ContextLoader, ForemanContext
 from resume_generator import ResumePromptGenerator, STAGE_PROMPTS, STEP_DESCRIPTIONS
 from llm_service import ask_llm
+from document_store.service import DocumentService
 
 # Import tool functions at module level (not runtime)
 from agent_tools import (
@@ -74,6 +75,14 @@ IMPORTANT: After the user describes what their agent should do (step 1), you MUS
 1. Brief acknowledgment of what the user said (1-2 sentences)
 2. Confirmation of what you're saving/recording (if applicable)
 3. Clear transition to the next step with a specific question
+
+## Document Uploads
+When the user uploads documents, they are automatically chunked and indexed into the confab's knowledge base (ChromaDB vector store). You should:
+- Acknowledge when documents are uploaded and indexed
+- Mention the document name and chunk count when relevant
+- Explain that these documents will be available to the confab for RAG retrieval once it's deployed
+
+{documents_context}
 
 Current confab context:
 {context}
@@ -172,7 +181,7 @@ class Foreman:
             raise RuntimeError("Foreman not initialized. Call initialize() first.")
 
         # Build contextual prompt (uses thread history from context)
-        prompt = self._build_contextual_prompt(user_message)
+        prompt = await self._build_contextual_prompt(user_message)
 
         # Call LLM
         try:
@@ -204,11 +213,32 @@ class Foreman:
             "timestamp": datetime.now().isoformat(),
         }
 
-    def _build_contextual_prompt(self, user_message: str) -> str:
+    async def _get_documents_context(self) -> str:
+        """Get formatted context about uploaded documents for this confab."""
+        try:
+            doc_service = DocumentService(self.db)
+            documents = await doc_service.list_documents(self.confab_id)
+
+            if not documents:
+                return "No documents have been uploaded to this confab yet."
+
+            doc_lines = [f"**Uploaded Documents ({len(documents)}):**"]
+            for doc in documents:
+                doc_lines.append(f"- {doc['filename']} ({doc['content_type']}, {doc['chunk_count']} chunks, status: {doc['status']})")
+
+            return "\n".join(doc_lines)
+        except Exception as e:
+            logger.warning(f"Failed to load documents for confab {self.confab_id}: {e}")
+            return "Unable to load document information."
+
+    async def _build_contextual_prompt(self, user_message: str) -> str:
         """Build a prompt with full context for the LLM."""
         # Get system context from GitHub files
         generator = ResumePromptGenerator(self.context)
         system_context = generator.get_system_context()
+
+        # Get document context
+        documents_context = await self._get_documents_context()
 
         # Build conversation history (last 10 messages)
         history_lines = []
@@ -222,7 +252,8 @@ class Foreman:
         system_prompt = FOREMAN_SYSTEM_PROMPT.format(
             context=system_context,
             current_stage=self.context.setup_progress.current_stage,
-            completed_steps=self.context.setup_progress.completed_steps
+            completed_steps=self.context.setup_progress.completed_steps,
+            documents_context=documents_context
         )
 
         # Combine into final prompt
