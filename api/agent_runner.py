@@ -214,7 +214,7 @@ _llm_instance = None
 def get_llm():
     """
     Get the LLM instance, initializing lazily on first use.
-    Uses Groq API with qwen3-32b model.
+    Uses Groq API with qwen3-32b model and bound tools.
     """
     global _llm_instance
     if _llm_instance is None:
@@ -225,7 +225,19 @@ def get_llm():
             if not api_key:
                 logger.error("GROQ_API_KEY environment variable is not set")
                 raise ValueError("GROQ_API_KEY is required")
-            _llm_instance = ChatGroq(api_key=api_key, model=model_name, temperature=0.7)
+            
+            # Create base ChatGroq instance
+            llm = ChatGroq(api_key=api_key, model=model_name, temperature=0.7)
+            
+            # Get tools and bind them to the model
+            from agent_tools import get_langchain_tools
+            tools = get_langchain_tools()
+            
+            # Bind tools to the model so it can access them
+            _llm_instance = llm.bind_tools(tools)
+            
+            logger.info(f"LLM initialized with {len(tools)} tools bound")
+            
         except ImportError:
             logger.error("ChatGroq not found. Please install langchain-groq")
             raise
@@ -262,7 +274,11 @@ async def run_langgraph_agent(confab_id: int, user_message: str, db: Session) ->
             system_prompt = "You are an AI agent that describes purposes and objectives. Focus only on explaining what something is for, not how to implement solutions."
         
         # Get tools from agent_tools
+        from agent_tools import get_langchain_tools
         tools = get_langchain_tools()
+        
+        # Create tool mapping for execution
+        tool_map = {tool.name: tool for tool in tools}
         
         # Simple agent implementation - focus on purpose description only
         tool_descriptions = []
@@ -289,22 +305,55 @@ Available tools:
 
 Respond ONLY with purpose description:"""
         
-        # Run the model
+        # Run the model with tools
         logger.info(f"Running agent for confab {confab_id} with message: {user_message}")
         
-        # For now, just use the LLM without tool execution
-        response = get_llm().invoke(prompt)
+        # Get the LLM with bound tools
+        llm = get_llm()
+        
+        # Create a message format for the LLM
+        from langchain_core.messages import HumanMessage
+        messages = [HumanMessage(content=prompt)]
+        
+        # Invoke the LLM - it will have access to bound tools
+        response = llm.invoke(messages)
+        
+        # Check if the model called any tools
+        tool_calls = []
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            # Execute tool calls
+            for tool_call in response.tool_calls:
+                tool_name = tool_call.get('name')
+                tool_args = tool_call.get('args', {})
+                
+                if tool_name in tool_map:
+                    try:
+                        # Execute the tool
+                        tool_result = await tool_map[tool_name].ainvoke(tool_args)
+                        tool_calls.append({
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "result": str(tool_result)
+                        })
+                        logger.info(f"Tool {tool_name} executed successfully")
+                    except Exception as tool_error:
+                        logger.error(f"Tool {tool_name} failed: {tool_error}")
+                        tool_calls.append({
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "error": str(tool_error)
+                        })
         
         # Store the purpose data to purpose.md file
-        store_purpose_to_file(confab_id, user_message, str(response), db)
+        store_purpose_to_file(confab_id, user_message, str(response.content), db)
         
         return {
             "success": True,
-            "response": str(response),
-            "tool_calls": [],  # No tool calls in this simple implementation
+            "response": str(response.content),
+            "tool_calls": tool_calls,
             "confab_id": confab_id,
             "timestamp": str(datetime.datetime.now()),
-            "architecture": "Simple LLM with tools context",
+            "architecture": "LangChain LLM with tool execution",
             "purpose_stored": True,
             "purpose_source": "GitHub PURPOSE.md" if get_purpose(confab_id) else "Generated"
         }
