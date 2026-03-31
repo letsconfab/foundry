@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState } from 'react';
 import { Network, Plus, Bot, Settings, Play, Shield } from 'lucide-react';
 import { Button } from './ui/button';

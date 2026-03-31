@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Header } from './components/Header';
@@ -11,16 +12,18 @@ import { Register } from './components/Register';
 import { ConfabChat } from './components/ConfabChat';
 import { ConfigureConfab } from './components/ConfigureConfab';
 import { ConfigureConfabWithThreads } from './components/ConfigureConfabWithThreads';
+import { ReviewChats } from './components/ReviewChats';
 import { GitHubCallback } from './components/GitHubCallback';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat' | 'configure';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat' | 'configure' | 'review-chats';
 
 function AppContent() {
   const { isLoggedIn, isLoading, user } = useAuth();
   const [currentView, setCurrentView] = useState<View>('home');
   const [selectedConfabName, setSelectedConfabName] = useState('');
   const [selectedConfabVersion, setSelectedConfabVersion] = useState('1.0.0');
+  const [selectedConfabId, setSelectedConfabId] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     if (isLoggedIn && (currentView === 'home' || currentView === 'login' || currentView === 'register')) {
@@ -28,7 +31,7 @@ function AppContent() {
     }
   }, [isLoggedIn, currentView]);
 
-  const handleNavigate = (view: View, confabName?: string, version?: string) => {
+  const handleNavigate = (view: View, confabName?: string, version?: string, confabId?: number) => {
     setCurrentView(view);
     if (confabName) {
       setSelectedConfabName(confabName);
@@ -36,6 +39,8 @@ function AppContent() {
     if (version) {
       setSelectedConfabVersion(version);
     }
+    // Set confabId for resuming, or clear it for new confabs
+    setSelectedConfabId(confabId);
   };
 
   if (isLoading) {
@@ -67,12 +72,13 @@ function AppContent() {
                 {currentView === 'home' && <HeroSection onNavigate={handleNavigate} />}
                 {currentView === 'login' && <Login onNavigate={handleNavigate} />}
                 {currentView === 'register' && <Register onNavigate={handleNavigate} />}
-                {currentView === 'create' && <AgentChat onNavigate={handleNavigate} />}
+                {currentView === 'create' && <AgentChat onNavigate={handleNavigate} existingConfabId={selectedConfabId} />}
                 {currentView === 'dashboard' && <AgentDashboard onNavigate={handleNavigate} />}
                 {currentView === 'deploy' && <DeploymentPanel onNavigate={handleNavigate} />}
                 {currentView === 'multi-agent' && <MultiAgentBuilder onNavigate={handleNavigate} />}
                 {currentView === 'confab-chat' && <ConfabChat onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} />}
-                {currentView === 'configure' && <ConfigureConfabWithThreads onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} />}
+                {currentView === 'configure' && <ConfigureConfabWithThreads onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} confabId={selectedConfabId} />}
+                {currentView === 'review-chats' && <ReviewChats onNavigate={handleNavigate} />}
               </main>
             </>
           } />

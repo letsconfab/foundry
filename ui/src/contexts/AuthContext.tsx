@@ -77,9 +77,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = async (userData: UserCreateData) => {
     try {
+      console.log('AuthContext: Register called with userData:', { ...userData, password: '***' });
       const response = await apiClient.register(userData);
+      console.log('AuthContext: Register response:', response);
       setUser(response);
+      console.log('AuthContext: User state updated');
     } catch (error) {
+      console.error('AuthContext: Register error:', error);
       throw error;
     }
   };
