@@ -214,11 +214,14 @@ def _resolve_github_target(
     current_user: User,
     confab: Confab,
     db: Session
-) -> Tuple[GitHubService, str, Optional[GitHubAccount], bool]:
+) -> Tuple[GitHubService, Optional[GitHubAccount], bool]:
     """
     Resolve GitHub target/service.
     - GitHub-connected users: selected repo.
     - Email/password users: letsconfab/registry using service token.
+
+    Returns: (service, github_account, is_registry)
+    Note: Always commit to the default branch (main) - no confab-specific branches.
     """
     github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
 
@@ -232,7 +235,7 @@ def _resolve_github_target(
             repo_owner=repo_owner,
             repo_name=repo_name,
         )
-        return service, f"confab-{confab.id}", github_account, False
+        return service, github_account, False
 
     registry_token = os.getenv("REGISTRY_GITHUB_TOKEN")
     if not registry_token:
@@ -248,7 +251,7 @@ def _resolve_github_target(
         repo_owner=repo_owner,
         repo_name=repo_name,
     )
-    return service, f"confab-{confab.id}", github_account, True
+    return service, github_account, True
 
 
 # =============================================================================
@@ -532,7 +535,7 @@ async def refresh_definition_files(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
     try:
-        github_service, branch_name, github_account, _ = _resolve_github_target(current_user, confab, db)
+        github_service, github_account, _ = _resolve_github_target(current_user, confab, db)
     except HTTPException as e:
         # GitHub not configured - return current DB state without remote sync
         return DefinitionFilesRefreshResponse(
@@ -552,14 +555,28 @@ async def refresh_definition_files(
 
     purpose_content: Optional[str] = None
     guardrails_md: Optional[str] = None
-    source: Literal["branch", "default", "none"] = "none"
+    source: Literal["default", "none"] = "none"
     source_branch: Optional[str] = None
 
-    # Try confab branch first (wrapped in try-except for repo access errors)
+    # Get the default branch (main) - we always commit directly to it
     try:
-        purpose_content = await github_service.get_file_contents(purpose_path, branch=branch_name)
-        source = "branch"
-        source_branch = branch_name
+        default_branch = await github_service.get_default_branch()
+    except GitHubServiceError:
+        # Repo not accessible - return current DB state
+        return DefinitionFilesRefreshResponse(
+            confab_id=confab.id,
+            purpose=confab.purpose,
+            guardrails_markdown=_guardrails_to_markdown(confab.name, confab.guardrails) if confab.guardrails else None,
+            remote_branch=None,
+            remote_source="none",
+            refreshed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+
+    # Look for files on the default branch only (no confab-specific branches)
+    try:
+        purpose_content = await github_service.get_file_contents(purpose_path, branch=default_branch)
+        source = "default"
+        source_branch = default_branch
     except GitHubFileNotFoundError:
         pass
     except GitHubServiceError:
@@ -574,35 +591,13 @@ async def refresh_definition_files(
         )
 
     try:
-        guardrails_md = await github_service.get_file_contents(guardrails_path, branch=branch_name)
-        source = "branch"
-        source_branch = branch_name
+        guardrails_md = await github_service.get_file_contents(guardrails_path, branch=default_branch)
+        source = "default"
+        source_branch = default_branch
     except GitHubFileNotFoundError:
         pass
     except GitHubServiceError:
         pass  # Continue with what we have
-
-    # Fallback to default branch if files were not found on confab branch
-    if purpose_content is None or guardrails_md is None:
-        try:
-            default_branch = await github_service.get_default_branch()
-            if purpose_content is None:
-                try:
-                    purpose_content = await github_service.get_file_contents(purpose_path, branch=default_branch)
-                    source = "default"
-                    source_branch = default_branch
-                except GitHubFileNotFoundError:
-                    pass
-            if guardrails_md is None:
-                try:
-                    guardrails_md = await github_service.get_file_contents(guardrails_path, branch=default_branch)
-                    source = "default"
-                    source_branch = default_branch
-                except GitHubFileNotFoundError:
-                    pass
-        except GitHubServiceError:
-            # Repo not accessible - continue with what we have from DB
-            pass
 
     # Hydrate DB from remote files where available
     changed = False
@@ -659,7 +654,7 @@ async def accept_and_commit_definition_files(
     github_error_message = None
 
     try:
-        github_service, _, github_account, _ = _resolve_github_target(current_user, confab, db)
+        github_service, github_account, _ = _resolve_github_target(current_user, confab, db)
         confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db)
 
         # Ensure repo exists before attempting operations (auto-creates "confabs" if needed)
@@ -1514,7 +1509,7 @@ async def sync_to_github(
 
     for confab in confabs:
         try:
-            github_service, branch_name, github_account, _ = _resolve_github_target(current_user, confab, db)
+            github_service, github_account, _ = _resolve_github_target(current_user, confab, db)
 
             # Generate OASF export files
             files = generate_all_export_files(confab, db)
@@ -1523,8 +1518,8 @@ async def sync_to_github(
             confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db)
             file_prefix = confab_folder
 
-            # Get or create branch for this confab
-            await github_service.get_or_create_branch(branch_name)
+            # Commit directly to the default branch (main)
+            default_branch = await github_service.get_default_branch()
 
             # Build path->content map and guard paths
             batch_files: Dict[str, str] = {}
@@ -1537,7 +1532,7 @@ async def sync_to_github(
             # Commit all files in one batch commit
             await github_service.create_or_update_files_batch(
                 files=batch_files,
-                branch=branch_name,
+                branch=default_branch,
                 message=f"Sync confab {confab.name} (v{confab.version})"
             )
 

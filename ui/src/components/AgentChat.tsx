@@ -811,6 +811,20 @@ Let's start with the most important part: **What would you like this agent to do
       setShowRegistryTokenBanner(false);
       setRemoteBranchHint(remote.remote_branch || null);
 
+      // If remote_source is "none", content came from DB not GitHub - don't treat as remote
+      const hasGitHubSource = remote.remote_source === 'branch' || remote.remote_source === 'default';
+
+      if (!hasGitHubSource) {
+        // No GitHub content found - clear remoteContent and reload from DB to sync UI state
+        setDefinitionFiles((prev) => ({
+          ...prev,
+          purpose: { ...prev.purpose, remoteContent: null },
+          guardrails: { ...prev.guardrails, remoteContent: null },
+        }));
+        await loadConfabDefinitionData(id);
+        return;
+      }
+
       const incoming: Partial<Record<DefinitionFileKey, string>> = {
         purpose: remote.purpose || '',
         guardrails: remote.guardrails_markdown || '',

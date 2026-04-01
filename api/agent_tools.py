@@ -842,91 +842,31 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                     print(f"Failed to create repository {full_repo_name}: {create_error}")
                     return False
 
-            # Create or get confab-specific branch
-            branch_name = create_confab_branch(repo, confab_id)
-
-            # Use the consistent folder_path for file operations
+            # Commit directly to the default branch (main) - no branches or PRs
+            default_branch = repo.default_branch
             purpose_file_path = f"{folder_path}/PURPOSE.md"
-            is_first_time = False
+            commit_message = f"Update purpose for confab {confab_name}"
 
             try:
-                # Try to get file from main branch to check if it exists
-                main_file = repo.get_contents(purpose_file_path, ref=repo.default_branch)
-                print(f"PURPOSE.md already exists in main branch at {purpose_file_path}")
-            except:
-                print(f"PURPOSE.md does not exist in main branch - first time creation")
-                is_first_time = True
-
-            # Update/create file in the confab branch
-            try:
-                # Try to get file from the confab branch
-                file = repo.get_contents(purpose_file_path, ref=branch_name)
+                # Try to get existing file to get its SHA for update
+                existing_file = repo.get_contents(purpose_file_path, ref=default_branch)
                 repo.update_file(
                     purpose_file_path,
-                    f"Update purpose for confab {confab_name}",
+                    commit_message,
                     purpose_markdown,
-                    file.sha,
-                    branch=branch_name
+                    existing_file.sha,
+                    branch=default_branch
                 )
-                print(f"PURPOSE.md updated successfully in branch {branch_name}")
-            except Exception as file_error:
-                # File might not exist in the branch, try to create it
-                try:
-                    repo.create_file(
-                        purpose_file_path,
-                        f"Create purpose for confab {confab_name}",
-                        purpose_markdown,
-                        branch=branch_name
-                    )
-                    print(f"PURPOSE.md created successfully in branch {branch_name}")
-                except Exception as create_file_error:
-                    print(f"Failed to create PURPOSE.md at {purpose_file_path}: {create_file_error}")
-                    return False
-
-            # Handle pull request logic
-            if is_first_time:
-                # First time - create PR and merge
-                print("First time creation - creating PR and merging")
-                pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
-                if pr:
-                    # Wait a moment for PR to be processed
-                    import time
-                    time.sleep(2)
-                    safe_merge_pull_request(repo, pr)
-                else:
-                    print("Failed to create PR for first-time setup")
-                    return False
-            else:
-                # Subsequent updates - check if PR exists and is open
-                existing_pr = check_pull_request_exists(repo, branch_name)
-                if existing_pr:
-                    print(f"Updating existing PR #{existing_pr.number}")
-                    # PR exists and is open, no need to create new one
-                else:
-                    # Check if there was a merged PR for this branch
-                    try:
-                        pulls = repo.get_pulls(state='closed', head=branch_name)
-                        merged_pr_found = False
-                        for pr in pulls:
-                            if pr.head.ref == branch_name and pr.merged:
-                                merged_pr_found = True
-                                break
-
-                        if merged_pr_found:
-                            print("Previous PR was merged, creating new PR for updates")
-                            pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
-                            if pr:
-                                import time
-                                time.sleep(2)
-                                safe_merge_pull_request(repo, pr)
-                        else:
-                            print("No existing PR found and no merged PR - creating new PR")
-                            pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
-
-                    except Exception as pr_check_error:
-                        print(f"Error checking PR history: {pr_check_error}")
-                        # Fallback: create new PR
-                        pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
+                print(f"PURPOSE.md updated on {default_branch} at {purpose_file_path}")
+            except Exception:
+                # File doesn't exist, create it
+                repo.create_file(
+                    purpose_file_path,
+                    commit_message,
+                    purpose_markdown,
+                    branch=default_branch
+                )
+                print(f"PURPOSE.md created on {default_branch} at {purpose_file_path}")
 
             return True
 
@@ -1015,51 +955,38 @@ def update_file_tool(confab_id: int, file_path: str, content: str) -> str:
         file_path = f"{folder_path}/{base_filename}"
         print(f"File path set to: {file_path}")
         
-        # Use the new branch-based workflow
+        # Commit directly to the default branch (main) - no branches or PRs
         try:
             from github import Github
-            
+
             g = Github(github_account.access_token)
             repo = g.get_repo(full_repo_name)
-            
-            # Create or get confab-specific branch
-            branch_name = create_confab_branch(repo, confab_id)
-            
-            # Update/create file in the confab branch
+            default_branch = repo.default_branch
+            commit_message = f"Update {file_path} for confab {confab_name}"
+
             try:
-                # Try to get file from the confab branch
-                existing_file = repo.get_contents(file_path, ref=branch_name)
+                # Try to get existing file to get its SHA for update
+                existing_file = repo.get_contents(file_path, ref=default_branch)
                 repo.update_file(
-                    file_path, 
-                    f"Update {file_path} for confab {confab_name}", 
-                    content, 
-                    existing_file.sha,
-                    branch=branch_name
-                )
-                print(f"{file_path} updated successfully in branch {branch_name}")
-            except:
-                # File might not exist in the branch, try to create it
-                repo.create_file(
-                    file_path, 
-                    f"Create {file_path} for confab {confab_name}", 
+                    file_path,
+                    commit_message,
                     content,
-                    branch=branch_name
+                    existing_file.sha,
+                    branch=default_branch
                 )
-                print(f"{file_path} created successfully in branch {branch_name}")
-            
-            # Handle pull request logic (similar to ensure_repo_and_purpose but for general files)
-            existing_pr = check_pull_request_exists(repo, branch_name)
-            if existing_pr:
-                print(f"File updated in existing PR #{existing_pr.number}")
-                return f"File {file_path} updated successfully in existing PR #{existing_pr.number}"
-            else:
-                # Create new PR for the file update
-                pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
-                if pr:
-                    return f"File {file_path} updated successfully in new PR #{pr.number}"
-                else:
-                    return f"File {file_path} updated successfully but failed to create PR"
-            
+                print(f"{file_path} updated on {default_branch}")
+            except Exception:
+                # File doesn't exist, create it
+                repo.create_file(
+                    file_path,
+                    commit_message,
+                    content,
+                    branch=default_branch
+                )
+                print(f"{file_path} created on {default_branch}")
+
+            return f"File {file_path} committed to {default_branch}"
+
         except Exception as e:
             return f"Failed to update file: {str(e)}"
         
