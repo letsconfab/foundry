@@ -43,7 +43,7 @@ SETUP_TOOLS = {
 # System prompt for the Foreman agent
 FOREMAN_SYSTEM_PROMPT = """You are the Foreman, the lead orchestrator in the Agent Foundry. You guide users through building AI agents (called "confabs").
 
-IMPORTANT: You must actively lead this conversation. Do not wait passively for the user to drive the process. After each user response, acknowledge what they said, save the relevant information, then proactively move to the next step.
+IMPORTANT: You must actively lead this conversation. Do not wait passively for the user to drive the process. After each user response, acknowledge what they said, save the relevant information using the appropriate tool, then proactively move to the next step.
 
 ## The 7-Step Process
 1. **Define purpose** - What should the agent do? (CURRENT FOCUS if just starting)
@@ -54,18 +54,42 @@ IMPORTANT: You must actively lead this conversation. Do not wait passively for t
 6. **Sample I/O** - Provide example interactions
 7. **Review** - Finalize the configuration
 
-## Naming the Confab
-IMPORTANT: After the user describes what their agent should do (step 1), you MUST generate a short placeholder name.
-- The name should be 1-2 words, descriptive of the agent's purpose
-- Examples: "SupportBot", "DataAnalyzer", "CodeReviewer", "MeetingSummarizer"
-- Use the set_confab_name tool to save it: {{"tool": "set_confab_name", "args": {{"name": "YourChosenName"}}}}
-- A timestamp will be added automatically (e.g., "SupportBot-20260326-1430")
-- The user can change this name later via the UI
+## Available Tools
+CRITICAL: You MUST use these tools to save information. Without calling these tools, nothing is persisted!
+
+### Step 1: Purpose and Naming
+When the user describes what their agent should do:
+1. First, save the purpose using define_purpose:
+   {{"tool": "define_purpose", "args": {{"purpose_text": "A clear, detailed description of what the agent does..."}}}}
+
+2. Then, generate and save a short name (1-2 words, descriptive):
+   {{"tool": "set_confab_name", "args": {{"name": "YourChosenName"}}}}
+   - Examples: "SupportBot", "DataAnalyzer", "CodeReviewer", "TrueDetectiveHub"
+   - A timestamp will be added automatically (e.g., "SupportBot-20260326-1430")
+
+### Step 2: Participants
+{{"tool": "add_participant", "args": {{"email": "user@example.com"}}}}
+
+### Step 3: Memory
+{{"tool": "configure_memory", "args": {{"memory_notes": "Notes about what to remember", "enable": true}}}}
+
+### Step 4: Tools/APIs
+{{"tool": "add_tools_and_apis", "args": {{"tool_name": "ToolName", "api_key": "key_if_needed"}}}}
+
+### Step 5: Guardrails
+{{"tool": "guardrails", "args": {{"guardrails_text": "1. Safety rule 1\\n2. Safety rule 2\\n3. Safety rule 3"}}}}
+
+### Step 6: Sample I/O
+{{"tool": "sample_io", "args": {{"sample_text": "User: Example user input\\nAgent: Expected agent response"}}}}
+
+### Step 7: Review and Save
+{{"tool": "review_and_save", "args": {{}}}}
 
 ## Your Behavior
 - LEAD the conversation - always end your response with a clear question for the next step
 - Focus on ONE step at a time - don't overwhelm the user
-- After receiving information, briefly confirm what you understood, then IMMEDIATELY ask about the next step
+- ALWAYS use the appropriate tool to save information - just acknowledging is NOT enough
+- After receiving information, call the tool to save it, briefly confirm what you saved, then ask about the next step
 - Keep responses concise and action-oriented
 - If the user's response is vague, ask ONE specific clarifying question
 - If the user wants to skip a step, acknowledge it and move to the next step
@@ -73,8 +97,9 @@ IMPORTANT: After the user describes what their agent should do (step 1), you MUS
 
 ## Response Format
 1. Brief acknowledgment of what the user said (1-2 sentences)
-2. Confirmation of what you're saving/recording (if applicable)
-3. Clear transition to the next step with a specific question
+2. Tool call(s) to save the information (REQUIRED - do not skip this!)
+3. Confirmation of what you saved
+4. Clear transition to the next step with a specific question
 
 ## Document Uploads
 When the user uploads documents, they are automatically chunked and indexed into the confab's knowledge base (ChromaDB vector store). You should:
@@ -270,35 +295,52 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
     def _parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
         """Parse tool calls from LLM response (JSON embedded in text)."""
         tool_calls = []
+        seen_json_strings = set()  # Avoid duplicate tool calls
 
-        # Look for JSON tool call pattern: {"tool": "...", "args": {...}}
-        json_pattern = r'\{["\']tool["\']\s*:\s*["\'](\w+)["\'].*?\}'
-        matches = re.findall(json_pattern, response, re.DOTALL)
+        # Find all potential starting positions for tool JSON objects
+        search_start = 0
+        while True:
+            # Look for {"tool" or {'tool
+            start = response.find('{"tool"', search_start)
+            if start == -1:
+                start = response.find("{'tool", search_start)
+            if start == -1:
+                break
 
-        for match in matches:
             try:
-                # Try to extract full JSON object
-                start = response.find('{"tool"')
-                if start == -1:
-                    start = response.find("{'tool")
-                if start != -1:
-                    # Find matching closing brace
-                    depth = 0
-                    end = start
-                    for i, char in enumerate(response[start:], start):
-                        if char == '{':
-                            depth += 1
-                        elif char == '}':
-                            depth -= 1
-                            if depth == 0:
-                                end = i + 1
-                                break
+                # Find matching closing brace
+                depth = 0
+                end = start
+                for i, char in enumerate(response[start:], start):
+                    if char == '{':
+                        depth += 1
+                    elif char == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
 
-                    json_str = response[start:end]
-                    tool_call = json.loads(json_str.replace("'", '"'))
+                json_str = response[start:end]
+
+                # Skip if we've already seen this exact JSON string
+                if json_str in seen_json_strings:
+                    search_start = end
+                    continue
+                seen_json_strings.add(json_str)
+
+                # Normalize quotes and parse
+                normalized = json_str.replace("'", '"')
+                tool_call = json.loads(normalized)
+
+                # Validate it has the expected structure
+                if "tool" in tool_call:
                     tool_calls.append(tool_call)
+                    logger.debug(f"Parsed tool call: {tool_call.get('tool')}")
+
+                search_start = end
             except (json.JSONDecodeError, ValueError) as e:
-                logger.debug(f"Could not parse tool call: {e}")
+                logger.debug(f"Could not parse tool call at position {start}: {e}")
+                search_start = start + 1  # Move past this position and try again
 
         return tool_calls
 

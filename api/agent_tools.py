@@ -1096,6 +1096,13 @@ def set_confab_name(db: Session, confab_id: int, name: str) -> str:
 
 def define_purpose(db: Session, confab_id: int, purpose_text: str) -> str:
     """Tool: save purpose and mark step 1."""
+    # Save to database so UI can read it
+    confab = db.query(Confab).filter(Confab.id == confab_id).first()
+    if confab:
+        confab.purpose = purpose_text
+        db.commit()
+        logger.info(f"Saved purpose to database for confab {confab_id}")
+    # Also sync to GitHub
     update_purpose(confab_id, purpose_text)
     mark_step_complete(db, confab_id, 1)
     return "Purpose defined successfully."
@@ -1153,6 +1160,42 @@ def guardrails(db: Session, confab_id: int, guardrails_text: str) -> str:
     confab = db.query(Confab).filter(Confab.id == confab_id).first()
     if not confab:
         return "Confab not found."
+
+    # Parse guardrails text into structured format for database
+    # Uses the same parsing logic as main.py _guardrails_from_markdown
+    import re
+    rules = []
+    lines = (guardrails_text or "").splitlines()
+    for line in lines:
+        stripped = line.strip()
+        numbered = re.match(r"^\d+\.\s+(.*)$", stripped)
+        bulleted = re.match(r"^[-*]\s+(.*)$", stripped)
+        match = numbered or bulleted
+        if not match:
+            continue
+        text = match.group(1).strip()
+        if not text or text.startswith("severity:") or text.startswith("status:"):
+            continue
+        rules.append({
+            "id": f"gr-{len(rules) + 1}",
+            "rule": text,
+            "severity": "error",
+            "enabled": True,
+        })
+    # Fallback for freeform text
+    if not rules and guardrails_text.strip():
+        rules.append({
+            "id": "gr-1",
+            "rule": guardrails_text.strip(),
+            "severity": "error",
+            "enabled": True,
+        })
+
+    # Save to database guardrails field so UI can read it
+    confab.guardrails = rules
+    logger.info(f"Saved {len(rules)} guardrails to database for confab {confab_id}")
+
+    # Also save to config for backwards compatibility
     cfg = confab.config or {}
     if "custom_settings" not in cfg:
         cfg["custom_settings"] = {}

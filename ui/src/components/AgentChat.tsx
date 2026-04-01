@@ -592,6 +592,11 @@ Let's start with the most important part: **What would you like this agent to do
 
             // Refresh confab name in case Foreman set it
             refreshConfabName();
+
+            // Refresh definition files in case Foreman updated purpose/guardrails via tools
+            if (confabId) {
+              loadConfabDefinitionData(confabId);
+            }
           } else {
             // No agent response yet - this shouldn't happen with Foreman
             assistantContent = "Message sent. Waiting for agent response...";
