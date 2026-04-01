@@ -386,24 +386,24 @@ def update_purpose(confab_id: int, purpose_markdown: str) -> bool:
 
 # Database tools for User Information Management (Email and Names)
 def store_user_information(confab_id: int, user_name: str, email: str) -> bool:
-    """Store user information (name and email) in the confab's knowledge base."""
+    """Store user information (name and email) in the confab's setup_progress."""
     print("store_user_information working successfully")
     try:
         from database import get_db
         db = next(get_db())
-        
+
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             print(f"Confab with ID {confab_id} not found")
             return False
-            
-        # Store in knowledge base
-        cfg = confab.config or {}
-        if "user_information" not in cfg:
-            cfg["user_information"] = []
-        
+
+        # Store in setup_progress (not config which doesn't exist)
+        progress = confab.setup_progress or {}
+        if "user_information" not in progress:
+            progress["user_information"] = []
+
         # Check if user already exists
-        user_info = cfg["user_information"]
+        user_info = progress["user_information"]
         for user in user_info:
             if user.get("email") == email:
                 user["name"] = user_name  # Update name if email exists
@@ -417,13 +417,13 @@ def store_user_information(confab_id: int, user_name: str, email: str) -> bool:
                 "created_at": datetime.datetime.now().isoformat()
             })
             print(f"Added new user information: {user_name} - {email}")
-        
-        cfg["user_information"] = user_info
-        confab.config = cfg
+
+        progress["user_information"] = user_info
+        confab.setup_progress = progress
         db.commit()
         print("User information stored successfully in database")
         return True
-        
+
     except Exception as e:
         logger.error(f"Error in store_user_information: {e}")
         print(f"Error in store_user_information: {e}")
@@ -433,20 +433,20 @@ def store_user_information(confab_id: int, user_name: str, email: str) -> bool:
             db.close()
 
 def get_user_information(confab_id: int, email: str = None) -> List[Dict[str, Any]]:
-    """Retrieve user information from the confab's knowledge base."""
+    """Retrieve user information from the confab's setup_progress."""
     print("get_user_information working successfully")
     try:
         from database import get_db
         db = next(get_db())
-        
+
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             print(f"Confab with ID {confab_id} not found")
             return []
-            
-        cfg = confab.config or {}
-        user_info = cfg.get("user_information", [])
-        
+
+        progress = confab.setup_progress or {}
+        user_info = progress.get("user_information", [])
+
         if email:
             # Return specific user
             for user in user_info:
@@ -459,7 +459,7 @@ def get_user_information(confab_id: int, email: str = None) -> List[Dict[str, An
             # Return all users
             print(f"Retrieved {len(user_info)} user records")
             return user_info
-        
+
     except Exception as e:
         logger.error(f"Error in get_user_information: {e}")
         print(f"Error in get_user_information: {e}")
@@ -499,21 +499,21 @@ def get_user_information_tool(confab_id: int, email: str = None) -> str:
 # Database tools for Memory management
 def search_knowledge_base(confab_id: int, query: str) -> List[Dict[str, Any]]:
     """Search the knowledge base for information matching the query."""
-    print("search_knowledge_base working succefuly")
+    print("search_knowledge_base working successfully")
     try:
         from database import get_db
         db = next(get_db())
-        
+
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             return []
-            
-        cfg = confab.config or {}
-        docs = cfg.get("knowledge_documents", [])
+
+        progress = confab.setup_progress or {}
+        docs = progress.get("knowledge_documents", [])
         q = query.lower()
         results = [d for d in docs if q in (d.get("content","") + d.get("title","")).lower()]
         return results
-        
+
     except Exception as e:
         logger.error(f"Error in search_knowledge_base: {e}")
         return []
@@ -523,18 +523,18 @@ def search_knowledge_base(confab_id: int, query: str) -> List[Dict[str, Any]]:
 
 def update_knowledge_base(confab_id: int, file_name: str, information: str) -> bool:
     """Update or add information to the knowledge base."""
-    print("update_knowledge_base working succefuly")
+    print("update_knowledge_base working successfully")
     try:
         from database import get_db
         db = next(get_db())
-        
+
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             return False
-            
-        cfg = confab.config or {}
-        docs = cfg.get("knowledge_documents", [])
-        
+
+        progress = confab.setup_progress or {}
+        docs = progress.get("knowledge_documents", [])
+
         # Find existing document
         for d in docs:
             if d.get("file_name") == file_name:
@@ -543,12 +543,12 @@ def update_knowledge_base(confab_id: int, file_name: str, information: str) -> b
         else:
             # Add new document
             docs.append({"file_name": file_name, "title": file_name, "content": information})
-            
-        cfg["knowledge_documents"] = docs
-        confab.config = cfg
+
+        progress["knowledge_documents"] = docs
+        confab.setup_progress = progress
         db.commit()
         return True
-        
+
     except Exception as e:
         logger.error(f"Error in update_knowledge_base: {e}")
         return False
@@ -1108,16 +1108,20 @@ def get_langchain_tools():
 
 # Legacy setup step utilities (kept for backward compatibility)
 def mark_step_complete(db: Session, confab_id: int, step: int) -> bool:
-    """Record that the given configuration step has been finished on the confab."""
+    """Record that the given configuration step has been finished on the confab.
+
+    Uses the setup_progress JSON field with format: {"completed_steps": [1,2], "current_stage": "memory"}
+    """
     confab = db.query(Confab).filter(Confab.id == confab_id).first()
     if not confab:
         return False
-    cfg = confab.config or {}
-    completed = cfg.get("setup_steps_completed", [])
+    # Use setup_progress field (not config which doesn't exist)
+    progress = confab.setup_progress or {}
+    completed = progress.get("completed_steps", [])
     if step not in completed:
         completed.append(step)
-    cfg["setup_steps_completed"] = completed
-    confab.config = cfg
+    progress["completed_steps"] = completed
+    confab.setup_progress = progress
     db.commit()
     return True
 
@@ -1160,12 +1164,13 @@ def add_participant(db: Session, confab_id: int, email: str) -> str:
     confab = db.query(Confab).filter(Confab.id == confab_id).first()
     if not confab:
         return "Confab not found."
-    cfg = confab.config or {}
-    parts = cfg.get("participants", [])
+    # Use setup_progress to store participants list
+    progress = confab.setup_progress or {}
+    parts = progress.get("participants", [])
     if email not in parts:
         parts.append(email)
-    cfg["participants"] = parts
-    confab.config = cfg
+    progress["participants"] = parts
+    confab.setup_progress = progress
     db.commit()
     mark_step_complete(db, confab_id, 2)
     return "Participant added."
@@ -1175,14 +1180,13 @@ def configure_memory(db: Session, confab_id: int, memory_notes: str, enable: boo
     confab = db.query(Confab).filter(Confab.id == confab_id).first()
     if not confab:
         return "Confab not found."
-    cfg = confab.config or {}
-    if "conversation" not in cfg:
-        cfg["conversation"] = {}
-    cfg["conversation"]["memory_enabled"] = enable
-    if "custom_settings" not in cfg:
-        cfg["custom_settings"] = {}
-    cfg["custom_settings"]["memory_notes"] = memory_notes
-    confab.config = cfg
+    # Use setup_progress to store memory settings
+    progress = confab.setup_progress or {}
+    if "conversation" not in progress:
+        progress["conversation"] = {}
+    progress["conversation"]["memory_enabled"] = enable
+    progress["memory_notes"] = memory_notes
+    confab.setup_progress = progress
     db.commit()
     mark_step_complete(db, confab_id, 3)
     return "Memory configuration updated."
@@ -1192,13 +1196,14 @@ def add_tools_and_apis(db: Session, confab_id: int, tool_name: str, api_key: str
     confab = db.query(Confab).filter(Confab.id == confab_id).first()
     if not confab:
         return "Confab not found."
-    cfg = confab.config or {}
-    integrations = cfg.get("integrations", {}).get("apis", [])
+    # Use setup_progress to store integrations
+    progress = confab.setup_progress or {}
+    integrations = progress.get("integrations", {}).get("apis", [])
     integrations.append({"name": tool_name, "key": api_key})
-    if "integrations" not in cfg:
-        cfg["integrations"] = {}
-    cfg["integrations"]["apis"] = integrations
-    confab.config = cfg
+    if "integrations" not in progress:
+        progress["integrations"] = {}
+    progress["integrations"]["apis"] = integrations
+    confab.setup_progress = progress
     db.commit()
     mark_step_complete(db, confab_id, 4)
     return "Tool/API added."
@@ -1242,12 +1247,10 @@ def guardrails(db: Session, confab_id: int, guardrails_text: str) -> str:
     confab.guardrails = rules
     logger.info(f"Saved {len(rules)} guardrails to database for confab {confab_id}")
 
-    # Also save to config for backwards compatibility
-    cfg = confab.config or {}
-    if "custom_settings" not in cfg:
-        cfg["custom_settings"] = {}
-    cfg["custom_settings"]["guardrails"] = guardrails_text
-    confab.config = cfg
+    # Also save raw text to setup_progress for reference
+    progress = confab.setup_progress or {}
+    progress["guardrails_text"] = guardrails_text
+    confab.setup_progress = progress
     db.commit()
     mark_step_complete(db, confab_id, 5)
     return "Guardrails saved."
@@ -1257,11 +1260,10 @@ def sample_io(db: Session, confab_id: int, sample_text: str) -> str:
     confab = db.query(Confab).filter(Confab.id == confab_id).first()
     if not confab:
         return "Confab not found."
-    cfg = confab.config or {}
-    if "custom_settings" not in cfg:
-        cfg["custom_settings"] = {}
-    cfg["custom_settings"]["sample_io"] = sample_text
-    confab.config = cfg
+    # Use setup_progress to store sample I/O
+    progress = confab.setup_progress or {}
+    progress["sample_io"] = sample_text
+    confab.setup_progress = progress
     db.commit()
     mark_step_complete(db, confab_id, 6)
     return "Sample I/O recorded."
