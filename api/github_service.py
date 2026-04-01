@@ -16,7 +16,7 @@ import os
 import httpx
 import asyncio
 from base64 import b64encode, b64decode
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union, Tuple
 from datetime import datetime
 import logging
 
@@ -47,6 +47,11 @@ class FileNotFoundError(GitHubServiceError):
 
 class PRNotFoundError(GitHubServiceError):
     """Pull request does not exist."""
+    pass
+
+
+class RepoNotFoundError(GitHubServiceError):
+    """Repository does not exist."""
     pass
 
 
@@ -158,6 +163,86 @@ class GitHubService:
         self._default_branch = response.json()["default_branch"]
         return self._default_branch
 
+    # ==================== Repository Operations ====================
+
+    async def repo_exists(self) -> bool:
+        """Check if the repository exists and is accessible."""
+        response = await self._request(
+            "GET",
+            f"/repos/{self.repo_path}",
+            retry=False
+        )
+        return response.status_code == 200
+
+    async def create_repo(
+        self,
+        description: str = "Repository for confabs created via Let's Confab",
+        private: bool = False
+    ) -> Dict[str, Any]:
+        """Create the repository if it does not exist.
+
+        Note: Creates under the authenticated user's personal account.
+        For org repos, the org admin must create the repo manually.
+        """
+        repo_data = {
+            "name": self.repo_name,
+            "description": description,
+            "private": private,
+            "auto_init": True,
+        }
+
+        response = await self._request("POST", "/user/repos", json=repo_data)
+
+        if response.status_code == 201:
+            logger.info(f"Created repository {self.repo_path}")
+            return response.json()
+
+        # Handle concurrent creation race condition (422 = already exists)
+        if response.status_code == 422:
+            error_data = response.json()
+            if "already exists" in str(error_data).lower():
+                logger.info(f"Repository {self.repo_name} already exists (concurrent creation)")
+                return {"name": self.repo_name, "full_name": self.repo_path}
+
+        error_data = response.json()
+        raise GitHubServiceError(
+            f"Failed to create repository: {error_data.get('message', 'Unknown error')}"
+        )
+
+    async def ensure_repo_exists(
+        self,
+        description: str = "Repository for confabs created via Let's Confab",
+        private: bool = False,
+        auto_create_only_default: bool = True
+    ) -> Tuple[bool, Optional[str]]:
+        """Ensure the repository exists, creating it if necessary.
+
+        Args:
+            description: Repository description (used if creating)
+            private: Whether new repo should be private
+            auto_create_only_default: If True, only auto-create if repo_name is "confabs"
+
+        Returns:
+            Tuple of (success: bool, error_message: Optional[str])
+        """
+        if await self.repo_exists():
+            return True, None
+
+        # Only auto-create the default "confabs" repo
+        if auto_create_only_default and self.repo_name != "confabs":
+            return False, f"Repository '{self.repo_name}' not found. Please create it on GitHub or use the default 'confabs' repository."
+
+        logger.info(f"Repository {self.repo_path} not found, attempting to create")
+        try:
+            await self.create_repo(description=description, private=private)
+            # Wait briefly for GitHub to propagate the repo
+            await asyncio.sleep(1.0)
+            return True, None
+        except GitHubServiceError as e:
+            error_msg = str(e)
+            logger.warning(f"Failed to create repository {self.repo_path}: {error_msg}")
+            return False, error_msg
+
     # ==================== Branch Operations ====================
 
     async def branch_exists(self, branch_name: str) -> bool:
@@ -169,19 +254,23 @@ class GitHubService:
         )
         return response.status_code == 200
 
-    async def get_or_create_branch(self, confab_id: int) -> str:
+    async def get_or_create_branch(self, confab_id_or_branch: Union[int, str]) -> str:
         """
         Get or create a confab-specific branch.
 
-        Uses persistent branch strategy: confab-{confab_id}
+        Uses persistent branch strategy: confab-{confab_id}.
+        If a branch name is provided directly, it will be used as-is.
 
         Args:
-            confab_id: The confab ID
+            confab_id_or_branch: Confab ID or explicit branch name
 
         Returns:
             Branch name
         """
-        branch_name = f"confab-{confab_id}"
+        if isinstance(confab_id_or_branch, str):
+            branch_name = confab_id_or_branch
+        else:
+            branch_name = f"confab-{confab_id_or_branch}"
 
         if await self.branch_exists(branch_name):
             logger.info(f"Branch {branch_name} already exists")
@@ -387,6 +476,104 @@ class GitHubService:
 
         logger.info(f"{'Updated' if existing_sha else 'Created'} file {path} on {branch}")
         return response.json()
+
+    async def create_or_update_files_batch(
+        self,
+        files: Dict[str, str],
+        branch: str,
+        message: str
+    ) -> Dict[str, Any]:
+        """
+        Create or update multiple files in a single commit on a branch.
+
+        Args:
+            files: Mapping of file_path -> content
+            branch: Branch name
+            message: Commit message
+
+        Returns:
+            Dict with commit and ref update information
+        """
+        if not files:
+            raise GitHubServiceError("No files provided for batch commit")
+
+        # 1) Resolve branch HEAD commit SHA
+        ref_resp = await self._request(
+            "GET",
+            f"/repos/{self.repo_path}/git/ref/heads/{branch}"
+        )
+        if ref_resp.status_code != 200:
+            raise GitHubServiceError(f"Failed to read branch ref: {ref_resp.text}")
+        head_sha = ref_resp.json()["object"]["sha"]
+
+        # 2) Get base tree SHA from current HEAD commit
+        commit_resp = await self._request(
+            "GET",
+            f"/repos/{self.repo_path}/git/commits/{head_sha}"
+        )
+        if commit_resp.status_code != 200:
+            raise GitHubServiceError(f"Failed to read current commit: {commit_resp.text}")
+        base_tree_sha = commit_resp.json()["tree"]["sha"]
+
+        # 3) Create blobs for each file
+        tree_entries: List[Dict[str, str]] = []
+        for path, content in files.items():
+            blob_resp = await self._request(
+                "POST",
+                f"/repos/{self.repo_path}/git/blobs",
+                json={"content": content, "encoding": "utf-8"}
+            )
+            if blob_resp.status_code != 201:
+                raise GitHubServiceError(f"Failed to create blob for {path}: {blob_resp.text}")
+            blob_sha = blob_resp.json()["sha"]
+            tree_entries.append({
+                "path": path,
+                "mode": "100644",
+                "type": "blob",
+                "sha": blob_sha,
+            })
+
+        # 4) Create a new tree from base tree + updated file blobs
+        tree_resp = await self._request(
+            "POST",
+            f"/repos/{self.repo_path}/git/trees",
+            json={"base_tree": base_tree_sha, "tree": tree_entries}
+        )
+        if tree_resp.status_code != 201:
+            raise GitHubServiceError(f"Failed to create tree: {tree_resp.text}")
+        new_tree_sha = tree_resp.json()["sha"]
+
+        # 5) Create commit
+        new_commit_resp = await self._request(
+            "POST",
+            f"/repos/{self.repo_path}/git/commits",
+            json={
+                "message": message,
+                "tree": new_tree_sha,
+                "parents": [head_sha],
+            }
+        )
+        if new_commit_resp.status_code != 201:
+            raise GitHubServiceError(f"Failed to create commit: {new_commit_resp.text}")
+        new_commit = new_commit_resp.json()
+        new_commit_sha = new_commit["sha"]
+
+        # 6) Move branch ref to new commit
+        update_ref_resp = await self._request(
+            "PATCH",
+            f"/repos/{self.repo_path}/git/refs/heads/{branch}",
+            json={"sha": new_commit_sha, "force": False}
+        )
+        if update_ref_resp.status_code != 200:
+            raise GitHubServiceError(f"Failed to update branch ref: {update_ref_resp.text}")
+
+        logger.info(f"Created batch commit on {branch}: {new_commit_sha}")
+        return {
+            "commit_sha": new_commit_sha,
+            "commit_url": new_commit.get("url"),
+            "files_count": len(files),
+            "branch": branch,
+        }
 
     async def list_directory(self, path: str, branch: Optional[str] = None) -> List[Dict[str, Any]]:
         """

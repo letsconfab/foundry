@@ -160,6 +160,19 @@ class ApiClient {
     });
   }
 
+  async refreshDefinitionFiles(confabId) {
+    return this.request(`/confabs/${confabId}/definition-files/refresh`, {
+      method: 'POST',
+    });
+  }
+
+  async acceptAndCommitDefinitionFiles(confabId, payload = {}) {
+    return this.request(`/confabs/${confabId}/definition-files/accept-and-commit`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // REMOVED: testRepoInitialization - endpoint no longer exists
 
   // Threads & messages (review chats) — tables: users, threads, messages

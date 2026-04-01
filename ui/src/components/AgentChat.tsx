@@ -1,6 +1,7 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat, Pencil, Check, Trash2, FileText } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat, Pencil, Check, Trash2, FileText, RefreshCw, Eye, CheckCircle2, AlertTriangle, GitBranch } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -59,6 +60,116 @@ interface AgentNode {
   name: string;
   role: string;
 }
+
+// Definition Files types and helpers
+type DefinitionFileKey = 'purpose' | 'guardrails';
+type DefinitionFileStatus = 'hidden' | 'uncommitted' | 'locally-modified' | 'ready-to-push' | 'up-to-date';
+
+interface DefinitionFileState {
+  key: DefinitionFileKey;
+  fileName: 'PURPOSE.md' | 'GUARDRAILS.md';
+  content: string;
+  savedContent: string;
+  remoteContent: string | null;
+  isEditing: boolean;
+  visible: boolean;
+  acceptedForCommit: boolean;
+}
+
+interface ConfabRecord {
+  id: number;
+  name: string;
+  version: string;
+  purpose?: string | null;
+  guardrails?: Array<{ id: string; rule: string; severity: string; enabled: boolean }> | null;
+  github_synced_at?: string | null;
+  github_path?: string | null;
+}
+
+interface RefreshDefinitionResponse {
+  confab_id: number;
+  purpose: string | null;
+  guardrails_markdown: string | null;
+  remote_branch: string | null;
+  remote_source: 'branch' | 'default' | 'none' | null;
+  refreshed_at: string;
+}
+
+interface CommitDefinitionResponse {
+  confab_id: number;
+  branch?: string | null;
+  folder_path?: string | null;
+  committed_files: string[];
+  commit_sha?: string | null;
+  status: 'committed' | 'no-op' | 'saved-locally';
+  synced_at: string;
+  message?: string | null;
+}
+
+interface DefinitionConflict {
+  fileKey: DefinitionFileKey;
+  local: string;
+  remote: string;
+  mode: 'choose' | 'manual';
+  merged: string;
+}
+
+const PURPOSE_TEMPLATE = (name: string, firstUserInput: string) => `# ${name} Purpose
+
+## Overview
+${firstUserInput || 'Define what this confab should accomplish for users.'}
+
+## Primary Objectives
+- Clarify expected outcomes for this confab
+- Keep behavior consistent and measurable
+- Document constraints and boundaries
+`;
+
+const guardrailsToMarkdown = (name: string, guardrails: Array<{ id: string; rule: string; severity: string; enabled: boolean }> | null | undefined) => {
+  if (!guardrails || guardrails.length === 0) {
+    return `# Guardrails for ${name}\n\n_No guardrails defined yet._\n`;
+  }
+
+  const lines = [`# Guardrails for ${name}`, '', '## Rules', ''];
+  guardrails.forEach((g, idx) => {
+    lines.push(`${idx + 1}. ${g.rule}`);
+    lines.push(`   - severity: \`${g.severity || 'error'}\``);
+    lines.push(`   - status: \`${g.enabled === false ? 'disabled' : 'enabled'}\``);
+  });
+  lines.push('');
+  return lines.join('\n');
+};
+
+const guardrailsFromMarkdown = (markdown: string) => {
+  const rules: Array<{ id: string; rule: string; severity: 'error' | 'warning' | 'info'; enabled: boolean }> = [];
+  const lines = (markdown || '').split('\n');
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    const numbered = trimmed.match(/^\d+\.\s+(.*)$/);
+    const bulleted = trimmed.match(/^[-*]\s+(.*)$/);
+    const match = numbered || bulleted;
+    if (!match) return;
+    const value = match[1].trim();
+    if (!value || value.startsWith('severity:') || value.startsWith('status:')) return;
+    rules.push({
+      id: `gr-${rules.length + 1}`,
+      rule: value,
+      severity: 'error',
+      enabled: true,
+    });
+  });
+
+  if (rules.length === 0 && markdown.trim()) {
+    rules.push({
+      id: 'gr-1',
+      rule: markdown.trim(),
+      severity: 'error',
+      enabled: true,
+    });
+  }
+
+  return rules;
+};
 
 // the server prepends the following system prompt to every chat request:
 //
@@ -155,6 +266,38 @@ Let's start with the most important part: **What would you like this agent to do
 
   // Chat ready state (replaces LLM health check - API is assumed available)
   const [chatReady, setChatReady] = useState(true);
+
+  // Definition Files state
+  const [confabRecord, setConfabRecord] = useState<ConfabRecord | null>(null);
+  const [definitionFiles, setDefinitionFiles] = useState<Record<DefinitionFileKey, DefinitionFileState>>({
+    purpose: {
+      key: 'purpose',
+      fileName: 'PURPOSE.md',
+      content: '',
+      savedContent: '',
+      remoteContent: null,
+      isEditing: false,
+      visible: false,
+      acceptedForCommit: false,
+    },
+    guardrails: {
+      key: 'guardrails',
+      fileName: 'GUARDRAILS.md',
+      content: '',
+      savedContent: '',
+      remoteContent: null,
+      isEditing: false,
+      visible: false,
+      acceptedForCommit: false,
+    },
+  });
+  const [definitionLoading, setDefinitionLoading] = useState(false);
+  const [definitionError, setDefinitionError] = useState<string | null>(null);
+  const [isCommittingDefinitions, setIsCommittingDefinitions] = useState(false);
+  const [definitionCommitInfo, setDefinitionCommitInfo] = useState<string | null>(null);
+  const [remoteBranchHint, setRemoteBranchHint] = useState<string | null>(null);
+  const [definitionConflict, setDefinitionConflict] = useState<DefinitionConflict | null>(null);
+  const [showRegistryTokenBanner, setShowRegistryTokenBanner] = useState(false);
 
   // Load existing confab data if resuming
   useEffect(() => {
@@ -270,6 +413,46 @@ Let's start with the most important part: **What would you like this agent to do
 
     return () => { cancelled = true; };
   }, [currentConfabId]);
+
+  // Load confab definition data when confab is available (wait for existing confab to finish loading first)
+  useEffect(() => {
+    if (!currentConfabId || isLoadingExisting) return;
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      await loadConfabDefinitionData(currentConfabId);
+      if (!cancelled) {
+        await refreshDefinitionFromRemote(currentConfabId);
+      }
+    };
+
+    bootstrap();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentConfabId, isLoadingExisting]);
+
+  // Auto-create purpose draft from first user message
+  useEffect(() => {
+    // As soon as first question is answered, create a purpose draft if none exists yet.
+    const firstUserMessage = messages.find((m) => m.role === 'user');
+    if (!firstUserMessage) return;
+
+    setDefinitionFiles((prev) => {
+      if (prev.purpose.content.trim()) return prev;
+      const draft = PURPOSE_TEMPLATE(confabRecord?.name || confabName, firstUserMessage.content);
+      return {
+        ...prev,
+        purpose: {
+          ...prev.purpose,
+          content: draft,
+          savedContent: prev.purpose.savedContent || draft,
+          visible: true,
+        },
+      };
+    });
+  }, [messages, confabName, confabRecord?.name]);
 
   // Start editing the confab name
   const startEditingName = () => {
@@ -563,6 +746,292 @@ Let's start with the most important part: **What would you like this agent to do
     }
   };
 
+  // Definition Files functions
+  const getDefinitionFileStatus = (file: DefinitionFileState): DefinitionFileStatus => {
+    if (!file.visible) return 'hidden';
+    if (file.acceptedForCommit) return 'ready-to-push';
+    const remote = file.remoteContent;
+    const current = file.content.trim();
+    if (!remote || remote.trim() === '') return 'uncommitted';
+    if (current !== remote.trim()) return 'locally-modified';
+    return 'up-to-date';
+  };
+
+  const updateDefinitionFile = (fileKey: DefinitionFileKey, updater: (prev: DefinitionFileState) => DefinitionFileState) => {
+    setDefinitionFiles((prev) => ({
+      ...prev,
+      [fileKey]: updater(prev[fileKey]),
+    }));
+  };
+
+  const loadConfabDefinitionData = async (id: number) => {
+    setDefinitionLoading(true);
+    setDefinitionError(null);
+    try {
+      const confab: ConfabRecord = await apiClient.getConfab(id);
+      setConfabRecord(confab);
+      const purpose = confab.purpose || '';
+      const guardrailsMd = confab.guardrails && confab.guardrails.length > 0
+        ? guardrailsToMarkdown(confab.name || confabName, confab.guardrails || [])
+        : '';
+
+      setDefinitionFiles((prev) => ({
+        ...prev,
+        purpose: {
+          ...prev.purpose,
+          content: purpose,
+          savedContent: purpose,
+          visible: prev.purpose.visible || purpose.trim().length > 0,
+          acceptedForCommit: false,
+        },
+        guardrails: {
+          ...prev.guardrails,
+          content: guardrailsMd,
+          savedContent: guardrailsMd,
+          visible: prev.guardrails.visible || guardrailsMd.trim().length > 0,
+          acceptedForCommit: false,
+        },
+      }));
+      setGithubConnected(!!confab.github_path);
+    } catch (err: unknown) {
+      setDefinitionError(err instanceof Error ? err.message : 'Failed to load confab definition');
+    } finally {
+      setDefinitionLoading(false);
+    }
+  };
+
+  const refreshDefinitionFromRemote = async (id: number) => {
+    try {
+      const remote: RefreshDefinitionResponse = await apiClient.refreshDefinitionFiles(id);
+      setShowRegistryTokenBanner(false);
+      setRemoteBranchHint(remote.remote_branch || null);
+
+      const incoming: Partial<Record<DefinitionFileKey, string>> = {
+        purpose: remote.purpose || '',
+        guardrails: remote.guardrails_markdown || '',
+      };
+      let hasConflict = false;
+
+      (['purpose', 'guardrails'] as DefinitionFileKey[]).forEach((fileKey) => {
+        const remoteContent = incoming[fileKey] ?? '';
+        if (!remoteContent.trim()) return;
+
+        const localFile = definitionFiles[fileKey];
+        const localUnsaved = localFile.content !== localFile.savedContent;
+        const remoteDiffersFromLocal = localFile.content.trim() !== remoteContent.trim();
+
+        if (localUnsaved && remoteDiffersFromLocal) {
+          hasConflict = true;
+          setDefinitionConflict({
+            fileKey,
+            local: localFile.content,
+            remote: remoteContent,
+            mode: 'choose',
+            merged: localFile.content,
+          });
+          return;
+        }
+
+        setDefinitionFiles((prev) => ({
+          ...prev,
+          [fileKey]: {
+            ...prev[fileKey],
+            content: remoteContent,
+            savedContent: remoteContent,
+            remoteContent,
+            visible: true,
+            acceptedForCommit: false,
+          },
+        }));
+      });
+
+      // Only reload from DB if we actually applied remote content (not when remote was empty)
+      const hasRemoteContent = (incoming.purpose?.trim() || incoming.guardrails?.trim());
+      if (!hasConflict && hasRemoteContent) {
+        await loadConfabDefinitionData(id);
+      }
+    } catch (err: unknown) {
+      // Remote refresh is best effort; local editing should continue.
+      const message = err instanceof Error ? err.message : 'Failed to refresh definition files from GitHub';
+      setDefinitionError(message);
+      if (!user?.github_connected && message.toLowerCase().includes('registry sync token missing')) {
+        setShowRegistryTokenBanner(true);
+      }
+    }
+  };
+
+  const toggleDefinitionEdit = (fileKey: DefinitionFileKey, isEditing: boolean) => {
+    updateDefinitionFile(fileKey, (prev) => ({ ...prev, isEditing }));
+  };
+
+  const handleDefinitionContentChange = (fileKey: DefinitionFileKey, content: string) => {
+    updateDefinitionFile(fileKey, (prev) => ({
+      ...prev,
+      content,
+      visible: prev.visible || content.trim().length > 0,
+      acceptedForCommit: false,
+    }));
+  };
+
+  const saveDefinitionFile = async (fileKey: DefinitionFileKey) => {
+    if (!currentConfabId) return;
+    setDefinitionError(null);
+
+    try {
+      const file = definitionFiles[fileKey];
+      const updatePayload: Record<string, unknown> = {};
+
+      if (fileKey === 'purpose') {
+        updatePayload.purpose = file.content;
+      } else {
+        updatePayload.guardrails = guardrailsFromMarkdown(file.content);
+      }
+
+      await apiClient.updateConfab(currentConfabId, updatePayload);
+      const refreshed: ConfabRecord = await apiClient.getConfab(currentConfabId);
+      setConfabRecord(refreshed);
+
+      const nextSaved = file.content;
+      updateDefinitionFile(fileKey, (prev) => ({
+        ...prev,
+        savedContent: nextSaved,
+        visible: true,
+        isEditing: false,
+        acceptedForCommit: false,
+      }));
+      setShowRegistryTokenBanner(false);
+    } catch (err: unknown) {
+      setDefinitionError(err instanceof Error ? err.message : 'Failed to save file');
+    }
+  };
+
+  const saveAllPendingDefinitionEdits = async () => {
+    if (!currentConfabId) return;
+    const purposeChanged = definitionFiles.purpose.content !== definitionFiles.purpose.savedContent;
+    const guardrailsChanged = definitionFiles.guardrails.content !== definitionFiles.guardrails.savedContent;
+
+    if (!purposeChanged && !guardrailsChanged) return;
+
+    const updatePayload: Record<string, unknown> = {};
+    if (purposeChanged) updatePayload.purpose = definitionFiles.purpose.content;
+    if (guardrailsChanged) updatePayload.guardrails = guardrailsFromMarkdown(definitionFiles.guardrails.content);
+
+    await apiClient.updateConfab(currentConfabId, updatePayload);
+    const refreshed: ConfabRecord = await apiClient.getConfab(currentConfabId);
+    setConfabRecord(refreshed);
+
+    setDefinitionFiles((prev) => ({
+      ...prev,
+      purpose: purposeChanged
+        ? { ...prev.purpose, savedContent: prev.purpose.content }
+        : prev.purpose,
+      guardrails: guardrailsChanged
+        ? { ...prev.guardrails, savedContent: prev.guardrails.content }
+        : prev.guardrails,
+    }));
+  };
+
+  const handleAcceptChangesAndCommit = async () => {
+    if (!currentConfabId) return;
+    setDefinitionError(null);
+    setDefinitionCommitInfo(null);
+    setIsCommittingDefinitions(true);
+
+    const purposeShouldCommit = definitionFiles.purpose.visible && definitionFiles.purpose.content.trim().length > 0;
+    const guardrailsShouldCommit = definitionFiles.guardrails.visible && definitionFiles.guardrails.content.trim().length > 0;
+
+    setDefinitionFiles((prev) => ({
+      ...prev,
+      purpose: purposeShouldCommit ? { ...prev.purpose, acceptedForCommit: true } : prev.purpose,
+      guardrails: guardrailsShouldCommit ? { ...prev.guardrails, acceptedForCommit: true } : prev.guardrails,
+    }));
+
+    try {
+      await saveAllPendingDefinitionEdits();
+      const response: CommitDefinitionResponse = await apiClient.acceptAndCommitDefinitionFiles(currentConfabId, {
+        commit_message: `accept-changes-and-commit ${confabRecord?.name || confabName}`,
+        include_purpose: purposeShouldCommit,
+        include_guardrails: guardrailsShouldCommit,
+      });
+      setShowRegistryTokenBanner(false);
+
+      const committedSet = new Set(response.committed_files || []);
+      setDefinitionFiles((prev) => ({
+        ...prev,
+        purpose: {
+          ...prev.purpose,
+          acceptedForCommit: false,
+          remoteContent: committedSet.has('PURPOSE.md') ? prev.purpose.content : prev.purpose.remoteContent,
+        },
+        guardrails: {
+          ...prev.guardrails,
+          acceptedForCommit: false,
+          remoteContent: committedSet.has('GUARDRAILS.md') ? prev.guardrails.content : prev.guardrails.remoteContent,
+        },
+      }));
+
+      if (response.status === 'saved-locally') {
+        setDefinitionCommitInfo('Saved locally. ' + (response.message || 'GitHub sync unavailable.'));
+        setRemoteBranchHint(null);
+      } else if (response.status === 'no-op') {
+        setDefinitionCommitInfo('No file changes to commit.');
+        setRemoteBranchHint(response.branch || null);
+      } else {
+        setDefinitionCommitInfo(
+          `Committed ${response.committed_files.length} file(s) on ${response.branch}${response.commit_sha ? ` (${response.commit_sha.slice(0, 7)})` : ''}.`
+        );
+        setRemoteBranchHint(response.branch || null);
+      }
+      await loadConfabDefinitionData(currentConfabId);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to commit definition files';
+      setDefinitionError(message);
+      if (!user?.github_connected && message.toLowerCase().includes('registry sync token missing')) {
+        setShowRegistryTokenBanner(true);
+      }
+    } finally {
+      setIsCommittingDefinitions(false);
+    }
+  };
+
+  const applyConflictResolution = async (action: 'use-local' | 'use-remote' | 'manual') => {
+    if (!definitionConflict) return;
+    const { fileKey, local, remote, merged } = definitionConflict;
+
+    if (action === 'use-local') {
+      updateDefinitionFile(fileKey, (prev) => ({
+        ...prev,
+        content: local,
+      }));
+    }
+
+    if (action === 'use-remote') {
+      updateDefinitionFile(fileKey, (prev) => ({
+        ...prev,
+        content: remote,
+        savedContent: remote,
+        remoteContent: remote,
+        acceptedForCommit: false,
+      }));
+    }
+
+    if (action === 'manual') {
+      updateDefinitionFile(fileKey, (prev) => ({
+        ...prev,
+        content: merged,
+      }));
+    }
+
+    setDefinitionConflict(null);
+  };
+
+  const statusBadgeClass = (status: DefinitionFileStatus) => {
+    if (status === 'up-to-date') return 'bg-green-100 text-green-700';
+    if (status === 'ready-to-push') return 'bg-blue-100 text-blue-700';
+    if (status === 'locally-modified') return 'bg-amber-100 text-amber-700';
+    if (status === 'uncommitted') return 'bg-slate-200 text-slate-700';
+    return 'bg-slate-100 text-slate-500';
+  };
 
 
   return (
@@ -884,8 +1353,154 @@ Let's start with the most important part: **What would you like this agent to do
           </Card>
         </div>
 
-        {/* Participants Sidebar — logged-in user only (name + email from users table) */}
-        <div className="lg:col-span-1">
+        {/* Right Sidebar */}
+        <div className="lg:col-span-1 space-y-4">
+          {/* Definition Files Card */}
+          <Card className="p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <GitBranch className="w-4 h-4 text-slate-700" />
+                <h3 className="text-slate-900 text-sm font-medium">Definition Files</h3>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1 text-xs h-7"
+                  disabled={!currentConfabId || definitionLoading}
+                  onClick={() => currentConfabId && refreshDefinitionFromRemote(currentConfabId)}
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Refresh
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-1 text-xs h-7"
+                  disabled={!currentConfabId || isCommittingDefinitions || (!definitionFiles.purpose.visible && !definitionFiles.guardrails.visible)}
+                  onClick={handleAcceptChangesAndCommit}
+                >
+                  {isCommittingDefinitions ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                  Commit
+                </Button>
+              </div>
+            </div>
+
+            {remoteBranchHint && (
+              <p className="text-xs text-slate-500 mb-2">
+                Branch: <span className="font-mono">{remoteBranchHint}</span>
+              </p>
+            )}
+
+            {definitionError && (
+              <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {definitionError}
+              </div>
+            )}
+
+            {definitionCommitInfo && (
+              <div className="mb-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+                {definitionCommitInfo}
+              </div>
+            )}
+
+            {showRegistryTokenBanner && !user?.github_connected && (
+              <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Email-login sync requires server configuration. Ask an admin to set `REGISTRY_GITHUB_TOKEN` for writes to `letsconfab/registry`.
+              </div>
+            )}
+
+            {definitionConflict && (
+              <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-700" />
+                  <p className="text-xs text-amber-900">
+                    Remote changes conflict with local edits in {definitionConflict.fileKey === 'purpose' ? 'PURPOSE.md' : 'GUARDRAILS.md'}.
+                  </p>
+                </div>
+                {definitionConflict.mode === 'manual' ? (
+                  <div className="space-y-2">
+                    <Textarea
+                      className="min-h-[120px] font-mono text-xs"
+                      value={definitionConflict.merged}
+                      onChange={(e) => setDefinitionConflict((prev) => prev ? { ...prev, merged: e.target.value } : prev)}
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" className="text-xs h-7" onClick={() => applyConflictResolution('manual')}>Apply Merge</Button>
+                      <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setDefinitionConflict((prev) => prev ? { ...prev, mode: 'choose' } : prev)}>Back</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => applyConflictResolution('use-local')}>Keep Local</Button>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => applyConflictResolution('use-remote')}>Use Remote</Button>
+                    <Button size="sm" className="text-xs h-7" onClick={() => setDefinitionConflict((prev) => prev ? ({ ...prev, mode: 'manual', merged: `${prev.local}\n\n<<<<<<< REMOTE\n${prev.remote}\n>>>>>>>` }) : prev)}>
+                      Manual Merge
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {(['purpose', 'guardrails'] as DefinitionFileKey[]).map((key) => {
+                const file = definitionFiles[key];
+                const status = getDefinitionFileStatus(file);
+                if (!file.visible) return null;
+                return (
+                  <div key={key} className="rounded-lg border border-slate-200 p-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-3 h-3 text-slate-600" />
+                        <span className="text-xs text-slate-900 font-medium">{file.fileName}</span>
+                        <Badge className={`text-[10px] px-1.5 py-0 ${statusBadgeClass(status)}`}>{status}</Badge>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0"
+                          onClick={() => toggleDefinitionEdit(key, !file.isEditing)}
+                        >
+                          {file.isEditing ? <Eye className="w-3 h-3" /> : <Pencil className="w-3 h-3" />}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0"
+                          disabled={!currentConfabId || file.content.trim().length === 0}
+                          onClick={() => saveDefinitionFile(key)}
+                        >
+                          <Save className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                    {file.isEditing ? (
+                      <Textarea
+                        className="min-h-[100px] font-mono text-xs"
+                        value={file.content}
+                        onChange={(e) => handleDefinitionContentChange(key, e.target.value)}
+                      />
+                    ) : (
+                      <div className="max-h-[150px] overflow-auto rounded border border-slate-100 bg-white p-2 prose prose-slate prose-sm max-w-none">
+                        {file.content.trim() ? (
+                          <ReactMarkdown>{file.content}</ReactMarkdown>
+                        ) : (
+                          <p className="text-xs text-slate-500">No content yet.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {!definitionFiles.purpose.visible && !definitionFiles.guardrails.visible && (
+                <p className="text-xs text-slate-500">
+                  Files will appear as the confab conversation generates drafts.
+                </p>
+              )}
+            </div>
+          </Card>
+
+          {/* Participants Card */}
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-4">
               <Users className="w-5 h-5 text-slate-900" />

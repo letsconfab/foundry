@@ -400,5 +400,38 @@ class GitHubSyncResponse(BaseModel):
     errors: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+# =============================================================================
+# Definition Files Schemas
+# =============================================================================
+
+class DefinitionFilesRefreshResponse(BaseModel):
+    """Refreshed PURPOSE.md and GUARDRAILS.md from GitHub."""
+    confab_id: int
+    purpose: Optional[str] = None
+    guardrails_markdown: Optional[str] = None
+    remote_branch: Optional[str] = None
+    remote_source: Optional[Literal["branch", "default", "none"]] = None
+    refreshed_at: datetime
+
+
+class DefinitionFilesCommitRequest(BaseModel):
+    """Commit selected definition files in one batch."""
+    commit_message: str = "accept-changes-and-commit"
+    include_purpose: bool = True
+    include_guardrails: bool = True
+
+
+class DefinitionFilesCommitResponse(BaseModel):
+    """Result of definition files batch commit."""
+    confab_id: int
+    branch: Optional[str] = None
+    folder_path: Optional[str] = None
+    committed_files: List[str] = Field(default_factory=list)
+    commit_sha: Optional[str] = None
+    status: Literal["committed", "no-op", "saved-locally"]
+    synced_at: datetime
+    message: Optional[str] = None
+
+
 # Forward reference update
 ThreadWithParticipants.model_rebuild()

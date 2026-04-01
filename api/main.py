@@ -17,9 +17,10 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional, List, Dict, Any, Tuple, Literal
 import datetime
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +43,12 @@ from schemas import (
     MessageCreate, MessageResponse, ChatRequest, ChatResponse,
     # Admin
     SystemStatusResponse, GitHubSyncRequest, GitHubSyncResponse,
+    # Definition files
+    DefinitionFilesRefreshResponse, DefinitionFilesCommitRequest, DefinitionFilesCommitResponse,
 )
 from auth import create_access_token, verify_token, get_password_hash, verify_password
 from github_oauth import github_auth_router, get_github_repos, get_github_primary_email
-from github_service import GitHubService
+from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from llm_service import ask_llm
 from foreman import Foreman
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
@@ -103,6 +106,149 @@ async def get_current_user(
 @app.get("/")
 async def root():
     return {"message": "Let's Confab API", "version": "2.0.0"}
+
+
+def _slugify(value: str) -> str:
+    """Slugify text for stable folder names."""
+    text = (value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    text = re.sub(r"-{2,}", "-", text).strip("-")
+    return text or "untitled-confab"
+
+
+def _normalize_repo_path(path: str) -> str:
+    return "/".join([p for p in path.replace("\\", "/").split("/") if p not in ("", ".")])
+
+
+def _is_path_within_prefix(path: str, prefix: str) -> bool:
+    """Path guard to ensure writes stay in a user-owned confab folder."""
+    normalized = _normalize_repo_path(path)
+    normalized_prefix = _normalize_repo_path(prefix)
+    if ".." in normalized.split("/"):
+        return False
+    return normalized == normalized_prefix or normalized.startswith(f"{normalized_prefix}/")
+
+
+def _guardrails_to_markdown(confab_name: str, guardrails: Optional[List[Dict[str, Any]]]) -> str:
+    """Render guardrails JSON into markdown."""
+    title = f"# Guardrails for {confab_name}\n\n"
+    if not guardrails:
+        return title + "_No guardrails defined yet._\n"
+
+    lines = [title, "## Rules\n"]
+    for idx, rule in enumerate(guardrails, 1):
+        if not isinstance(rule, dict):
+            continue
+        text = str(rule.get("rule", "")).strip()
+        if not text:
+            continue
+        severity = str(rule.get("severity", "error")).strip() or "error"
+        enabled = bool(rule.get("enabled", True))
+        status = "enabled" if enabled else "disabled"
+        lines.append(f"{idx}. {text}  \n")
+        lines.append(f"   - severity: `{severity}`  \n")
+        lines.append(f"   - status: `{status}`\n")
+    return "".join(lines).strip() + "\n"
+
+
+def _guardrails_from_markdown(markdown: str) -> List[Dict[str, Any]]:
+    """
+    Parse markdown into structured guardrail objects.
+    Accepts ordered list items (`1. rule`) and bullet items (`- rule`).
+    """
+    rules: List[Dict[str, Any]] = []
+    lines = (markdown or "").splitlines()
+    for line in lines:
+        stripped = line.strip()
+        numbered = re.match(r"^\d+\.\s+(.*)$", stripped)
+        bulleted = re.match(r"^[-*]\s+(.*)$", stripped)
+        match = numbered or bulleted
+        if not match:
+            continue
+        text = match.group(1).strip()
+        if not text or text.startswith("severity:") or text.startswith("status:"):
+            continue
+        rules.append({
+            "id": f"gr-{len(rules) + 1}",
+            "rule": text,
+            "severity": "error",
+            "enabled": True,
+        })
+
+    # Fallback for freeform markdown with no list lines.
+    if not rules and (markdown or "").strip():
+        rules.append({
+            "id": "gr-1",
+            "rule": (markdown or "").strip(),
+            "severity": "error",
+            "enabled": True,
+        })
+
+    return rules
+
+
+def _resolve_confab_namespace(current_user: User, github_account: Optional[GitHubAccount]) -> str:
+    if github_account and github_account.github_username:
+        return f"gh-{_slugify(github_account.github_username)}"
+    return f"u-{current_user.id}"
+
+
+def _resolve_or_set_confab_folder(
+    confab: Confab,
+    current_user: User,
+    github_account: Optional[GitHubAccount],
+    db: Session
+) -> str:
+    """Assign immutable confab folder path once and reuse forever."""
+    if confab.github_path:
+        return confab.github_path
+
+    confab_slug = _slugify(confab.name)
+    confab.github_path = f"{confab_slug}-c{confab.id}"
+    db.commit()
+    db.refresh(confab)
+    return confab.github_path
+
+
+def _resolve_github_target(
+    current_user: User,
+    confab: Confab,
+    db: Session
+) -> Tuple[GitHubService, str, Optional[GitHubAccount], bool]:
+    """
+    Resolve GitHub target/service.
+    - GitHub-connected users: selected repo.
+    - Email/password users: letsconfab/registry using service token.
+    """
+    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+
+    if github_account:
+        if not github_account.access_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub access token missing")
+        repo_owner = github_account.selected_org or github_account.github_username
+        repo_name = github_account.selected_repo
+        service = GitHubService(
+            access_token=github_account.access_token,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+        )
+        return service, f"confab-{confab.id}", github_account, False
+
+    registry_token = os.getenv("REGISTRY_GITHUB_TOKEN")
+    if not registry_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registry sync token missing. Set REGISTRY_GITHUB_TOKEN on the API server."
+        )
+
+    repo_owner = os.getenv("REGISTRY_REPO_OWNER", "letsconfab")
+    repo_name = os.getenv("REGISTRY_REPO_NAME", "registry")
+    service = GitHubService(
+        access_token=registry_token,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+    )
+    return service, f"confab-{confab.id}", github_account, True
 
 
 # =============================================================================
@@ -370,6 +516,260 @@ async def export_confab_oasf(
         "version": confab.version,
         "files": files
     }
+
+
+@app.post("/confabs/{confab_id}/definition-files/refresh", response_model=DefinitionFilesRefreshResponse)
+async def refresh_definition_files(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Pull latest PURPOSE.md and GUARDRAILS.md from GitHub and hydrate DB fields.
+    """
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    try:
+        github_service, branch_name, github_account, _ = _resolve_github_target(current_user, confab, db)
+    except HTTPException as e:
+        # GitHub not configured - return current DB state without remote sync
+        return DefinitionFilesRefreshResponse(
+            confab_id=confab.id,
+            purpose=confab.purpose,
+            guardrails_markdown=_guardrails_to_markdown(confab.name, confab.guardrails) if confab.guardrails else None,
+            remote_branch=None,
+            remote_source="none",
+            refreshed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+
+    confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db)
+    file_prefix = confab_folder
+
+    purpose_path = f"{file_prefix}/PURPOSE.md"
+    guardrails_path = f"{file_prefix}/GUARDRAILS.md"
+
+    purpose_content: Optional[str] = None
+    guardrails_md: Optional[str] = None
+    source: Literal["branch", "default", "none"] = "none"
+    source_branch: Optional[str] = None
+
+    # Try confab branch first (wrapped in try-except for repo access errors)
+    try:
+        purpose_content = await github_service.get_file_contents(purpose_path, branch=branch_name)
+        source = "branch"
+        source_branch = branch_name
+    except GitHubFileNotFoundError:
+        pass
+    except GitHubServiceError:
+        # Repo not accessible - return current DB state
+        return DefinitionFilesRefreshResponse(
+            confab_id=confab.id,
+            purpose=confab.purpose,
+            guardrails_markdown=_guardrails_to_markdown(confab.name, confab.guardrails) if confab.guardrails else None,
+            remote_branch=None,
+            remote_source="none",
+            refreshed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+
+    try:
+        guardrails_md = await github_service.get_file_contents(guardrails_path, branch=branch_name)
+        source = "branch"
+        source_branch = branch_name
+    except GitHubFileNotFoundError:
+        pass
+    except GitHubServiceError:
+        pass  # Continue with what we have
+
+    # Fallback to default branch if files were not found on confab branch
+    if purpose_content is None or guardrails_md is None:
+        try:
+            default_branch = await github_service.get_default_branch()
+            if purpose_content is None:
+                try:
+                    purpose_content = await github_service.get_file_contents(purpose_path, branch=default_branch)
+                    source = "default"
+                    source_branch = default_branch
+                except GitHubFileNotFoundError:
+                    pass
+            if guardrails_md is None:
+                try:
+                    guardrails_md = await github_service.get_file_contents(guardrails_path, branch=default_branch)
+                    source = "default"
+                    source_branch = default_branch
+                except GitHubFileNotFoundError:
+                    pass
+        except GitHubServiceError:
+            # Repo not accessible - continue with what we have from DB
+            pass
+
+    # Hydrate DB from remote files where available
+    changed = False
+    if purpose_content is not None and confab.purpose != purpose_content:
+        confab.purpose = purpose_content
+        changed = True
+    if guardrails_md is not None:
+        parsed_guardrails = _guardrails_from_markdown(guardrails_md)
+        if confab.guardrails != parsed_guardrails:
+            confab.guardrails = parsed_guardrails
+            changed = True
+
+    if changed:
+        db.commit()
+        db.refresh(confab)
+
+    return DefinitionFilesRefreshResponse(
+        confab_id=confab.id,
+        purpose=purpose_content,
+        guardrails_markdown=guardrails_md,
+        remote_branch=source_branch,
+        remote_source=source,
+        refreshed_at=datetime.datetime.now(datetime.timezone.utc),
+    )
+
+
+@app.post("/confabs/{confab_id}/definition-files/accept-and-commit", response_model=DefinitionFilesCommitResponse)
+async def accept_and_commit_definition_files(
+    confab_id: int,
+    request: DefinitionFilesCommitRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Commit PURPOSE.md and/or GUARDRAILS.md in a single batch commit.
+    """
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    # Check if there's content to save
+    has_purpose = request.include_purpose and confab.purpose and confab.purpose.strip()
+    has_guardrails = request.include_guardrails and confab.guardrails
+
+    if not has_purpose and not has_guardrails:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No definition files available to commit")
+
+    # Try to resolve GitHub target - if it fails, save locally only
+    github_service = None
+    branch_name = None
+    confab_folder = None
+    github_error_message = None
+
+    try:
+        github_service, _, github_account, _ = _resolve_github_target(current_user, confab, db)
+        confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db)
+
+        # Ensure repo exists before attempting operations (auto-creates "confabs" if needed)
+        repo_ok, repo_error = await github_service.ensure_repo_exists()
+        if not repo_ok:
+            return DefinitionFilesCommitResponse(
+                confab_id=confab.id,
+                branch=None,
+                folder_path=None,
+                committed_files=[],
+                commit_sha=None,
+                status="saved-locally",
+                synced_at=now,
+                message=repo_error or "Could not access or create GitHub repository.",
+            )
+
+        # Commit directly to the default branch (main)
+        branch_name = await github_service.get_default_branch()
+    except HTTPException as e:
+        github_error_message = "GitHub not configured. Connect your GitHub account or ask an admin to set REGISTRY_GITHUB_TOKEN."
+        github_service = None
+    except GitHubServiceError as e:
+        github_error_message = f"Cannot access GitHub repository: {str(e)}"
+        github_service = None
+
+    # If GitHub isn't available, return saved-locally status
+    if github_service is None:
+        return DefinitionFilesCommitResponse(
+            confab_id=confab.id,
+            branch=None,
+            folder_path=None,
+            committed_files=[],
+            commit_sha=None,
+            status="saved-locally",
+            synced_at=now,
+            message=github_error_message,
+        )
+
+    file_prefix = confab_folder
+    candidate_files: Dict[str, str] = {}
+    if has_purpose:
+        candidate_files[f"{file_prefix}/PURPOSE.md"] = confab.purpose
+    if has_guardrails:
+        guardrails_markdown = _guardrails_to_markdown(confab.name, confab.guardrails)
+        if guardrails_markdown.strip():
+            candidate_files[f"{file_prefix}/GUARDRAILS.md"] = guardrails_markdown
+
+    # Path guard enforcement
+    for path in candidate_files.keys():
+        if not _is_path_within_prefix(path, file_prefix):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Blocked file path outside allowed confab folder: {path}"
+            )
+
+    # Commit only files that differ from remote branch content
+    changed_files: Dict[str, str] = {}
+    committed_file_names: List[str] = []
+    for path, content in candidate_files.items():
+        remote_content: Optional[str] = None
+        try:
+            remote_content = await github_service.get_file_contents(path, branch=branch_name)
+        except GitHubFileNotFoundError:
+            remote_content = None
+
+        if remote_content != content:
+            changed_files[path] = content
+            committed_file_names.append(path.split("/")[-1])
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    if not changed_files:
+        confab.github_synced_at = now
+        confab.github_sync_version = confab.version
+        db.commit()
+        db.refresh(confab)
+        return DefinitionFilesCommitResponse(
+            confab_id=confab.id,
+            branch=branch_name,
+            folder_path=confab_folder,
+            committed_files=[],
+            commit_sha=None,
+            status="no-op",
+            synced_at=now,
+        )
+
+    base_commit_message = (request.commit_message or "accept-changes-and-commit").strip()
+    commit_message = f"Co Authored by foreman@letsconfab.org: {base_commit_message}"
+
+    result = await github_service.create_or_update_files_batch(
+        files=changed_files,
+        branch=branch_name,
+        message=commit_message
+    )
+
+    # Update sync metadata
+    confab.github_synced_at = now
+    confab.github_sync_version = confab.version
+    db.commit()
+    db.refresh(confab)
+
+    return DefinitionFilesCommitResponse(
+        confab_id=confab.id,
+        branch=branch_name,
+        folder_path=confab_folder,
+        committed_files=committed_file_names,
+        commit_sha=result.get("commit_sha"),
+        status="committed",
+        synced_at=now,
+    )
 
 
 @app.delete("/confabs/{confab_id}")
@@ -1059,10 +1459,6 @@ async def sync_to_github(
     db: Session = Depends(get_db)
 ):
     """Sync confabs to GitHub as OASF-compliant artifacts."""
-    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
-    if not github_account:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not connected")
-
     # Get confabs to sync
     query = db.query(Confab).filter(Confab.user_id == current_user.id)
     if request.confab_ids:
@@ -1073,37 +1469,34 @@ async def sync_to_github(
     failed = 0
     errors = []
 
-    # Initialize GitHub service
-    repo_owner = github_account.selected_org or github_account.github_username
-    repo_name = github_account.selected_repo
-
-    github_service = GitHubService(
-        access_token=github_account.access_token,
-        repo_owner=repo_owner,
-        repo_name=repo_name
-    )
-
     for confab in confabs:
         try:
+            github_service, branch_name, github_account, _ = _resolve_github_target(current_user, confab, db)
+
             # Generate OASF export files
             files = generate_all_export_files(confab, db)
 
-            # Determine confab folder path
-            confab_folder = confab.github_path or confab.name.lower().replace(" ", "-")
+            # Determine immutable confab folder path
+            confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db)
+            file_prefix = confab_folder
 
             # Get or create branch for this confab
-            branch_name = f"confab-{confab.id}"
             await github_service.get_or_create_branch(branch_name)
 
-            # Commit each file to GitHub
+            # Build path->content map and guard paths
+            batch_files: Dict[str, str] = {}
             for filename, content in files.items():
-                file_path = f"confabs/{confab_folder}/{filename}"
-                await github_service.create_or_update_file(
-                    path=file_path,
-                    content=content,
-                    message=f"Update {filename} for {confab.name} (v{confab.version})",
-                    branch=branch_name
-                )
+                file_path = f"{file_prefix}/{filename}"
+                if not _is_path_within_prefix(file_path, file_prefix):
+                    raise GitHubServiceError(f"Blocked file path outside allowed prefix: {file_path}")
+                batch_files[file_path] = content
+
+            # Commit all files in one batch commit
+            await github_service.create_or_update_files_batch(
+                files=batch_files,
+                branch=branch_name,
+                message=f"Sync confab {confab.name} (v{confab.version})"
+            )
 
             # Update sync state
             confab.oasf_yaml = files["agent.oasf.yaml"]
