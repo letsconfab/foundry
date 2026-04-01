@@ -608,6 +608,114 @@ class GitHubService:
 
         return data
 
+    async def delete_folder(self, folder_path: str, branch: Optional[str] = None, commit_message: Optional[str] = None) -> bool:
+        """
+        Delete a folder and all its contents from the repository.
+
+        GitHub API doesn't have a direct "delete folder" endpoint, so we need to:
+        1. List all files in the folder
+        2. Delete each file individually in a single commit using the Git Data API
+
+        Args:
+            folder_path: Path to the folder to delete
+            branch: Branch name (default: default branch)
+            commit_message: Optional commit message
+
+        Returns:
+            True if deleted successfully, False if folder doesn't exist
+        """
+        if branch is None:
+            branch = await self.get_default_branch()
+
+        # List all files in the folder
+        files = await self.list_directory(folder_path, branch)
+        if not files:
+            logger.info(f"Folder {folder_path} doesn't exist or is empty")
+            return False
+
+        # Collect all file paths (recursively)
+        all_files: List[str] = []
+        async def collect_files(path: str):
+            items = await self.list_directory(path, branch)
+            for item in items:
+                if item["type"] == "file":
+                    all_files.append(item["path"])
+                elif item["type"] == "dir":
+                    await collect_files(item["path"])
+
+        await collect_files(folder_path)
+
+        if not all_files:
+            logger.info(f"No files found in folder {folder_path}")
+            return False
+
+        # Use Git Data API to delete all files in a single commit
+        # 1. Get current commit SHA
+        ref_resp = await self._request("GET", f"/repos/{self.repo_path}/git/ref/heads/{branch}")
+        if ref_resp.status_code != 200:
+            raise GitHubServiceError(f"Failed to get branch ref: {ref_resp.text}")
+        head_sha = ref_resp.json()["object"]["sha"]
+
+        # 2. Get the current tree
+        commit_resp = await self._request("GET", f"/repos/{self.repo_path}/git/commits/{head_sha}")
+        if commit_resp.status_code != 200:
+            raise GitHubServiceError(f"Failed to get commit: {commit_resp.text}")
+        base_tree_sha = commit_resp.json()["tree"]["sha"]
+
+        # 3. Create a new tree that removes the files (by not including them)
+        # We need to get the full tree and filter out the files we want to delete
+        tree_resp = await self._request("GET", f"/repos/{self.repo_path}/git/trees/{base_tree_sha}?recursive=1")
+        if tree_resp.status_code != 200:
+            raise GitHubServiceError(f"Failed to get tree: {tree_resp.text}")
+
+        current_tree = tree_resp.json()["tree"]
+
+        # Filter out files that are in the folder we're deleting
+        new_tree = [
+            {"path": item["path"], "mode": item["mode"], "type": item["type"], "sha": item["sha"]}
+            for item in current_tree
+            if not item["path"].startswith(folder_path + "/") and item["path"] != folder_path
+        ]
+
+        # 4. Create the new tree
+        new_tree_resp = await self._request(
+            "POST",
+            f"/repos/{self.repo_path}/git/trees",
+            json={"tree": new_tree}
+        )
+        if new_tree_resp.status_code != 201:
+            raise GitHubServiceError(f"Failed to create tree: {new_tree_resp.text}")
+        new_tree_sha = new_tree_resp.json()["sha"]
+
+        # 5. Create the commit
+        if commit_message is None:
+            commit_message = f"Delete folder {folder_path}"
+
+        new_commit_resp = await self._request(
+            "POST",
+            f"/repos/{self.repo_path}/git/commits",
+            json={
+                "message": commit_message,
+                "tree": new_tree_sha,
+                "parents": [head_sha]
+            }
+        )
+        if new_commit_resp.status_code != 201:
+            raise GitHubServiceError(f"Failed to create commit: {new_commit_resp.text}")
+        new_commit_sha = new_commit_resp.json()["sha"]
+
+        # 6. Update the branch reference
+        update_ref_resp = await self._request(
+            "PATCH",
+            f"/repos/{self.repo_path}/git/refs/heads/{branch}",
+            json={"sha": new_commit_sha, "force": False}
+        )
+        if update_ref_resp.status_code != 200:
+            raise GitHubServiceError(f"Failed to update branch ref: {update_ref_resp.text}")
+
+        logger.info(f"Deleted folder {folder_path} with {len(all_files)} files")
+        return True
+
     # ==================== PR Operations ====================
 
     async def get_open_pr(self, branch: str) -> Optional[Dict[str, Any]]:
@@ -760,7 +868,8 @@ class GitHubService:
         file_name: str,
         content: str,
         confab_id: int,
-        message: Optional[str] = None
+        message: Optional[str] = None,
+        folder_path: Optional[str] = None
     ) -> str:
         """
         Commit a file to the confab directory and ensure PR exists.
@@ -771,11 +880,12 @@ class GitHubService:
         3. Ensures PR exists
 
         Args:
-            confab_name: Confab name (for directory path)
+            confab_name: Confab name (for directory path if folder_path not provided)
             file_name: File name (e.g., "PURPOSE.md")
             content: File content
             confab_id: Confab ID (for branch naming)
             message: Optional commit message
+            folder_path: Optional explicit folder path (e.g., "myconfab-c123")
 
         Returns:
             PR URL
@@ -783,9 +893,12 @@ class GitHubService:
         # Ensure branch exists
         branch = await self.get_or_create_branch(confab_id)
 
-        # Build file path
-        confab_dir = confab_name.lower().replace(" ", "-")
-        file_path = f"confabs/{confab_dir}/{file_name}"
+        # Build file path - use folder_path if provided, otherwise construct from name and id
+        if folder_path:
+            file_path = f"{folder_path}/{file_name}"
+        else:
+            confab_slug = confab_name.lower().replace(" ", "-")
+            file_path = f"{confab_slug}-c{confab_id}/{file_name}"
 
         # Create/update file
         if message is None:
@@ -806,7 +919,8 @@ class GitHubService:
         self,
         confab_name: str,
         confab_data: Dict[str, Any],
-        confab_id: int
+        confab_id: int,
+        folder_path: Optional[str] = None
     ) -> str:
         """
         Create all confab files (Confab.toml, PURPOSE.md, GUARDRAILS.md, TESTS.md).
@@ -815,6 +929,7 @@ class GitHubService:
             confab_name: Confab name
             confab_data: Confab data dict
             confab_id: Confab ID
+            folder_path: Optional explicit folder path (e.g., "myconfab-c123")
 
         Returns:
             PR URL
@@ -822,8 +937,12 @@ class GitHubService:
         # Ensure branch exists
         branch = await self.get_or_create_branch(confab_id)
 
-        confab_dir = confab_name.lower().replace(" ", "-")
-        base_path = f"confabs/{confab_dir}"
+        # Use folder_path if provided, otherwise construct from name and id
+        if folder_path:
+            base_path = folder_path
+        else:
+            confab_slug = confab_name.lower().replace(" ", "-")
+            base_path = f"{confab_slug}-c{confab_id}"
 
         # Prepare TOML content using string formatting (consistent with confab_manager.py)
         confab_toml = f"""[confab]

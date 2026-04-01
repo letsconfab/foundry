@@ -782,9 +782,36 @@ async def delete_confab(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
+    # Try to delete the GitHub folder if it exists
+    github_folder_deleted = False
+    if confab.github_path:
+        try:
+            github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+            if github_account and github_account.access_token:
+                repo_owner = github_account.selected_org or github_account.github_username
+                repo_name = github_account.selected_repo
+                github_service = GitHubService(
+                    access_token=github_account.access_token,
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                )
+                # Delete from main branch
+                github_folder_deleted = await github_service.delete_folder(
+                    folder_path=confab.github_path,
+                    commit_message=f"Delete confab: {confab.name}"
+                )
+                if github_folder_deleted:
+                    logger.info(f"Deleted GitHub folder {confab.github_path} for confab {confab_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete GitHub folder for confab {confab_id}: {e}")
+            # Continue with DB deletion even if GitHub deletion fails
+
     db.delete(confab)
     db.commit()
-    return {"message": "Confab deleted"}
+    return {
+        "message": "Confab deleted",
+        "github_folder_deleted": github_folder_deleted
+    }
 
 
 # =============================================================================

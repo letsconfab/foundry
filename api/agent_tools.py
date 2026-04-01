@@ -289,36 +289,43 @@ async def call_tool(name: str, arguments: dict):
         return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 
 def get_purpose(confab_id: int) -> Optional[str]:
-    """Get the purpose markdown for a confab from GitHub repo's confabs/{confab.name}/PURPOSE.md file."""
+    """Get the purpose markdown for a confab from GitHub repo's {github_path}/PURPOSE.md file."""
     print("get_purpose working successfully")
     try:
         from database import get_db
         db = next(get_db())
-        
+
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             print(f"Confab with ID {confab_id} not found")
             return None
-        
+
         # Ensure confab has a proper name
         confab_name = confab.name
         if not confab_name or confab_name.startswith("Agent Chat –"):
             print(f"Confab {confab_id} has improper name: {confab_name}")
             return None
-            
-        # Try to get from GitHub first (confabs/{confab.name}/PURPOSE.md)
+
+        # Use confab.github_path if available, otherwise construct it
+        if confab.github_path:
+            folder_path = confab.github_path
+        else:
+            from agent_runner import slugify
+            folder_path = f"{slugify(confab_name)}-c{confab_id}"
+
+        # Try to get from GitHub first
         github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
         if github_account:
             try:
                 print(f"Attempting to connect to GitHub for user {confab.user_id}")
-                
+
                 # Validate token before using it
                 if not github_account.access_token:
                     print("No GitHub access token found")
                     raise Exception("No GitHub access token available")
-                
+
                 g = Github(github_account.access_token)
-                
+
                 # Test the token validity
                 try:
                     user = g.get_user()
@@ -326,12 +333,12 @@ def get_purpose(confab_id: int) -> Optional[str]:
                 except Exception as token_error:
                     print(f"Invalid GitHub token: {token_error}")
                     raise Exception("GitHub token is invalid or expired")
-                
+
                 repo_name = f"{github_account.selected_org or github_account.github_username}/{github_account.selected_repo}"
                 print(f"Looking for repository: {repo_name}")
-                
+
                 repo = g.get_repo(repo_name)
-                purpose_file_path = f"confabs/{confab_name}/PURPOSE.md"
+                purpose_file_path = f"{folder_path}/PURPOSE.md"
                 purpose_file = repo.get_contents(purpose_file_path)
                 print(f"Successfully retrieved PURPOSE.md from {purpose_file_path}")
                 return purpose_file.decoded_content.decode('utf-8')
@@ -751,39 +758,49 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
         from confab_manager import create_github_repository
         from agent_runner import slugify
         db = next(get_db())
-        
+
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             print(f"Confab with ID {confab_id} not found in ensure_repo_and_purpose")
             return False
-        
+
         # Ensure confab has a proper slugified name
         if not confab.name or confab.name.startswith("Agent Chat –"):
             print(f"Confab {confab_id} has invalid name: {confab.name}")
             return False
-        
+
         # Ensure the confab name is slugified
         confab_name = slugify(confab.name)
         if confab.name != confab_name:
             confab.name = confab_name
             db.commit()
             print(f"Updated confab name to slugified version: {confab_name}")
-            
+
+        # Use confab.github_path if set, otherwise create it using the standard format
+        # This ensures consistency with main.py's _resolve_or_set_confab_folder
+        if confab.github_path:
+            folder_path = confab.github_path
+        else:
+            folder_path = f"{confab_name}-c{confab_id}"
+            confab.github_path = folder_path
+            db.commit()
+            print(f"Set confab.github_path to: {folder_path}")
+
         github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
         if not github_account:
             print("No GitHub account connected in ensure_repo_and_purpose")
             return False
-            
+
         try:
             print(f"Checking/creating repository for user {confab.user_id}")
-            
+
             # Validate token before using it
             if not github_account.access_token:
                 print("No GitHub access token found in ensure_repo_and_purpose")
                 return False
-            
+
             g = Github(github_account.access_token)
-            
+
             # Test the token validity first
             try:
                 user = g.get_user()
@@ -791,11 +808,11 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
             except Exception as token_error:
                 print(f"Invalid GitHub token in ensure_repo_and_purpose: {token_error}")
                 return False
-            
+
             repo_name = github_account.selected_repo
             repo_owner = github_account.selected_org or github_account.github_username
             full_repo_name = f"{repo_owner}/{repo_name}"
-            
+
             # Try to get the repository first
             try:
                 repo = g.get_repo(full_repo_name)
@@ -816,30 +833,30 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                 except Exception as create_error:
                     print(f"Failed to create repository {full_repo_name}: {create_error}")
                     return False
-            
+
             # Create or get confab-specific branch
             branch_name = create_confab_branch(repo, confab_id)
-            
-            # Check if this is the first time creating PURPOSE.md for this confab
-            purpose_file_path = f"confabs/{confab_name}/PURPOSE.md"
+
+            # Use the consistent folder_path for file operations
+            purpose_file_path = f"{folder_path}/PURPOSE.md"
             is_first_time = False
-            
+
             try:
                 # Try to get file from main branch to check if it exists
                 main_file = repo.get_contents(purpose_file_path, ref=repo.default_branch)
-                print(f"PURPOSE.md already exists in main branch")
+                print(f"PURPOSE.md already exists in main branch at {purpose_file_path}")
             except:
                 print(f"PURPOSE.md does not exist in main branch - first time creation")
                 is_first_time = True
-            
+
             # Update/create file in the confab branch
             try:
                 # Try to get file from the confab branch
                 file = repo.get_contents(purpose_file_path, ref=branch_name)
                 repo.update_file(
-                    purpose_file_path, 
-                    f"Update purpose for confab {confab_name}", 
-                    purpose_markdown, 
+                    purpose_file_path,
+                    f"Update purpose for confab {confab_name}",
+                    purpose_markdown,
                     file.sha,
                     branch=branch_name
                 )
@@ -848,8 +865,8 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                 # File might not exist in the branch, try to create it
                 try:
                     repo.create_file(
-                        purpose_file_path, 
-                        f"Create purpose for confab {confab_name}", 
+                        purpose_file_path,
+                        f"Create purpose for confab {confab_name}",
                         purpose_markdown,
                         branch=branch_name
                     )
@@ -857,7 +874,7 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                 except Exception as create_file_error:
                     print(f"Failed to create PURPOSE.md at {purpose_file_path}: {create_file_error}")
                     return False
-            
+
             # Handle pull request logic
             if is_first_time:
                 # First time - create PR and merge
@@ -886,7 +903,7 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                             if pr.head.ref == branch_name and pr.merged:
                                 merged_pr_found = True
                                 break
-                        
+
                         if merged_pr_found:
                             print("Previous PR was merged, creating new PR for updates")
                             pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
@@ -897,19 +914,19 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                         else:
                             print("No existing PR found and no merged PR - creating new PR")
                             pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
-                            
+
                     except Exception as pr_check_error:
                         print(f"Error checking PR history: {pr_check_error}")
                         # Fallback: create new PR
                         pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
-                
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error ensuring repo and purpose: {e}")
             print(f"Repository operation failed: {e}")
             return False
-            
+
     except Exception as e:
         logger.error(f"Error in ensure_repo_and_purpose: {e}")
         print(f"Error in ensure_repo_and_purpose: {e}")
@@ -945,27 +962,29 @@ def update_file_tool(confab_id: int, file_path: str, content: str) -> str:
             confab.name = confab_name
             db.commit()
             print(f"Updated confab name to slugified version: {confab_name}")
-            
+
+        # Use confab.github_path if set, otherwise create it using the standard format
+        if confab.github_path:
+            folder_path = confab.github_path
+        else:
+            folder_path = f"{confab_name}-c{confab_id}"
+            confab.github_path = folder_path
+            db.commit()
+            print(f"Set confab.github_path to: {folder_path}")
+
         github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
         if not github_account:
             return "No GitHub account connected"
-            
+
         repo_owner = github_account.selected_org or github_account.github_username
         repo_name = github_account.selected_repo
         full_repo_name = f"{repo_owner}/{repo_name}"
-        
-        # For PURPOSE.md, ensure it goes to confabs/{confab_name}/PURPOSE.md
-        if file_path == "PURPOSE.md":
-            file_path = f"confabs/{confab_name}/PURPOSE.md"
-            print(f"Set PURPOSE.md path to: {file_path}")
-        # For other files, if they don't already include the confabs prefix, add it
-        # Check if the path already starts with confabs/{confab_name}/ to prevent double prefixing
-        elif not file_path.startswith(f"confabs/{confab_name}/"):
-            original_path = file_path
-            file_path = f"confabs/{confab_name}/{file_path}"
-            print(f"Added confabs prefix to path: {original_path} -> {file_path}")
-        else:
-            print(f"Path already has confabs prefix: {file_path}")
+
+        # Normalize file path to use consistent folder structure
+        # Strip any existing path prefix and use the correct folder_path
+        base_filename = file_path.split("/")[-1]  # Get just the filename
+        file_path = f"{folder_path}/{base_filename}"
+        print(f"File path set to: {file_path}")
         
         # Use the new branch-based workflow
         try:
