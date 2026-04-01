@@ -784,27 +784,43 @@ async def delete_confab(
 
     # Try to delete the GitHub folder if it exists
     github_folder_deleted = False
-    if confab.github_path:
-        try:
-            github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
-            if github_account and github_account.access_token:
-                repo_owner = github_account.selected_org or github_account.github_username
-                repo_name = github_account.selected_repo
-                github_service = GitHubService(
-                    access_token=github_account.access_token,
-                    repo_owner=repo_owner,
-                    repo_name=repo_name,
-                )
-                # Delete from main branch
-                github_folder_deleted = await github_service.delete_folder(
-                    folder_path=confab.github_path,
+    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+
+    if github_account and github_account.access_token:
+        repo_owner = github_account.selected_org or github_account.github_username
+        repo_name = github_account.selected_repo
+        github_service = GitHubService(
+            access_token=github_account.access_token,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+        )
+
+        # Build list of potential folder paths to try deleting
+        # - Current format: confab.github_path (e.g., "myconfab-c123")
+        # - Legacy format: confabs/{name}/ (for older confabs created before path standardization)
+        paths_to_try = []
+        if confab.github_path:
+            paths_to_try.append(confab.github_path)
+
+        # Add legacy path format as fallback
+        if confab.name:
+            legacy_path = f"confabs/{_slugify(confab.name)}"
+            if legacy_path not in paths_to_try:
+                paths_to_try.append(legacy_path)
+
+        for folder_path in paths_to_try:
+            try:
+                deleted = await github_service.delete_folder(
+                    folder_path=folder_path,
                     commit_message=f"Delete confab: {confab.name}"
                 )
-                if github_folder_deleted:
-                    logger.info(f"Deleted GitHub folder {confab.github_path} for confab {confab_id}")
-        except Exception as e:
-            logger.warning(f"Failed to delete GitHub folder for confab {confab_id}: {e}")
-            # Continue with DB deletion even if GitHub deletion fails
+                if deleted:
+                    github_folder_deleted = True
+                    logger.info(f"Deleted GitHub folder {folder_path} for confab {confab_id}")
+                    break  # Successfully deleted, no need to try other paths
+            except Exception as e:
+                logger.warning(f"Failed to delete GitHub folder {folder_path} for confab {confab_id}: {e}")
+                # Continue trying other paths
 
     db.delete(confab)
     db.commit()

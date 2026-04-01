@@ -4,6 +4,7 @@ from models import Confab, GitHubAccount
 import logging
 import asyncio
 import os
+import re
 import datetime
 from github import Github
 from mcp.server import Server
@@ -778,10 +779,17 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
 
         # Use confab.github_path if set, otherwise create it using the standard format
         # This ensures consistency with main.py's _resolve_or_set_confab_folder
+        # Format: {slug}-c{id} where slug is alphanumeric with hyphens
         if confab.github_path:
             folder_path = confab.github_path
+            # Validate existing path format (should match {slug}-c{digits})
+            if not re.match(r'^[a-z0-9-]+-c\d+$', folder_path):
+                print(f"Warning: existing github_path '{folder_path}' doesn't match expected format")
         else:
             folder_path = f"{confab_name}-c{confab_id}"
+            # Validate the generated path
+            if not re.match(r'^[a-z0-9-]+-c\d+$', folder_path):
+                print(f"Warning: generated folder_path '{folder_path}' doesn't match expected format")
             confab.github_path = folder_path
             db.commit()
             print(f"Set confab.github_path to: {folder_path}")
@@ -942,20 +950,34 @@ class UpdateFileInput(BaseModel):
 
 @tool(args_schema=UpdateFileInput)
 def update_file_tool(confab_id: int, file_path: str, content: str) -> str:
-    """Update a file in GitHub repository using confab-specific branch workflow. This instruction is for updating any file and committing changes. Its primary objective is to facilitate the process of modifying or adding content to files in a structured manner within a project repository."""
+    """Update a file in GitHub repository using confab-specific branch workflow.
+
+    This tool updates or creates files in the confab's GitHub folder. Files are always
+    placed directly in the confab folder (e.g., {slug}-c{id}/PURPOSE.md) - subdirectories
+    within confab folders are not supported. Any path components in file_path are stripped
+    and only the filename is used.
+
+    Args:
+        confab_id: The ID of the confab
+        file_path: The file to update (e.g., "PURPOSE.md", "GUARDRAILS.md")
+        content: The content to write
+
+    Returns:
+        Success or error message
+    """
     try:
         from database import get_db
         from agent_runner import slugify
         db = next(get_db())
-        
+
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
             return "Confab not found"
-        
+
         # Ensure confab has a proper slugified name
         if not confab.name or confab.name.startswith("Agent Chat –"):
             return "Confab has invalid name. Please set a proper confab name first."
-        
+
         # Ensure confab name is slugified
         confab_name = slugify(confab.name)
         if confab.name != confab_name:
@@ -964,10 +986,17 @@ def update_file_tool(confab_id: int, file_path: str, content: str) -> str:
             print(f"Updated confab name to slugified version: {confab_name}")
 
         # Use confab.github_path if set, otherwise create it using the standard format
+        # Format: {slug}-c{id} where slug is alphanumeric with hyphens
         if confab.github_path:
             folder_path = confab.github_path
+            # Validate existing path format
+            if not re.match(r'^[a-z0-9-]+-c\d+$', folder_path):
+                print(f"Warning: existing github_path '{folder_path}' doesn't match expected format")
         else:
             folder_path = f"{confab_name}-c{confab_id}"
+            # Validate generated path
+            if not re.match(r'^[a-z0-9-]+-c\d+$', folder_path):
+                print(f"Warning: generated folder_path '{folder_path}' doesn't match expected format")
             confab.github_path = folder_path
             db.commit()
             print(f"Set confab.github_path to: {folder_path}")
@@ -980,9 +1009,9 @@ def update_file_tool(confab_id: int, file_path: str, content: str) -> str:
         repo_name = github_account.selected_repo
         full_repo_name = f"{repo_owner}/{repo_name}"
 
-        # Normalize file path to use consistent folder structure
-        # Strip any existing path prefix and use the correct folder_path
-        base_filename = file_path.split("/")[-1]  # Get just the filename
+        # Normalize file path: extract just the filename to ensure flat folder structure
+        # Confab folders don't support subdirectories - all files go directly in {folder_path}/
+        base_filename = file_path.split("/")[-1]
         file_path = f"{folder_path}/{base_filename}"
         print(f"File path set to: {file_path}")
         
@@ -1182,7 +1211,6 @@ def guardrails(db: Session, confab_id: int, guardrails_text: str) -> str:
 
     # Parse guardrails text into structured format for database
     # Uses the same parsing logic as main.py _guardrails_from_markdown
-    import re
     rules = []
     lines = (guardrails_text or "").splitlines()
     for line in lines:

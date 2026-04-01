@@ -612,9 +612,8 @@ class GitHubService:
         """
         Delete a folder and all its contents from the repository.
 
-        GitHub API doesn't have a direct "delete folder" endpoint, so we need to:
-        1. List all files in the folder
-        2. Delete each file individually in a single commit using the Git Data API
+        GitHub API doesn't have a direct "delete folder" endpoint, so we use the
+        Git Data API to create a new tree without the folder's files in a single atomic commit.
 
         Args:
             folder_path: Path to the folder to delete
@@ -623,61 +622,48 @@ class GitHubService:
 
         Returns:
             True if deleted successfully, False if folder doesn't exist
+
+        Raises:
+            GitHubServiceError: If the repository was modified during deletion (concurrent modification)
         """
         if branch is None:
             branch = await self.get_default_branch()
 
-        # List all files in the folder
-        files = await self.list_directory(folder_path, branch)
-        if not files:
-            logger.info(f"Folder {folder_path} doesn't exist or is empty")
-            return False
-
-        # Collect all file paths (recursively)
-        all_files: List[str] = []
-        async def collect_files(path: str):
-            items = await self.list_directory(path, branch)
-            for item in items:
-                if item["type"] == "file":
-                    all_files.append(item["path"])
-                elif item["type"] == "dir":
-                    await collect_files(item["path"])
-
-        await collect_files(folder_path)
-
-        if not all_files:
-            logger.info(f"No files found in folder {folder_path}")
-            return False
-
-        # Use Git Data API to delete all files in a single commit
         # 1. Get current commit SHA
         ref_resp = await self._request("GET", f"/repos/{self.repo_path}/git/ref/heads/{branch}")
         if ref_resp.status_code != 200:
             raise GitHubServiceError(f"Failed to get branch ref: {ref_resp.text}")
         head_sha = ref_resp.json()["object"]["sha"]
 
-        # 2. Get the current tree
+        # 2. Get the current tree with recursive flag to get all files
         commit_resp = await self._request("GET", f"/repos/{self.repo_path}/git/commits/{head_sha}")
         if commit_resp.status_code != 200:
             raise GitHubServiceError(f"Failed to get commit: {commit_resp.text}")
         base_tree_sha = commit_resp.json()["tree"]["sha"]
 
-        # 3. Create a new tree that removes the files (by not including them)
-        # We need to get the full tree and filter out the files we want to delete
         tree_resp = await self._request("GET", f"/repos/{self.repo_path}/git/trees/{base_tree_sha}?recursive=1")
         if tree_resp.status_code != 200:
             raise GitHubServiceError(f"Failed to get tree: {tree_resp.text}")
 
         current_tree = tree_resp.json()["tree"]
 
-        # Filter out files that are in the folder we're deleting
+        # 3. Check if folder exists by finding files that match the folder path
+        files_to_delete = [
+            item for item in current_tree
+            if item["path"].startswith(folder_path + "/") or item["path"] == folder_path
+        ]
+
+        if not files_to_delete:
+            logger.info(f"Folder {folder_path} doesn't exist or is empty")
+            return False
+
+        # 4. Create a new tree excluding the folder's files
         new_tree = [
             {"path": item["path"], "mode": item["mode"], "type": item["type"], "sha": item["sha"]}
             for item in current_tree
             if not item["path"].startswith(folder_path + "/") and item["path"] != folder_path
         ]
 
-        # 4. Create the new tree
         new_tree_resp = await self._request(
             "POST",
             f"/repos/{self.repo_path}/git/trees",
@@ -704,16 +690,23 @@ class GitHubService:
             raise GitHubServiceError(f"Failed to create commit: {new_commit_resp.text}")
         new_commit_sha = new_commit_resp.json()["sha"]
 
-        # 6. Update the branch reference
+        # 6. Update the branch reference (non-force to detect concurrent modifications)
         update_ref_resp = await self._request(
             "PATCH",
             f"/repos/{self.repo_path}/git/refs/heads/{branch}",
             json={"sha": new_commit_sha, "force": False}
         )
+        if update_ref_resp.status_code == 422:
+            # 422 typically means the ref was modified since we read it
+            raise GitHubServiceError(
+                f"Repository was modified during deletion of {folder_path}. "
+                "Another commit was made between reading the tree and updating the branch. "
+                "Please retry the operation."
+            )
         if update_ref_resp.status_code != 200:
             raise GitHubServiceError(f"Failed to update branch ref: {update_ref_resp.text}")
 
-        logger.info(f"Deleted folder {folder_path} with {len(all_files)} files")
+        logger.info(f"Deleted folder {folder_path} with {len(files_to_delete)} files")
         return True
 
     # ==================== PR Operations ====================
