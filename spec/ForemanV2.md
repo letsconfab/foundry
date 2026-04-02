@@ -185,6 +185,39 @@ Example responses:
 - "I need one detail: what is the main job of the confab in one sentence?"
 - "Noted. Should it remember prior conversations: yes, no, or limited?"
 
+### Out-of-Order Updates
+
+Users can update previously completed stages at any time using natural language:
+
+```
+User: "Update the guardrails: Add a rule about no profanity"
+```
+
+The `_detect_update_intent()` method detects:
+- Update triggers: "update", "change", "modify", "edit", "revise", "fix", "add to"
+- Stage keywords: maps "guardrails", "rule", "safety" → `guardrails` stage
+
+When detected:
+1. Extract content after the stage reference
+2. Dispatch to target stage handler (not current stage)
+3. Do NOT advance current stage after update
+4. Confirm update and re-ask current stage question
+
+### Configuration Summary
+
+At the review stage, users can view their full configuration:
+
+```
+User: "Show the configuration"
+```
+
+The `_build_config_summary()` method displays:
+- Name, Purpose, Participants, Memory settings
+- Tools, Guardrails (first 5 rules)
+- Sample Q&A
+
+This is also shown automatically when transitioning to the review stage.
+
 ---
 
 ## Rollout Plan
@@ -227,6 +260,16 @@ Example responses:
 - [x] Use backend stage metadata via `foreman_metadata`
 - [x] Show current stage prominently with completion indicators
 - [x] Add "Skip this step" button
+
+### Phase 6.5 — Bug Fixes and Enhancements ✅ COMPLETE
+- [x] Fix: Pass conversation context to `extract_purpose()` for multi-turn synthesis
+- [x] Fix: Skip status now properly advances stage (`_complete_stage` call added)
+- [x] Fix: Guardrails extraction handles list-to-string conversion
+- [x] Fix: `_build_config_summary()` reads from `setup_progress` JSON field
+- [x] Feature: `_detect_update_intent()` for out-of-order updates (e.g., "Update the guardrails:")
+- [x] Feature: `_build_config_summary()` displays full agent configuration at review stage
+- [x] Feature: "Show configuration" request handling in review stage
+- [x] Cleanup: `_guardrails_to_markdown()` outputs clean rules without severity/status metadata
 
 ### Phase 7 — Optional Internal Workers
 - [ ] Extract complex stages to worker modules (if needed)

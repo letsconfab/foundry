@@ -27,6 +27,19 @@ The Foreman is the lead orchestrator for confab creation. It guides users throug
 - **Progress persistence** — Tracks completed steps in `confab.setup_progress` so users can resume later.
 - **Tool integration** — Uses internal tools to save configuration incrementally to the database.
 - **Context awareness** — Loads full confab state, thread history, and progress before each response.
+- **Out-of-order updates** — Users can update previous stages mid-flow (e.g., "Update the guardrails: ...").
+- **Configuration review** — Displays full agent configuration at review stage or on request ("Show the configuration").
+
+### V2 Deterministic Flow
+
+When `FOREMAN_V2_ENABLED=true`, the Foreman uses a deterministic stage machine:
+
+- **Stage handlers** — Each stage has a dedicated handler (`_handle_purpose`, `_handle_guardrails`, etc.)
+- **Structured extraction** — Low-temperature LLM calls (0.1) return strict JSON
+- **Save-gated progression** — Stage advances only after successful data persistence
+- **Templated responses** — Consistent, concise voice via `STAGE_QUESTIONS` and `STAGE_ACKNOWLEDGMENTS`
+
+See [ForemanV2.md](ForemanV2.md) for full architecture details.
 
 ### Initial Greeting
 
