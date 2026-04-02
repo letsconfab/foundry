@@ -135,20 +135,15 @@ def _guardrails_to_markdown(confab_name: str, guardrails: Optional[List[Dict[str
     if not guardrails:
         return title + "_No guardrails defined yet._\n"
 
-    lines = [title, "## Rules\n"]
+    lines = [title, "## Rules\n\n"]
     for idx, rule in enumerate(guardrails, 1):
         if not isinstance(rule, dict):
             continue
         text = str(rule.get("rule", "")).strip()
         if not text:
             continue
-        severity = str(rule.get("severity", "error")).strip() or "error"
-        enabled = bool(rule.get("enabled", True))
-        status = "enabled" if enabled else "disabled"
-        lines.append(f"{idx}. {text}  \n")
-        lines.append(f"   - severity: `{severity}`  \n")
-        lines.append(f"   - status: `{status}`\n")
-    return "".join(lines).strip() + "\n"
+        lines.append(f"{idx}. {text}\n")
+    return "".join(lines)
 
 
 def _guardrails_from_markdown(markdown: str) -> List[Dict[str, Any]]:

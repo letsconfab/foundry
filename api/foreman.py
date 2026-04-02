@@ -14,7 +14,7 @@ import json
 import re
 import os
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Literal
+from typing import Optional, Dict, Any, List, Literal, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
 
@@ -649,17 +649,30 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
             "review": self._handle_review,
         }
 
-        handler = stage_handlers.get(current_stage)
+        # Check if user wants to update a previous stage
+        target_stage, extracted_content = self._detect_update_intent(user_message)
+        is_update = target_stage is not None and target_stage != current_stage
+
+        if is_update:
+            logger.info(f"[Foreman V2] Update intent detected: {target_stage}")
+            handler = stage_handlers.get(target_stage)
+            # Use extracted content if available, otherwise full message
+            message_to_process = extracted_content or user_message
+        else:
+            handler = stage_handlers.get(current_stage)
+            message_to_process = user_message
+
         if not handler:
-            logger.error(f"[Foreman V2] No handler for stage: {current_stage}")
+            stage_name = target_stage if is_update else current_stage
+            logger.error(f"[Foreman V2] No handler for stage: {stage_name}")
             return self._build_error_response(
-                f"Unknown stage: {current_stage}",
+                f"Unknown stage: {stage_name}",
                 current_stage
             )
 
         # Execute stage handler
         try:
-            result = await handler(user_message)
+            result = await handler(message_to_process)
         except Exception as e:
             logger.error(f"[Foreman V2] Handler error for {current_stage}: {e}")
             result = StageResult(
@@ -668,11 +681,22 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
             )
 
         # Process result and potentially advance stage
-        response_text = self._render_foreman_reply(result, current_stage)
-
-        # Advance stage if complete
-        if result.status == "complete":
-            await self._complete_stage(current_stage)
+        if is_update:
+            # For updates to previous stages, confirm the update and re-ask current stage question
+            if result.status == "complete":
+                # Reload confab to get updated data for summary
+                self.db.refresh(self.confab)
+                if current_stage == "review":
+                    response_text = f"Updated {target_stage}.{self._build_config_summary()}\n\n{STAGE_QUESTIONS.get(current_stage, '')}"
+                else:
+                    response_text = f"Updated {target_stage}. {STAGE_QUESTIONS.get(current_stage, '')}"
+            else:
+                response_text = self._render_foreman_reply(result, target_stage)
+        else:
+            response_text = self._render_foreman_reply(result, current_stage)
+            # Only advance stage for normal flow (not updates)
+            if result.status in ("complete", "skip"):
+                await self._complete_stage(current_stage)
 
         # Build response
         return {
@@ -690,6 +714,8 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
             "v2_metadata": {
                 "stage": current_stage,
                 "stage_status": result.status,
+                "is_update": is_update,
+                "updated_stage": target_stage if is_update else None,
                 "saved_fields": result.data,
                 "next_question": result.next_question,
             }
@@ -730,6 +756,61 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
 
         await self._persist_progress()
 
+    def _build_config_summary(self) -> str:
+        """Build a summary of the current confab configuration."""
+        confab = self.confab
+        setup_progress = confab.setup_progress or {}
+        lines = ["\n\n---\n**Agent Configuration**\n---\n\n"]
+
+        # Name
+        if confab.name:
+            lines.append(f"**Name:** {confab.name}\n\n")
+
+        # Purpose
+        if confab.purpose:
+            purpose_preview = confab.purpose[:300] + "..." if len(confab.purpose) > 300 else confab.purpose
+            lines.append(f"**Purpose:**\n{purpose_preview}\n\n")
+
+        # Participants (stored in setup_progress)
+        participants = setup_progress.get("participants", [])
+        if participants:
+            if isinstance(participants, list):
+                lines.append(f"**Participants:** {', '.join(str(p) for p in participants)}\n\n")
+            else:
+                lines.append(f"**Participants:** {participants}\n\n")
+
+        # Memory
+        memory_notes = setup_progress.get("memory_notes")
+        if memory_notes:
+            lines.append(f"**Memory:** {memory_notes}\n\n")
+
+        # Tools
+        tools = setup_progress.get("tools", [])
+        if tools:
+            if isinstance(tools, list):
+                lines.append(f"**Tools:** {', '.join(str(t) for t in tools)}\n\n")
+            else:
+                lines.append(f"**Tools:** {tools}\n\n")
+
+        # Guardrails
+        if confab.guardrails:
+            rules = [g.get("rule", "") for g in confab.guardrails if isinstance(g, dict)]
+            if rules:
+                lines.append("**Guardrails:**\n")
+                for i, rule in enumerate(rules[:5], 1):  # Show first 5
+                    lines.append(f"  {i}. {rule}\n")
+                if len(rules) > 5:
+                    lines.append(f"  ... and {len(rules) - 5} more\n")
+                lines.append("\n")
+
+        # Sample I/O
+        sample_io = setup_progress.get("sample_io")
+        if sample_io:
+            lines.append(f"**Sample Q&A:**\n{sample_io}\n\n")
+
+        lines.append("---\n")
+        return "".join(lines)
+
     def _render_foreman_reply(self, result: StageResult, current_stage: str) -> str:
         """Render a consistent Foreman response from a StageResult."""
         parts = []
@@ -747,6 +828,8 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
             parts.append("Skipping this step.")
             next_stage = self._next_stage_after(current_stage)
             if next_stage:
+                if next_stage == "review":
+                    parts.append(self._build_config_summary())
                 parts.append(STAGE_QUESTIONS.get(next_stage, ""))
 
         elif result.status == "complete":
@@ -755,6 +838,8 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
             parts.append(ack)
             next_stage = self._next_stage_after(current_stage)
             if next_stage:
+                if next_stage == "review":
+                    parts.append(self._build_config_summary())
                 parts.append(STAGE_QUESTIONS.get(next_stage, ""))
             else:
                 parts.append("All steps complete. Your agent is ready.")
@@ -783,18 +868,94 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
             }
         }
 
+    def _detect_update_intent(self, user_message: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Detect if user wants to update a previous stage.
+
+        Returns:
+            (target_stage, extracted_content) if update intent detected
+            (None, None) if no update intent
+        """
+        msg_lower = user_message.lower()
+
+        # Patterns that indicate update intent
+        update_triggers = ["update", "change", "modify", "edit", "revise", "fix", "add to", "also add"]
+
+        # Map keywords to stages
+        stage_keywords = {
+            "purpose": ["purpose", "what it does", "description", "objective"],
+            "participants": ["participant", "email", "access", "who can"],
+            "memory": ["memory", "remember", "conversation history"],
+            "tools": ["tool", "api", "capability", "integration"],
+            "guardrails": ["guardrail", "rule", "restriction", "safety", "boundary", "constraint"],
+            "sample_io": ["sample", "example", "interaction", "input", "output"],
+        }
+
+        # Check if message starts with or contains update trigger
+        has_update_trigger = any(trigger in msg_lower for trigger in update_triggers)
+        if not has_update_trigger:
+            return None, None
+
+        # Find which stage is being referenced
+        for stage, keywords in stage_keywords.items():
+            for keyword in keywords:
+                if keyword in msg_lower:
+                    # Extract the content after the stage reference
+                    # e.g., "Update the guardrails: X Y Z" -> "X Y Z"
+                    content = user_message
+                    for trigger in update_triggers:
+                        for kw in keywords:
+                            # Try to find pattern like "update the guardrails:"
+                            pattern = rf"(?i){trigger}\s+(?:the\s+)?{kw}[s]?\s*[:\-]?\s*"
+                            match = re.search(pattern, user_message)
+                            if match:
+                                content = user_message[match.end():].strip()
+                                break
+                    return stage, content if content else user_message
+
+        return None, None
+
     def _detect_skip_intent(self, user_message: str) -> bool:
         """Detect if user wants to skip the current step."""
         skip_patterns = ["skip", "next", "pass", "later", "not now", "move on", "none"]
         msg_lower = user_message.lower().strip()
         return any(pattern in msg_lower for pattern in skip_patterns)
 
+    def _build_stage_conversation_context(self, include_current: str = "") -> str:
+        """
+        Build conversation context from thread history for the current stage.
+
+        Returns a formatted string of all user messages and assistant questions
+        that belong to the current stage (i.e., messages after the last stage
+        transition, or all messages if we're on the first stage).
+        """
+        if not self.context.thread_history:
+            return include_current
+
+        # Get recent conversation (last 10 messages should cover current stage)
+        recent = self.context.thread_history[-10:]
+
+        lines = []
+        for msg in recent:
+            role = "User" if msg.role == "user" else "Foreman"
+            lines.append(f"{role}: {msg.content}")
+
+        if include_current:
+            lines.append(f"User: {include_current}")
+
+        return "\n".join(lines)
+
     # =========================================================================
     # Stage Handlers
     # =========================================================================
 
     async def _handle_purpose(self, user_message: str) -> StageResult:
-        """Handle the purpose definition stage using structured extraction."""
+        """
+        Handle the purpose definition stage using structured extraction.
+
+        This handler accumulates context from multiple conversation turns,
+        allowing users to refine the purpose through clarifying questions.
+        """
         if self._detect_skip_intent(user_message):
             return StageResult(status="skip")
 
@@ -805,8 +966,11 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 next_question=STAGE_CLARIFICATIONS["purpose"]
             )
 
-        # Use structured LLM extraction
-        extraction = await extract_purpose(user_message)
+        # Build conversation context including all prior purpose discussion
+        context = self._build_stage_conversation_context(user_message)
+
+        # Use structured LLM extraction with full conversation context
+        extraction = await extract_purpose(user_message, context=context)
 
         if not extraction.success:
             logger.warning(f"[Foreman V2] Purpose extraction failed: {extraction.error}")
@@ -1051,6 +1215,9 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                     next_question=data["clarification_needed"]
                 )
             guardrails_text = data.get("guardrails_text", user_message.strip())
+            # Handle case where LLM returns a list instead of string
+            if isinstance(guardrails_text, list):
+                guardrails_text = "\n".join(f"{i+1}. {rule}" for i, rule in enumerate(guardrails_text))
         else:
             if len(user_message.strip()) < 5:
                 return StageResult(
@@ -1123,6 +1290,19 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
 
     async def _handle_review(self, user_message: str) -> StageResult:
         """Handle the review and save stage using structured extraction."""
+        msg_lower = user_message.lower()
+
+        # Check if user wants to see the configuration (before LLM extraction)
+        if any(w in msg_lower for w in ["show", "display", "view", "see", "what is", "what's"]) and \
+           any(w in msg_lower for w in ["config", "configuration", "summary", "settings", "setup"]):
+            self.db.refresh(self.confab)
+            config_summary = self._build_config_summary()
+            return StageResult(
+                status="clarify",
+                summary=f"Here's your current configuration:{config_summary}",
+                next_question="Ready to save and deploy, or would you like to make changes?"
+            )
+
         # Use structured LLM extraction
         extraction = await extract_review_intent(user_message)
 
@@ -1160,8 +1340,7 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                         next_question=data["clarification_needed"]
                     )
 
-        # Fallback to keyword matching
-        msg_lower = user_message.lower()
+        # Fallback to keyword matching (msg_lower already defined at start)
         if any(w in msg_lower for w in ["yes", "save", "confirm", "deploy", "done", "ready", "looks good"]):
             try:
                 review_and_save(db=self.db, confab_id=self.confab_id)

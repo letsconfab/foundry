@@ -238,12 +238,33 @@ Original request:
 # =========================================================================
 
 async def extract_purpose(user_message: str, context: str = "") -> ExtractionResult:
-    """Extract purpose information from user message."""
-    prompt = f"""Analyze this user message about an AI agent's purpose and extract structured information.
+    """Extract purpose information from user message, with optional conversation context."""
+
+    # Build context-aware prompt
+    if context:
+        prompt = f"""You are helping a user define the purpose of an AI agent. The conversation so far:
+
+{context}
+
+Based on this ENTIRE conversation, synthesize a complete purpose statement for the agent.
+Combine all the details the user has provided across their messages into a coherent purpose.
+
+Extract and return JSON with these fields:
+{{
+    "purpose_text": "A clear, comprehensive description of what the agent does, synthesizing ALL user inputs (2-4 sentences)",
+    "suggested_name": "A short name for this agent (1-2 words, e.g., 'TrueDetectiveHub', 'DataAnalyzer')",
+    "is_clear": true (set to true if you can construct a meaningful purpose from the conversation),
+    "clarification_needed": null
+}}
+
+IMPORTANT: If the user has provided multiple pieces of information across turns, COMBINE them into the purpose_text.
+Only set is_clear to false if the conversation provides genuinely no useful information about what the agent should do.
+
+Respond with valid JSON only."""
+    else:
+        prompt = f"""Analyze this user message about an AI agent's purpose and extract structured information.
 
 User message: "{user_message}"
-
-{f"Additional context: {context}" if context else ""}
 
 Extract and return JSON with these fields:
 {{
@@ -333,11 +354,13 @@ The user is specifying rules, restrictions, or safety boundaries for the agent.
 
 Extract and return JSON with these fields:
 {{
-    "guardrails_text": "Formatted list of guardrails/rules (can include the user's text)",
+    "guardrails_text": "A STRING with numbered rules, one per line. Example: '1. Rule one\\n2. Rule two\\n3. Rule three'",
     "rules_count": number of distinct rules identified,
     "wants_to_skip": true/false,
     "clarification_needed": null or "A question if more detail is needed"
 }}
+
+IMPORTANT: guardrails_text MUST be a string, NOT an array. Format multiple rules as a numbered list within the string.
 
 Respond with valid JSON only."""
 
