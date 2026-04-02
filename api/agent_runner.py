@@ -169,43 +169,45 @@ def store_purpose_to_file(confab_id: int, user_message: str, ai_response: str, d
         # Get confab and ensure it has a slugified name
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
-            logger.error(f"Confab {confab_id} not found")
             return False
-        
-        # Ensure confab has a proper name and slugify it
-        if not confab.name or confab.name.startswith("Agent Chat –"):
-            generated_name = generate_confab_name_from_purpose(ai_response)
-            confab.name = generated_name
-            confab.status = 'draft'
+            
+        # Set confab name if it's still the default
+        if confab.name.startswith('untitled-confab') or confab.name.startswith('Agent Chat'):
+            new_name = generate_confab_name_from_purpose(ai_response)
+            confab.name = new_name
             db.commit()
-            logger.info(f"Generated confab name: {generated_name}")
+            print(f"[GITHUB STORAGE] Updated confab name to: {new_name}")
         
-        # Use slugified version to maintain consistency with update_file_tool
-        confab_name = slugify(confab.name)
+        # Create the confab folder structure in GitHub
+        try:
+            from agent_tools import create_confab_folder_structure
+            folder_success = create_confab_folder_structure(confab_id)
+            if folder_success:
+                print(f"[GITHUB STORAGE] Confab folder structure created successfully for {confab.name}")
+            else:
+                print(f"[GITHUB STORAGE] Failed to create confab folder structure")
+        except Exception as folder_error:
+            print(f"[GITHUB STORAGE] Error creating folder structure: {folder_error}")
         
-        # Update confab name if it's not already slugified
-        if confab.name != confab_name:
-            confab.name = confab_name
-            confab.status = 'draft'
-            db.commit()
-            logger.info(f"Updated confab name to slugified version: {confab_name}")
+        # Format and store purpose
+        formatted_purpose = format_purpose_markdown(ai_response, confab.name)
+        file_path = f"confabs/{confab.name}/PURPOSE.md"
         
-        # Format the purpose data
-        formatted_purpose = format_purpose_markdown(ai_response, confab_name)
-        
-        # Store in confabs/{confab.name}/PURPOSE.md
-        file_path = f"confabs/{confab_name}/PURPOSE.md"
-        result = update_file_tool.invoke({
-            'confab_id': confab_id,
-            'file_path': file_path,
-            'content': formatted_purpose
-        })
+        # Use update_file_tool to store to GitHub
+        from agent_tools import update_file_tool
+        result = update_file_tool(
+            confab_id=confab_id,
+            file_path='PURPOSE.md',  # This will be prefixed with confabs/{confab.name}/
+            content=formatted_purpose
+        )
         
         logger.info(f"Stored purpose to {file_path} for confab {confab_id}: {result}")
+        print(f"[GITHUB STORAGE] Purpose stored to GitHub: {result}")
         return True
         
     except Exception as e:
         logger.error(f"Failed to store purpose to file: {e}")
+        print(f"[GITHUB STORAGE] Error storing purpose: {e}")
         return False
 
 # Lazy-initialized LLM instance
@@ -214,7 +216,7 @@ _llm_instance = None
 def get_llm():
     """
     Get the LLM instance, initializing lazily on first use.
-    Uses Groq API with qwen3-32b model and bound tools.
+    Uses Groq API with qwen3-32b model.
     """
     global _llm_instance
     if _llm_instance is None:
@@ -225,19 +227,7 @@ def get_llm():
             if not api_key:
                 logger.error("GROQ_API_KEY environment variable is not set")
                 raise ValueError("GROQ_API_KEY is required")
-            
-            # Create base ChatGroq instance
-            llm = ChatGroq(api_key=api_key, model=model_name, temperature=0.7)
-            
-            # Get tools and bind them to the model
-            from agent_tools import get_langchain_tools
-            tools = get_langchain_tools()
-            
-            # Bind tools to the model so it can access them
-            _llm_instance = llm.bind_tools(tools)
-            
-            logger.info(f"LLM initialized with {len(tools)} tools bound")
-            
+            _llm_instance = ChatGroq(api_key=api_key, model=model_name, temperature=0.7)
         except ImportError:
             logger.error("ChatGroq not found. Please install langchain-groq")
             raise
@@ -274,11 +264,10 @@ async def run_langgraph_agent(confab_id: int, user_message: str, db: Session) ->
             system_prompt = "You are an AI agent that describes purposes and objectives. Focus only on explaining what something is for, not how to implement solutions."
         
         # Get tools from agent_tools
-        from agent_tools import get_langchain_tools
         tools = get_langchain_tools()
         
-        # Create tool mapping for execution
-        tool_map = {tool.name: tool for tool in tools}
+        # Bind tools to the model
+        llm = get_llm().bind_tools(tools)
         
         # Simple agent implementation - focus on purpose description only
         tool_descriptions = []
@@ -305,55 +294,22 @@ Available tools:
 
 Respond ONLY with purpose description:"""
         
-        # Run the model with tools
+        # Run the model
         logger.info(f"Running agent for confab {confab_id} with message: {user_message}")
         
-        # Get the LLM with bound tools
-        llm = get_llm()
-        
-        # Create a message format for the LLM
-        from langchain_core.messages import HumanMessage
-        messages = [HumanMessage(content=prompt)]
-        
-        # Invoke the LLM - it will have access to bound tools
-        response = llm.invoke(messages)
-        
-        # Check if the model called any tools
-        tool_calls = []
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            # Execute tool calls
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.get('name')
-                tool_args = tool_call.get('args', {})
-                
-                if tool_name in tool_map:
-                    try:
-                        # Execute the tool
-                        tool_result = await tool_map[tool_name].ainvoke(tool_args)
-                        tool_calls.append({
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "result": str(tool_result)
-                        })
-                        logger.info(f"Tool {tool_name} executed successfully")
-                    except Exception as tool_error:
-                        logger.error(f"Tool {tool_name} failed: {tool_error}")
-                        tool_calls.append({
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "error": str(tool_error)
-                        })
+        # Use the LLM with bound tools
+        response = llm.invoke(prompt)
         
         # Store the purpose data to purpose.md file
-        store_purpose_to_file(confab_id, user_message, str(response.content), db)
+        store_purpose_to_file(confab_id, user_message, str(response), db)
         
         return {
             "success": True,
-            "response": str(response.content),
-            "tool_calls": tool_calls,
+            "response": str(response),
+            "tool_calls": [],  # No tool calls in this simple implementation
             "confab_id": confab_id,
             "timestamp": str(datetime.datetime.now()),
-            "architecture": "LangChain LLM with tool execution",
+            "architecture": "Simple LLM with tools context",
             "purpose_stored": True,
             "purpose_source": "GitHub PURPOSE.md" if get_purpose(confab_id) else "Generated"
         }

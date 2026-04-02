@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat, Pencil, Check, Trash2, FileText } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Users, User, Bot, HardHat, Pencil, Check, Trash2, FileText, Wrench, Activity } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -10,7 +10,7 @@ import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageContent } from './MessageContent';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'review-chats' | 'specs' | 'sourcecode' | 'deploymentpanel';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'review-chats';
 
 interface AgentChatProps {
   onNavigate: (view: View, confabName?: string) => void;
@@ -24,6 +24,22 @@ interface Message {
   timestamp: Date;
   userName?: string;
   senderName?: string;  // For detecting Foreman vs other agents
+  toolCalls?: ToolCall[];  // Tool calls made in this message
+  toolResults?: ToolResult[];  // Tool results from this message
+}
+
+interface ToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, any>;
+  timestamp: Date;
+}
+
+interface ToolResult {
+  toolName: string;
+  result: string;
+  success: boolean;
+  timestamp: Date;
 }
 
 interface Participant {
@@ -85,12 +101,183 @@ interface AgentNode {
 // PURPOSE.md or a knowledge-base note).  The resulting pull request URL
 // comes back in the tool response.
 
+// Tool Activity Panel Component
+const ToolActivityPanel = ({ recentToolActivity }: { recentToolActivity: ToolResult[] }) => {
+  if (recentToolActivity.length === 0) return null;
+  
+  return (
+    <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+      <div className="flex items-center gap-2 mb-2">
+        <Activity className="w-4 h-4 text-slate-600" />
+        <span className="text-sm font-medium text-slate-700">Recent Tool Activity</span>
+        <Badge variant="secondary" className="ml-auto">
+          {recentToolActivity.length}
+        </Badge>
+      </div>
+      <div className="space-y-1">
+        {recentToolActivity.slice(-3).map((tool, index) => (
+          <div key={index} className="flex items-start gap-2 text-xs">
+            <Wrench className={`w-3 h-3 mt-0.5 flex-shrink-0 ${tool.success ? 'text-green-600' : 'text-red-600'}`} />
+            <div className="flex-1">
+              <span className="font-medium text-slate-700">{tool.toolName}</span>
+              <span className="text-slate-500 ml-1">
+                {tool.success ? '✅' : '❌'}
+              </span>
+              <p className="text-slate-600 truncate">{tool.result}</p>
+            </div>
+            <span className="text-slate-400">
+              {tool.timestamp.toLocaleTimeString()}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// Enhanced Message Component with Tool Information
+const EnhancedMessage = ({ message, isUser, user }: { message: Message; isUser: boolean; user?: any }) => {
+  const showToolInfo = message.toolCalls && message.toolCalls.length > 0;
+  const showToolResults = message.toolResults && message.toolResults.length > 0;
+  
+  return (
+    <div className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      {!isUser && (
+        <Avatar className="w-8 h-8 flex-shrink-0">
+          <AvatarFallback className={message.senderName === 'Foreman'
+            ? "bg-gradient-to-br from-amber-500 to-orange-600"
+            : "bg-gradient-to-br from-indigo-600 to-purple-600"
+          }>
+            {message.senderName === 'Foreman'
+              ? <HardHat className="w-4 h-4 text-white" />
+              : <Bot className="w-4 h-4 text-white" />
+            }
+          </AvatarFallback>
+        </Avatar>
+      )}
+      <div className={`max-w-[80%] rounded-lg px-4 py-3 ${
+        isUser ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-900'
+      }`}>
+        <MessageContent content={message.content} variant={message.role} />
+        
+        {/* Tool Calls Display */}
+        {showToolInfo && (
+          <div className="mt-2 pt-2 border-t border-slate-300">
+            <div className="flex items-center gap-1 mb-1">
+              <Wrench className="w-3 h-3 text-slate-600" />
+              <span className="text-xs font-medium text-slate-700">Tools Used:</span>
+            </div>
+            <div className="space-y-1">
+              {message.toolCalls?.map((call, idx) => (
+                <div key={idx} className="text-xs bg-slate-200 rounded px-2 py-1">
+                  <span className="font-mono text-slate-700">{call.name}</span>
+                  <span className="text-slate-500 ml-1">
+                    {JSON.stringify(call.arguments).substring(0, 50)}...
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Tool Results Display */}
+        {showToolResults && (
+          <div className="mt-2 pt-2 border-t border-slate-300">
+            <div className="flex items-center gap-1 mb-1">
+              <Activity className="w-3 h-3 text-slate-600" />
+              <span className="text-xs font-medium text-slate-700">Tool Results:</span>
+            </div>
+            <div className="space-y-1">
+              {message.toolResults?.map((result, idx) => (
+                <div key={idx} className="text-xs">
+                  <span className={`font-medium ${result.success ? 'text-green-700' : 'text-red-700'}`}>
+                    {result.toolName}: {result.success ? '✅' : '❌'}
+                  </span>
+                  <p className="text-slate-600 truncate">{result.result}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        <p className={`text-xs mt-1 ${
+          isUser ? 'text-indigo-200' : 'text-slate-500'
+        }`}>
+          {message.timestamp.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </p>
+      </div>
+      {isUser && (
+        <div className="flex flex-col items-center gap-1">
+          <Avatar className="w-8 h-8 flex-shrink-0">
+            <AvatarFallback className="bg-slate-300">
+              <User className="w-4 h-4 text-slate-600" />
+            </AvatarFallback>
+          </Avatar>
+          <span className="text-xs text-slate-600">{user?.name ?? 'You'}</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const PROMPT_SUGGESTIONS = [
   "Create a customer support agent that handles refunds and returns",
   "Build an agent that analyzes sales data and generates weekly reports",
   "I need an agent to review code for security vulnerabilities",
   "Create an agent that summarizes meeting transcripts",
 ];
+
+// Helper functions to parse tool information from agent responses
+const parseToolCalls = (content: string): ToolCall[] => {
+  const toolCalls: ToolCall[] = [];
+  const callRegex = /\[TOOL CALL\] Calling tool: (\w+) with arguments: ({.*?})/g;
+  let match;
+  
+  while ((match = callRegex.exec(content)) !== null) {
+    try {
+      toolCalls.push({
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        name: match[1],
+        arguments: JSON.parse(match[2]),
+        timestamp: new Date()
+      });
+    } catch (e) {
+      console.warn('Failed to parse tool call:', match[0]);
+    }
+  }
+  
+  return toolCalls;
+};
+
+const parseToolResults = (content: string): ToolResult[] => {
+  const toolResults: ToolResult[] = [];
+  const resultRegex = /\[TOOL RESULT\] (\w+) completed: (.*)/g;
+  let match;
+  
+  while ((match = resultRegex.exec(content)) !== null) {
+    const toolName = match[1];
+    const result = match[2];
+    
+    // Determine success based on result content
+    const success = result.includes('successfully') || 
+                   result.includes('completed') || 
+                   result.includes('created') ||
+                   result.includes('updated') ||
+                   !result.includes('failed') && !result.includes('error');
+    
+    toolResults.push({
+      toolName,
+      result,
+      success,
+      timestamp: new Date()
+    });
+  }
+  
+  return toolResults;
+};
 
 
 export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
@@ -152,38 +339,12 @@ Let's start with the most important part: **What would you like this agent to do
   const [enableConflictResolution, setEnableConflictResolution] = useState(true);
   const [maxTurnsPerAgent, setMaxTurnsPerAgent] = useState('3');
   const [githubConnected, setGithubConnected] = useState(false);
+  
+  // Tool activity tracking
+  const [recentToolActivity, setRecentToolActivity] = useState<ToolResult[]>([]);
 
   // Chat ready state (replaces LLM health check - API is assumed available)
   const [chatReady, setChatReady] = useState(true);
-
-  // Active tab state for navigation
-  const [activeTab, setActiveTab] = useState<'foreman-chat' | 'spec' | 'source' | 'deployment' | 'metrics'>('foreman-chat');
-  
-  // Progress and GitHub status state
-  const [isGeneratingSpec, setIsGeneratingSpec] = useState(false);
-  const [githubStatus, setGithubStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
-  const [githubMessage, setGithubMessage] = useState<string | null>(null);
-  const [autoGenerated, setAutoGenerated] = useState(false);
-
-  // Detect tool calls and auto-generation in responses
-  const detectToolCalls = (content: string, toolCalls?: string[]) => {
-    if (toolCalls && toolCalls.includes('github_push')) {
-      if (content.includes('Successfully pushed') || content.includes('✅ **GitHub Push:**')) {
-        setGithubStatus('success');
-        setGithubMessage('Files successfully pushed to GitHub');
-      } else if (content.includes('GitHub Warning') || content.includes('⚠️')) {
-        setGithubStatus('error');
-        setGithubMessage('GitHub push completed with warnings');
-      } else {
-        setGithubStatus('pending');
-        setGithubMessage('Pushing to GitHub...');
-      }
-    }
-    
-    if (content.includes('generated your confab') && content.includes('specification files')) {
-      setAutoGenerated(true);
-    }
-  };
 
   // Load existing confab data if resuming
   useEffect(() => {
@@ -335,10 +496,91 @@ Let's start with the most important part: **What would you like this agent to do
     }
   };
 
+  // Enhanced GitHub push functionality with tool information
+  const handleGitHubPush = async () => {
+    if (!currentConfabId) {
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '❌ No confab found. Please create a confab first before pushing to GitHub.',
+        timestamp: new Date(),
+        senderName: 'Foreman'
+      };
+      setMessages(prev => [...prev, errorMsg]);
+      return;
+    }
+
+    let loadingMsgId: string | null = null;
+
+    try {
+      // Show loading message
+      loadingMsgId = (Date.now() + 1).toString();
+      const loadingMsg: Message = {
+        id: loadingMsgId,
+        role: 'assistant',
+        content: '🚀 Pushing your confab and tool information to GitHub...',
+        timestamp: new Date(),
+        senderName: 'Foreman'
+      };
+      setMessages(prev => [...prev, loadingMsg]);
+
+      const response = await apiClient.pushConfabToGitHub(currentConfabId);
+      
+      // Remove loading message and add success message with tool info
+      setMessages(prev => prev.filter(msg => msg.id !== loadingMsgId));
+      
+      // Add tool activity summary
+      const toolSummary = recentToolActivity.length > 0 
+        ? `\n\n🛠️ **Recent Tool Activity:**\n${recentToolActivity.slice(-5).map(tool => 
+            `• ${tool.toolName}: ${tool.success ? '✅' : '❌'} ${tool.result.substring(0, 100)}${tool.result.length > 100 ? '...' : ''}`
+          ).join('\n')}`
+        : '';
+      
+      const successMsg: Message = {
+        id: (Date.now() + 2).toString(),
+        role: 'assistant',
+        content: `✅ Your confab "${confabName}" has been pushed to GitHub!\n\n📁 Repository: ${response.repo_url}\n📂 Folder: confabs/${confabName}/\n🛠️ All tool configurations and documentation have been version-controlled.${toolSummary}`,
+        timestamp: new Date(),
+        senderName: 'Foreman'
+      };
+      setMessages(prev => [...prev, successMsg]);
+      
+      // Clear recent tool activity after successful push
+      setRecentToolActivity([]);
+    } catch (error: any) {
+      // Remove loading message and add error message
+      if (loadingMsgId) {
+        setMessages(prev => prev.filter(msg => msg.id !== loadingMsgId));
+      }
+      
+      const errorMsg: Message = {
+        id: (Date.now() + 2).toString(),
+        role: 'assistant',
+        content: `❌ Failed to push to GitHub: ${error.message || 'Unknown error occurred'}. Please check your GitHub connection and try again.`,
+        timestamp: new Date(),
+        senderName: 'Foreman'
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    }
+  };
+
   const handleSend = async () => {
     if (!input.trim() || sendingRef.current) return;
     sendingRef.current = true;  // Lock immediately, synchronously
     const content = input.trim();
+
+    // Check for push commands before processing as regular chat
+    const PUSH_COMMANDS = ['push my data', 'push to github', 'save to repo', 'push the purpose'];
+    const isPushCommand = PUSH_COMMANDS.some(cmd => 
+      content.toLowerCase().includes(cmd.toLowerCase())
+    );
+
+    if (isPushCommand) {
+      await handleGitHubPush();
+      setInput('');
+      sendingRef.current = false;
+      return;
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -363,6 +605,15 @@ Let's start with the most important part: **What would you like this agent to do
         console.log('Created new confab:', confab);
         confabId = confab.id;
         setCurrentConfabId(confab.id);
+
+        // Automatically create confab folder structure in GitHub
+        try {
+          console.log('[GITHUB STORAGE] Creating confab folder structure...');
+          // This will be handled by the agent tools when the first purpose is set
+          console.log('[GITHUB STORAGE] Folder structure will be created when purpose is defined');
+        } catch (folderError) {
+          console.error('[GITHUB STORAGE] Failed to create folder structure:', folderError);
+        }
       } catch (error) {
         console.error('Failed to create confab:', error);
       }
@@ -425,28 +676,36 @@ Let's start with the most important part: **What would you like this agent to do
           if (response.agent_responses && response.agent_responses.length > 0) {
             // Add each agent response as a message
             for (const agentResp of response.agent_responses) {
+              // Parse tool calls and results from the response content
+              const toolCalls = parseToolCalls(agentResp.content);
+              const toolResults = parseToolResults(agentResp.content);
+              
+              // Update recent tool activity
+              if (toolResults.length > 0) {
+                const newToolResults = toolResults.map((result: ToolResult) => ({
+                  toolName: result.toolName,
+                  result: result.result,
+                  success: result.success,
+                  timestamp: new Date()
+                }));
+                setRecentToolActivity(prev => [...prev, ...newToolResults]);
+              }
+              
               const agentMsg: Message = {
                 id: String(agentResp.id),
                 role: 'assistant',
                 content: agentResp.content,
                 timestamp: new Date(agentResp.created_at),
                 senderName: agentResp.sender_name || 'Foreman',
+                toolCalls,
+                toolResults
               };
               setMessages((prev) => [...prev, agentMsg]);
-              
-              // Detect tool calls and auto-generation
-              detectToolCalls(agentResp.content, response.tool_calls);
             }
             assistantContent = response.agent_responses[response.agent_responses.length - 1].content;
 
             // Refresh confab name in case Foreman set it
             refreshConfabName();
-            
-            // Check for auto-generation status
-            if (response.auto_generated) {
-              setIsGeneratingSpec(false);
-              setAutoGenerated(true);
-            }
           } else {
             // No agent response yet - this shouldn't happen with Foreman
             assistantContent = "Message sent. Waiting for agent response...";
@@ -658,24 +917,6 @@ Let's start with the most important part: **What would you like this agent to do
             <div className={`w-2 h-2 rounded-full animate-pulse ${existingConfabId ? 'bg-amber-500' : 'bg-green-500'}`} />
             {existingConfabId ? 'Resuming' : 'Active'}
           </Badge>
-          
-          {/* Progress Indicator */}
-          {isGeneratingSpec && (
-            <Badge variant="outline" className="gap-1 text-blue-600 border-blue-200">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              Generating Specs
-            </Badge>
-          )}
-          
-          {/* GitHub Status Indicator */}
-          {githubStatus !== 'idle' && (
-            <Badge variant={githubStatus === 'success' ? 'default' : githubStatus === 'error' ? 'destructive' : 'secondary'} className="gap-1">
-              {githubStatus === 'success' && <Check className="w-3 h-3" />}
-              {githubStatus === 'error' && <X className="w-3 h-3" />}
-              {githubStatus === 'pending' && <Loader2 className="w-3 h-3 animate-spin" />}
-              {githubMessage || 'GitHub'}
-            </Badge>
-          )}
         </div>
       </div>
 
@@ -694,54 +935,16 @@ Let's start with the most important part: **What would you like this agent to do
                 </div>
               ) : (
                 <>
+                  {/* Tool Activity Panel */}
+                  <ToolActivityPanel recentToolActivity={recentToolActivity} />
+                  
                   {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      {message.role === 'assistant' && (
-                        <Avatar className="w-8 h-8 flex-shrink-0">
-                          <AvatarFallback className={message.senderName === 'Foreman'
-                            ? "bg-gradient-to-br from-amber-500 to-orange-600"
-                            : "bg-gradient-to-br from-indigo-600 to-purple-600"
-                          }>
-                            {message.senderName === 'Foreman'
-                              ? <HardHat className="w-4 h-4 text-white" />
-                              : <Bot className="w-4 h-4 text-white" />
-                            }
-                          </AvatarFallback>
-                        </Avatar>
-                      )}
-                      <div
-                        className={`max-w-[80%] rounded-lg px-4 py-3 ${
-                          message.role === 'user'
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-100 text-slate-900'
-                        }`}
-                      >
-                        <MessageContent content={message.content} variant={message.role} />
-                        <p
-                          className={`text-xs mt-1 ${
-                            message.role === 'user' ? 'text-indigo-200' : 'text-slate-500'
-                          }`}
-                        >
-                          {message.timestamp.toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
-                      </div>
-                      {message.role === 'user' && (
-                        <div className="flex flex-col items-center gap-1">
-                          <Avatar className="w-8 h-8 flex-shrink-0">
-                            <AvatarFallback className="bg-slate-300">
-                              <User className="w-4 h-4 text-slate-600" />
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="text-xs text-slate-600">{user?.name ?? 'You'}</span>
-                        </div>
-                      )}
-                    </div>
+                    <EnhancedMessage 
+                      key={message.id} 
+                      message={message} 
+                      isUser={message.role === 'user'} 
+                      user={user}
+                    />
                   ))}
 
                   {isTyping && (
@@ -753,22 +956,7 @@ Let's start with the most important part: **What would you like this agent to do
                       </Avatar>
                       <div className="bg-slate-100 rounded-lg px-4 py-3 flex items-center gap-2">
                         <Loader2 className="w-4 h-4 animate-spin text-slate-600" />
-                        <span className="text-slate-600">
-                          {isGeneratingSpec ? 'Generating your confab specifications...' : 'Foreman is thinking...'}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Auto-generation success notification */}
-                  {autoGenerated && !isGeneratingSpec && githubStatus === 'success' && (
-                    <div className="flex justify-center my-4">
-                      <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-3 max-w-md">
-                        <Check className="w-5 h-5 text-green-600" />
-                        <div className="text-sm">
-                          <p className="font-medium text-green-800">Confab Successfully Created!</p>
-                          <p className="text-green-600">Your specifications have been generated and pushed to GitHub.</p>
-                        </div>
+                        <span className="text-slate-600">Foreman is thinking...</span>
                       </div>
                     </div>
                   )}
@@ -798,10 +986,13 @@ Let's start with the most important part: **What would you like this agent to do
                     <Send className="w-5 h-5" />
                   </Button>
                   <Button
-                    onClick={() => onNavigate('dashboard')}
+                    onClick={() => {
+                      handleGitHubPush();
+                      onNavigate('dashboard');
+                    }}
                     variant="outline"
                     size="icon"
-                    title="Save and continue later"
+                    title="Save and push to GitHub"
                   >
                     <Save className="w-5 h-5" />
                   </Button>
@@ -996,62 +1187,6 @@ Let's start with the most important part: **What would you like this agent to do
               {participants.length === 0 && (
                 <p className="text-sm text-slate-500 py-2">No participants yet.</p>
               )}
-            </div>
-          </Card>
-
-          {/* Navigation Tabs */}
-          <Card className="p-4 mt-4">
-            <div className="space-y-1">
-              <button
-                onClick={() => setActiveTab('foreman-chat')}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === 'foreman-chat'
-                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                Foreman Chat
-              </button>
-              <button
-                onClick={() => onNavigate('specs')}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === 'spec'
-                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                Spec
-              </button>
-              <button
-                onClick={() => onNavigate('sourcecode')}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === 'source'
-                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                Source
-              </button>
-              <button
-                onClick={() => onNavigate('deploymentpanel')}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === 'deployment'
-                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                Deployment
-              </button>
-              <button
-                onClick={() => setActiveTab('metrics')}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  activeTab === 'metrics'
-                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                Metrics+Traces
-              </button>
             </div>
           </Card>
         </div>

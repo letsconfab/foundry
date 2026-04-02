@@ -232,3 +232,88 @@ async def check_repo_permissions(access_token: str, repo_owner: str, repo_name: 
         
         repo_data = response.json()
         return repo_data.get("permissions", {})
+
+async def check_github_repo_exists(access_token: str, repo_name: str) -> Dict[str, Any]:
+    """Check if a GitHub repository exists for the authenticated user."""
+    async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, trust_env=False) as client:
+        # Get user info first
+        user_response = await client.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"token {access_token}"}
+        )
+        
+        if user_response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to fetch GitHub user information"
+            )
+        
+        user_data = user_response.json()
+        username = user_data['login']
+        
+        # Check if repo exists
+        repo_response = await client.get(
+            f"https://api.github.com/repos/{username}/{repo_name}",
+            headers={"Authorization": f"token {access_token}"}
+        )
+        
+        if repo_response.status_code == 200:
+            repo_data = repo_response.json()
+            return {
+                "exists": True,
+                "repo": {
+                    "name": repo_data["name"],
+                    "full_name": repo_data["full_name"],
+                    "clone_url": repo_data["clone_url"],
+                    "html_url": repo_data["html_url"],
+                    "private": repo_data["private"],
+                    "default_branch": repo_data["default_branch"]
+                }
+            }
+        elif repo_response.status_code == 404:
+            return {"exists": False}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to check repository existence"
+            )
+
+async def create_github_repo(access_token: str, repo_name: str, description: str = "Confabs repository for storing AI agent configurations") -> Dict[str, Any]:
+    """Create a new GitHub repository."""
+    async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, trust_env=False) as client:
+        repo_data = {
+            "name": repo_name,
+            "description": description,
+            "private": False,
+            "auto_init": True,
+            "gitignore_template": "Node"
+        }
+        
+        response = await client.post(
+            "https://api.github.com/user/repos",
+            headers={
+                "Authorization": f"token {access_token}",
+                "Accept": "application/vnd.github.v3+json"
+            },
+            json=repo_data
+        )
+        
+        if response.status_code == 201:
+            created_repo = response.json()
+            return {
+                "success": True,
+                "repo": {
+                    "name": created_repo["name"],
+                    "full_name": created_repo["full_name"],
+                    "clone_url": created_repo["clone_url"],
+                    "html_url": created_repo["html_url"],
+                    "private": created_repo["private"],
+                    "default_branch": created_repo["default_branch"]
+                }
+            }
+        else:
+            error_data = response.json()
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=error_data.get("message", "Failed to create repository")
+            )

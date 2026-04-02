@@ -250,6 +250,123 @@ async def get_user_github_repos(current_user: User = Depends(get_current_user), 
     return {"repos": repos}
 
 
+@app.post("/auth/github/create-repo")
+async def create_github_repo(
+    repo_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new GitHub repository for the user."""
+    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+    if not github_account:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not connected")
+    
+    repo_name = repo_data.get("repo_name")
+    if not repo_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="repo_name is required")
+    
+    try:
+        from confab_manager import create_github_repository
+        repo_info = await create_github_repository(
+            repo_name=repo_name,
+            access_token=github_account.access_token,
+            description=f"Repository for confabs created via Let's Confab"
+        )
+        
+        # Update user's GitHub account with the new repo info
+        github_account.selected_repo = repo_name
+        db.commit()
+        
+        return {
+            "message": "Repository created successfully",
+            "repository": {
+                "name": repo_info["name"],
+                "full_name": repo_info["full_name"],
+                "html_url": repo_info["html_url"],
+                "clone_url": repo_info["clone_url"]
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/auth/github/repos/{repo_name}/exists")
+async def check_github_repo_exists(
+    repo_name: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Check if a GitHub repository exists for the authenticated user."""
+    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+    if not github_account:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not connected")
+    
+    try:
+        from github_oauth import check_github_repo_exists
+        result = await check_github_repo_exists(github_account.access_token, repo_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/auth/github/repos")
+async def handle_github_repos_post(
+    request_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Handle POST requests to /auth/github/repos - for repo operations."""
+    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+    if not github_account:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not connected")
+    
+    # Handle repository creation (from frontend createGitHubRepo)
+    if "name" in request_data:
+        repo_name = request_data.get("name")
+        description = request_data.get("description", "Repository for confabs created via Let's Confab")
+        private = request_data.get("private", False)
+        
+        try:
+            from confab_manager import create_github_repository
+            repo_info = await create_github_repository(
+                repo_name=repo_name,
+                access_token=github_account.access_token,
+                description=description
+            )
+            
+            # Update user's GitHub account with the new repo info
+            github_account.selected_repo = repo_name
+            db.commit()
+            
+            return {
+                "message": "Repository created successfully",
+                "repository": {
+                    "name": repo_info["name"],
+                    "full_name": repo_info["full_name"],
+                    "html_url": repo_info["html_url"],
+                    "clone_url": repo_info["clone_url"]
+                }
+            }
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+    # Handle repo existence check (legacy format)
+    elif request_data.get("operation") == "check_exists":
+        repo_name = request_data.get("repo_name")
+        if not repo_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="repo_name is required")
+        
+        try:
+            from github_oauth import check_github_repo_exists
+            result = await check_github_repo_exists(github_account.access_token, repo_name)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request format")
+
+
 # =============================================================================
 # Confab Routes
 # =============================================================================
@@ -385,6 +502,59 @@ async def delete_confab(
     db.delete(confab)
     db.commit()
     return {"message": "Confab deleted"}
+
+
+@app.post("/confabs/{confab_id}/push-to-github")
+async def push_confab_to_github(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Push a confab's configuration and spec files to GitHub.
+    Creates the confab folder structure and pushes all generated files.
+    """
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == current_user.id).first()
+    if not github_account:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub account not connected")
+
+    try:
+        from github_service import GitHubService
+        from oasf_export import generate_all_export_files
+        
+        # Generate all spec files for the confab
+        spec_files = generate_all_export_files(confab, db)
+        
+        # Create GitHub service instance
+        github_service = GitHubService(
+            access_token=github_account.access_token,
+            repo_owner=github_account.selected_org or github_account.github_username,
+            repo_name=github_account.selected_repo
+        )
+        
+        # Push to GitHub using the service
+        repo_url = await github_service.create_confab_structure(
+            user_token=github_account.access_token,
+            repo_owner=github_account.selected_org or github_account.github_username,
+            repo_name=github_account.selected_repo,
+            confab_name=confab.name,
+            files=spec_files
+        )
+        
+        return {
+            "message": "Confab pushed to GitHub successfully",
+            "repo_url": repo_url,
+            "confab_name": confab.name,
+            "files_pushed": list(spec_files.keys())
+        }
+        
+    except Exception as e:
+        logger.error(f"Error pushing confab {confab_id} to GitHub: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 # =============================================================================

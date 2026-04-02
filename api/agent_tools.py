@@ -22,65 +22,13 @@ async def list_tools():
     return [
         {
             "name": "get_purpose",
-            "description": "Extract user purpose from chat and confirm with user (elicitation Yes/No)",
+            "description": "Get the purpose markdown for a confab from GitHub repo's PURPOSE.md file or database.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "confab_id": {"type": "integer"},
-                    "user_input": {"type": "string", "description": "User input to extract purpose from"}
+                    "confab_id": {"type": "integer"}
                 },
-                "required": ["confab_id", "user_input"]
-            }
-        },
-        {
-            "name": "generate_name",
-            "description": "Derive confab name from purpose and confirm with user (elicitation Yes/No)",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "confab_id": {"type": "integer"},
-                    "purpose_text": {"type": "string", "description": "The purpose text to generate name from"}
-                },
-                "required": ["confab_id", "purpose_text"]
-            }
-        },
-        {
-            "name": "create_spec",
-            "description": "Generate spec files in correct OASF structure and ensure schema is valid",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "confab_id": {"type": "integer"},
-                    "purpose_text": {"type": "string", "description": "The purpose text for spec generation"},
-                    "confab_name": {"type": "string", "description": "The confab name for spec generation"}
-                },
-                "required": ["confab_id", "purpose_text", "confab_name"]
-            }
-        },
-        {
-            "name": "save_spec_locally",
-            "description": "Save spec files in @spec folder with correct file names",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "confab_id": {"type": "integer"},
-                    "confab_name": {"type": "string", "description": "The confab name for file naming"},
-                    "spec_files": {"type": "object", "description": "Object containing spec file contents"}
-                },
-                "required": ["confab_id", "confab_name", "spec_files"]
-            }
-        },
-        {
-            "name": "github_push",
-            "description": "Push spec files automatically to GitHub repo with commit message 'auto: update confab spec after elicitation step'",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "confab_id": {"type": "integer"},
-                    "confab_name": {"type": "string", "description": "The confab name"},
-                    "spec_files": {"type": "object", "description": "Object containing spec file contents to push"}
-                },
-                "required": ["confab_id", "confab_name", "spec_files"]
+                "required": ["confab_id"]
             }
         },
         {
@@ -260,44 +208,120 @@ async def list_tools():
                 },
                 "required": ["confab_id", "confirm"]
             }
+        },
+        {
+            "name": "get_guardrails",
+            "description": "Get the guardrails markdown for a confab from GitHub repo's GUARDRAILS.md file or database.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"}
+                },
+                "required": ["confab_id"]
+            }
+        },
+        {
+            "name": "update_guardrails",
+            "description": "Update the guardrails markdown for a confab in GitHub repo's GUARDRAILS.md file and database.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"},
+                    "guardrails_markdown": {"type": "string"}
+                },
+                "required": ["confab_id", "guardrails_markdown"]
+            }
+        },
+        {
+            "name": "get_elicitation",
+            "description": "Get the elicitation markdown for a confab from GitHub repo's ELICITATION.md file or database.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"}
+                },
+                "required": ["confab_id"]
+            }
+        },
+        {
+            "name": "update_elicitation",
+            "description": "Update the elicitation markdown for a confab in GitHub repo's ELICITATION.md file and database.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"},
+                    "elicitation_markdown": {"type": "string"}
+                },
+                "required": ["confab_id", "elicitation_markdown"]
+            }
+        },
+        {
+            "name": "get_tests",
+            "description": "Get the tests markdown for a confab from GitHub repo's TESTS.md file or database.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"}
+                },
+                "required": ["confab_id"]
+            }
+        },
+        {
+            "name": "update_tests",
+            "description": "Update the tests markdown for a confab in GitHub repo's TESTS.md file and database.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"},
+                    "tests_markdown": {"type": "string"}
+                },
+                "required": ["confab_id", "tests_markdown"]
+            }
+        },
+        {
+            "name": "create_confab_folder",
+            "description": "Create a confab folder structure in GitHub repository with confab name as folder.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "confab_id": {"type": "integer"}
+                },
+                "required": ["confab_id"]
+            }
         }
     ]
 
 @mcp.call_tool()
 async def call_tool(name: str, arguments: dict):
     """Handle tool calls."""
+    print(f"[TOOL CALL] Calling tool: {name} with arguments: {arguments}")
     if name == "get_purpose":
-        result = await _get_purpose_internal(arguments.get("confab_id"), arguments.get("user_input"))
-        return {"content": [{"type": "text", "text": str(result)}]}
-    elif name == "generate_name":
-        result = await _generate_name_internal(arguments.get("confab_id"), arguments.get("purpose_text"))
-        return {"content": [{"type": "text", "text": str(result)}]}
-    elif name == "create_spec":
-        result = await _create_spec_internal(arguments.get("confab_id"), arguments.get("purpose_text"), arguments.get("confab_name"))
-        return {"content": [{"type": "text", "text": str(result)}]}
-    elif name == "save_spec_locally":
-        result = await _save_spec_locally_internal(arguments.get("confab_id"), arguments.get("confab_name"), arguments.get("spec_files"))
-        return {"content": [{"type": "text", "text": str(result)}]}
-    elif name == "github_push":
-        result = await _github_push_internal(arguments.get("confab_id"), arguments.get("confab_name"), arguments.get("spec_files"))
-        return {"content": [{"type": "text", "text": str(result)}]}
+        result = get_purpose(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] get_purpose completed: {len(str(result))} characters returned")
+        return {"content": [{"type": "text", "text": result or "No purpose found"}]}
     elif name == "update_purpose":
         success = update_purpose(arguments.get("confab_id"), arguments.get("purpose_markdown"))
+        print(f"[TOOL RESULT] update_purpose completed: {success}")
         return {"content": [{"type": "text", "text": "Purpose updated successfully" if success else "Failed to update purpose"}]}
     elif name == "update_file_tool":
         result = update_file_tool(arguments.get("confab_id"), arguments.get("file_path"), arguments.get("content"))
+        print(f"[TOOL RESULT] update_file_tool completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "create_commit_tool":
         result = create_commit_tool(arguments.get("confab_id"), arguments.get("file_path"), arguments.get("content"), arguments.get("message", "Update file"))
+        print(f"[TOOL RESULT] create_commit_tool completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "create_pull_request_tool":
         result = create_pull_request_tool(arguments.get("confab_id"), arguments.get("file_path"), arguments.get("content"), arguments.get("title", "File Update"))
+        print(f"[TOOL RESULT] create_pull_request_tool completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "store_user_information":
         success = store_user_information(arguments.get("confab_id"), arguments.get("user_name"), arguments.get("email"))
+        print(f"[TOOL RESULT] store_user_information completed: {success}")
         return {"content": [{"type": "text", "text": "User information stored successfully" if success else "Failed to store user information"}]}
     elif name == "get_user_information":
         results = get_user_information(arguments.get("confab_id"), arguments.get("email"))
+        print(f"[TOOL RESULT] get_user_information completed: {len(results)} results")
         if results:
             if arguments.get("email") and len(results) == 1:
                 user = results[0]
@@ -316,12 +340,15 @@ async def call_tool(name: str, arguments: dict):
             arguments.get("content_type"),
             arguments.get("metadata")
         )
+        print(f"[TOOL RESULT] upload_document completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "list_documents":
         result = await list_documents_tool(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] list_documents completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "delete_document":
         result = await delete_document_tool(arguments.get("confab_id"), arguments.get("document_id"))
+        print(f"[TOOL RESULT] delete_document completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "search_documents":
         result = await search_documents_tool(
@@ -330,6 +357,7 @@ async def call_tool(name: str, arguments: dict):
             arguments.get("top_k", 5),
             arguments.get("filter_type")
         )
+        print(f"[TOOL RESULT] search_documents completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "get_context_for_query":
         result = await get_context_tool(
@@ -337,19 +365,53 @@ async def call_tool(name: str, arguments: dict):
             arguments.get("query"),
             arguments.get("max_tokens", 2000)
         )
+        print(f"[TOOL RESULT] get_context_for_query completed: {len(str(result))} characters returned")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "reindex_documents":
         result = await reindex_documents_tool(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] reindex_documents completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "sync_learnings":
         result = await sync_learnings_tool(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] sync_learnings completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
     elif name == "clear_document_store":
         if not arguments.get("confirm"):
+            print(f"[TOOL RESULT] clear_document_store aborted: confirmation required")
             return {"content": [{"type": "text", "text": "Confirm must be true to clear document store."}]}
         result = await clear_document_store_tool(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] clear_document_store completed: {result}")
         return {"content": [{"type": "text", "text": result}]}
+    elif name == "get_guardrails":
+        result = get_guardrails(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] get_guardrails completed: {len(str(result))} characters returned")
+        return {"content": [{"type": "text", "text": result or "No guardrails found"}]}
+    elif name == "update_guardrails":
+        success = update_guardrails(arguments.get("confab_id"), arguments.get("guardrails_markdown"))
+        print(f"[TOOL RESULT] update_guardrails completed: {success}")
+        return {"content": [{"type": "text", "text": "Guardrails updated successfully" if success else "Failed to update guardrails"}]}
+    elif name == "get_elicitation":
+        result = get_elicitation(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] get_elicitation completed: {len(str(result))} characters returned")
+        return {"content": [{"type": "text", "text": result or "No elicitation found"}]}
+    elif name == "update_elicitation":
+        success = update_elicitation(arguments.get("confab_id"), arguments.get("elicitation_markdown"))
+        print(f"[TOOL RESULT] update_elicitation completed: {success}")
+        return {"content": [{"type": "text", "text": "Elicitation updated successfully" if success else "Failed to update elicitation"}]}
+    elif name == "get_tests":
+        result = get_tests(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] get_tests completed: {len(str(result))} characters returned")
+        return {"content": [{"type": "text", "text": result or "No tests found"}]}
+    elif name == "update_tests":
+        success = update_tests(arguments.get("confab_id"), arguments.get("tests_markdown"))
+        print(f"[TOOL RESULT] update_tests completed: {success}")
+        return {"content": [{"type": "text", "text": "Tests updated successfully" if success else "Failed to update tests"}]}
+    elif name == "create_confab_folder":
+        success = create_confab_folder_structure(arguments.get("confab_id"))
+        print(f"[TOOL RESULT] create_confab_folder completed: {success}")
+        return {"content": [{"type": "text", "text": "Confab folder created successfully" if success else "Failed to create confab folder"}]}
     else:
+        print(f"[TOOL ERROR] Unknown tool: {name}")
         return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 
 def get_purpose(confab_id: int) -> Optional[str]:
@@ -418,6 +480,459 @@ def get_purpose(confab_id: int) -> Optional[str]:
         logger.error(f"Error in get_purpose: {e}")
         print(f"Error in get_purpose: {e}")
         return None
+    finally:
+        if 'db' in locals():
+            db.close()
+
+def get_guardrails(confab_id: int) -> Optional[str]:
+    """Get the guardrails markdown for a confab from GitHub repo's confabs/{confab.name}/GUARDRAILS.md file."""
+    print("get_guardrails working successfully")
+    try:
+        from database import get_db
+        db = next(get_db())
+        
+        confab = db.query(Confab).filter(Confab.id == confab_id).first()
+        if not confab:
+            print(f"Confab with ID {confab_id} not found")
+            return None
+        
+        # Ensure confab has a proper name
+        confab_name = confab.name
+        if not confab_name or confab_name.startswith("Agent Chat –"):
+            print(f"Confab {confab_id} has improper name: {confab_name}")
+            return None
+            
+        # Try to get from GitHub first (confabs/{confab.name}/GUARDRAILS.md)
+        github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
+        if github_account:
+            try:
+                print(f"Attempting to connect to GitHub for user {confab.user_id}")
+                
+                # Validate token before using it
+                if not github_account.access_token:
+                    print("No GitHub access token found")
+                    raise Exception("No GitHub access token available")
+                
+                g = Github(github_account.access_token)
+                
+                # Test the token validity
+                try:
+                    user = g.get_user()
+                    print(f"GitHub token valid for user: {user.login}")
+                except Exception as token_error:
+                    print(f"Invalid GitHub token: {token_error}")
+                    raise Exception("GitHub token is invalid or expired")
+                
+                repo_name = f"{github_account.selected_org or github_account.github_username}/{github_account.selected_repo}"
+                print(f"Looking for repository: {repo_name}")
+                
+                repo = g.get_repo(repo_name)
+                guardrails_file_path = f"confabs/{confab_name}/GUARDRAILS.md"
+                guardrails_file = repo.get_contents(guardrails_file_path)
+                print(f"Successfully retrieved GUARDRAILS.md from {guardrails_file_path}")
+                return guardrails_file.decoded_content.decode('utf-8')
+            except Exception as e:
+                logger.warning(f"Could not fetch GUARDRAILS.md from GitHub: {e}")
+                print(f"GitHub access failed: {e}")
+                return None
+        else:
+            print("No GitHub account connected for this user")
+            return None
+        
+    except Exception as e:
+        logger.error(f"Error in get_guardrails: {e}")
+        print(f"Error in get_guardrails: {e}")
+        return None
+    finally:
+        if 'db' in locals():
+            db.close()
+
+def update_file_tool_function(confab_id: int, file_path: str, content: str) -> str:
+    """Internal function to update a file in GitHub repository without LangChain tool wrapper."""
+    try:
+        from database import get_db
+        from agent_runner import slugify
+        db = next(get_db())
+        
+        confab = db.query(Confab).filter(Confab.id == confab_id).first()
+        if not confab:
+            return "Confab not found"
+        
+        # Ensure confab has a proper slugified name
+        if not confab.name or confab.name.startswith("Agent Chat –"):
+            return "Confab has invalid name. Please set a proper confab name first."
+        
+        # Ensure confab name is slugified
+        confab_name = slugify(confab.name)
+        if confab.name != confab_name:
+            confab.name = confab_name
+            db.commit()
+            print(f"Updated confab name to slugified version: {confab_name}")
+            
+        github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
+        if not github_account:
+            return "No GitHub account connected"
+            
+        repo_owner = github_account.selected_org or github_account.github_username
+        repo_name = github_account.selected_repo
+        full_repo_name = f"{repo_owner}/{repo_name}"
+        
+        # For PURPOSE.md, ensure it goes to confabs/{confab_name}/PURPOSE.md
+        if file_path == "PURPOSE.md":
+            file_path = f"confabs/{confab_name}/PURPOSE.md"
+            print(f"Set PURPOSE.md path to: {file_path}")
+        # For other files, if they don't already include the confabs prefix, add it
+        # Check if the path already starts with confabs/{confab_name}/ to prevent double prefixing
+        elif not file_path.startswith(f"confabs/{confab_name}/"):
+            original_path = file_path
+            file_path = f"confabs/{confab_name}/{file_path}"
+            print(f"Added confabs prefix to path: {original_path} -> {file_path}")
+        else:
+            print(f"Path already has confabs prefix: {file_path}")
+        
+        # Use the new branch-based workflow
+        try:
+            from github import Github
+            
+            g = Github(github_account.access_token)
+            repo = g.get_repo(full_repo_name)
+            
+            # Create or get confab-specific branch
+            branch_name = create_confab_branch(repo, confab_id)
+            
+            # Update/create file in the confab branch
+            try:
+                # Try to get file from the confab branch
+                existing_file = repo.get_contents(file_path, ref=branch_name)
+                repo.update_file(
+                    file_path, 
+                    f"Update {file_path} for confab {confab_name}", 
+                    content, 
+                    existing_file.sha,
+                    branch=branch_name
+                )
+                print(f"{file_path} updated successfully in branch {branch_name}")
+            except:
+                # File might not exist in the branch, try to create it
+                repo.create_file(
+                    file_path, 
+                    f"Create {file_path} for confab {confab_name}", 
+                    content,
+                    branch=branch_name
+                )
+                print(f"{file_path} created successfully in branch {branch_name}")
+            
+            # Handle pull request logic (similar to ensure_repo_and_purpose but for general files)
+            existing_pr = check_pull_request_exists(repo, branch_name)
+            if existing_pr:
+                print(f"File updated in existing PR #{existing_pr.number}")
+                return f"File {file_path} updated successfully in existing PR #{existing_pr.number}"
+            else:
+                # Create new PR for the file update
+                pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
+                if pr:
+                    return f"File {file_path} updated successfully in new PR #{pr.number}"
+                else:
+                    return f"File {file_path} updated successfully but failed to create PR"
+            
+        except Exception as e:
+            return f"Failed to update file: {str(e)}"
+        
+    except Exception as e:
+        return f"Failed to update file: {str(e)}"
+    finally:
+        if 'db' in locals():
+            db.close()
+
+def update_guardrails(confab_id: int, guardrails_markdown: str) -> bool:
+    """Update the guardrails markdown for a confab in GitHub repo's GUARDRAILS.md file."""
+    print("update_guardrails working successfully")
+    try:
+        # Use the update_file_tool function directly to ensure proper GitHub integration
+        result = update_file_tool_function(confab_id, "GUARDRAILS.md", guardrails_markdown)
+        print(f"Guardrails update result: {result}")
+        return "successfully" in result.lower()
+    except Exception as e:
+        logger.error(f"Error in update_guardrails: {e}")
+        print(f"Error in update_guardrails: {e}")
+        return False
+
+def get_elicitation(confab_id: int) -> Optional[str]:
+    """Get the elicitation markdown for a confab from GitHub repo's confabs/{confab.name}/ELICITATION.md file."""
+    print("get_elicitation working successfully")
+    try:
+        from database import get_db
+        db = next(get_db())
+        
+        confab = db.query(Confab).filter(Confab.id == confab_id).first()
+        if not confab:
+            print(f"Confab with ID {confab_id} not found")
+            return None
+        
+        # Ensure confab has a proper name
+        confab_name = confab.name
+        if not confab_name or confab_name.startswith("Agent Chat –"):
+            print(f"Confab {confab_id} has improper name: {confab_name}")
+            return None
+            
+        # Try to get from GitHub first (confabs/{confab.name}/ELICITATION.md)
+        github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
+        if github_account:
+            try:
+                print(f"Attempting to connect to GitHub for user {confab.user_id}")
+                
+                # Validate token before using it
+                if not github_account.access_token:
+                    print("No GitHub access token found")
+                    raise Exception("No GitHub access token available")
+                
+                g = Github(github_account.access_token)
+                
+                # Test the token validity
+                try:
+                    user = g.get_user()
+                    print(f"GitHub token valid for user: {user.login}")
+                except Exception as token_error:
+                    print(f"Invalid GitHub token: {token_error}")
+                    raise Exception("GitHub token is invalid or expired")
+                
+                repo_name = f"{github_account.selected_org or github_account.github_username}/{github_account.selected_repo}"
+                print(f"Looking for repository: {repo_name}")
+                
+                repo = g.get_repo(repo_name)
+                elicitation_file_path = f"confabs/{confab_name}/ELICITATION.md"
+                elicitation_file = repo.get_contents(elicitation_file_path)
+                print(f"Successfully retrieved ELICITATION.md from {elicitation_file_path}")
+                return elicitation_file.decoded_content.decode('utf-8')
+            except Exception as e:
+                logger.warning(f"Could not fetch ELICITATION.md from GitHub: {e}")
+                print(f"GitHub access failed: {e}")
+                return None
+        else:
+            print("No GitHub account connected for this user")
+            return None
+        
+    except Exception as e:
+        logger.error(f"Error in get_elicitation: {e}")
+        print(f"Error in get_elicitation: {e}")
+        return None
+    finally:
+        if 'db' in locals():
+            db.close()
+
+def update_elicitation(confab_id: int, elicitation_markdown: str) -> bool:
+    """Update the elicitation markdown for a confab in GitHub repo's ELICITATION.md file."""
+    print("update_elicitation working successfully")
+    try:
+        # Use the update_file_tool_function directly to ensure proper GitHub integration
+        result = update_file_tool_function(confab_id, "ELICITATION.md", elicitation_markdown)
+        print(f"Elicitation update result: {result}")
+        return "successfully" in result.lower()
+    except Exception as e:
+        logger.error(f"Error in update_elicitation: {e}")
+        print(f"Error in update_elicitation: {e}")
+        return False
+
+def get_tests(confab_id: int) -> Optional[str]:
+    """Get the tests markdown for a confab from GitHub repo's confabs/{confab.name}/TESTS.md file."""
+    print("get_tests working successfully")
+    try:
+        from database import get_db
+        db = next(get_db())
+        
+        confab = db.query(Confab).filter(Confab.id == confab_id).first()
+        if not confab:
+            print(f"Confab with ID {confab_id} not found")
+            return None
+        
+        # Ensure confab has a proper name
+        confab_name = confab.name
+        if not confab_name or confab_name.startswith("Agent Chat –"):
+            print(f"Confab {confab_id} has improper name: {confab_name}")
+            return None
+            
+        # Try to get from GitHub first (confabs/{confab.name}/TESTS.md)
+        github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
+        if github_account:
+            try:
+                print(f"Attempting to connect to GitHub for user {confab.user_id}")
+                
+                # Validate token before using it
+                if not github_account.access_token:
+                    print("No GitHub access token found")
+                    raise Exception("No GitHub access token available")
+                
+                g = Github(github_account.access_token)
+                
+                # Test the token validity
+                try:
+                    user = g.get_user()
+                    print(f"GitHub token valid for user: {user.login}")
+                except Exception as token_error:
+                    print(f"Invalid GitHub token: {token_error}")
+                    raise Exception("GitHub token is invalid or expired")
+                
+                repo_name = f"{github_account.selected_org or github_account.github_username}/{github_account.selected_repo}"
+                print(f"Looking for repository: {repo_name}")
+                
+                repo = g.get_repo(repo_name)
+                tests_file_path = f"confabs/{confab_name}/TESTS.md"
+                tests_file = repo.get_contents(tests_file_path)
+                print(f"Successfully retrieved TESTS.md from {tests_file_path}")
+                return tests_file.decoded_content.decode('utf-8')
+            except Exception as e:
+                logger.warning(f"Could not fetch TESTS.md from GitHub: {e}")
+                print(f"GitHub access failed: {e}")
+                return None
+        else:
+            print("No GitHub account connected for this user")
+            return None
+        
+    except Exception as e:
+        logger.error(f"Error in get_tests: {e}")
+        print(f"Error in get_tests: {e}")
+        return None
+    finally:
+        if 'db' in locals():
+            db.close()
+
+def update_tests(confab_id: int, tests_markdown: str) -> bool:
+    """Update the tests markdown for a confab in GitHub repo's TESTS.md file."""
+    print("update_tests working successfully")
+    try:
+        # Use the update_file_tool_function directly to ensure proper GitHub integration
+        result = update_file_tool_function(confab_id, "TESTS.md", tests_markdown)
+        print(f"Tests update result: {result}")
+        return "successfully" in result.lower()
+    except Exception as e:
+        logger.error(f"Error in update_tests: {e}")
+        print(f"Error in update_tests: {e}")
+        return False
+
+def create_confab_folder_structure(confab_id: int) -> bool:
+    """Create the confab folder structure in GitHub repository based on confab name."""
+    print("create_confab_folder_structure working successfully")
+    try:
+        from database import get_db
+        from agent_runner import slugify
+        db = next(get_db())
+        
+        confab = db.query(Confab).filter(Confab.id == confab_id).first()
+        if not confab:
+            print(f"Confab with ID {confab_id} not found")
+            return False
+        
+        # Ensure confab has a proper slugified name
+        if not confab.name or confab.name.startswith("Agent Chat –"):
+            print(f"Confab {confab_id} has invalid name: {confab.name}")
+            return False
+        
+        # Ensure the confab name is slugified
+        confab_name = slugify(confab.name)
+        if confab.name != confab_name:
+            confab.name = confab_name
+            db.commit()
+            print(f"Updated confab name to slugified version: {confab_name}")
+            
+        github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
+        if not github_account:
+            print("No GitHub account connected in create_confab_folder_structure")
+            return False
+            
+        try:
+            print(f"Creating confab folder structure for user {confab.user_id}")
+            
+            # Validate token before using it
+            if not github_account.access_token:
+                print("No GitHub access token found in create_confab_folder_structure")
+                return False
+            
+            g = Github(github_account.access_token)
+            
+            # Test the token validity first
+            try:
+                user = g.get_user()
+                print(f"GitHub token valid for user: {user.login}")
+            except Exception as token_error:
+                print(f"Invalid GitHub token in create_confab_folder_structure: {token_error}")
+                return False
+            
+            repo_name = github_account.selected_repo
+            repo_owner = github_account.selected_org or github_account.github_username
+            full_repo_name = f"{repo_owner}/{repo_name}"
+            
+            # Try to get the repository first
+            try:
+                repo = g.get_repo(full_repo_name)
+                print(f"Repository {full_repo_name} exists")
+            except Exception as repo_error:
+                print(f"Repository {full_repo_name} not found or access denied: {repo_error}")
+                return False
+            
+            # Create or get confab-specific branch
+            branch_name = create_confab_branch(repo, confab_id)
+            
+            # Create the confab folder structure by creating a README.md file
+            folder_readme_path = f"confabs/{confab_name}/README.md"
+            readme_content = f"""# {confab_name}
+
+This folder contains the configuration and documentation for the **{confab.name}** confab.
+
+## Files
+
+- **PURPOSE.md** - Defines the purpose and objectives of this confab
+- **GUARDRAILS.md** - Safety constraints and behavioral boundaries
+- **ELICITATION.md** - Requirements gathering and specification
+- **TESTS.md** - Test scenarios and validation cases
+
+## Generated
+
+This confab structure was automatically generated by Let's Confab.
+"""
+            
+            try:
+                # Try to get file from the confab branch
+                existing_file = repo.get_contents(folder_readme_path, ref=branch_name)
+                repo.update_file(
+                    folder_readme_path, 
+                    f"Update confab folder README for {confab_name}", 
+                    readme_content, 
+                    existing_file.sha,
+                    branch=branch_name
+                )
+                print(f"Confab folder README updated successfully in branch {branch_name}")
+            except:
+                # File might not exist in the branch, try to create it
+                repo.create_file(
+                    folder_readme_path, 
+                    f"Create confab folder README for {confab_name}", 
+                    readme_content,
+                    branch=branch_name
+                )
+                print(f"Confab folder README created successfully in branch {branch_name}")
+            
+            # Create pull request for the folder structure
+            pr = create_or_update_pull_request(repo, branch_name, confab_name, confab_id)
+            if pr:
+                import time
+                time.sleep(2)
+                safe_merge_pull_request(repo, pr)
+                print(f"Confab folder structure created and PR merged successfully")
+            else:
+                print("Failed to create PR for confab folder structure")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error creating confab folder structure: {e}")
+            print(f"Repository operation failed: {e}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error in create_confab_folder_structure: {e}")
+        print(f"Error in create_confab_folder_structure: {e}")
+        return False
     finally:
         if 'db' in locals():
             db.close()
@@ -752,82 +1267,26 @@ def create_confab_branch(repo, confab_id: int) -> str:
             raise e
 
 def create_or_update_pull_request(repo, branch_name: str, confab_name: str, confab_id: int) -> Optional[Any]:
-    """Create a new PR or update existing one with enhanced merge logic."""
+    """Create a new PR or update existing one."""
     # Check if PR already exists
     existing_pr = check_pull_request_exists(repo, branch_name)
     
     if existing_pr:
         print(f"PR already exists: #{existing_pr.number}")
-        
-        # Check if PR can be merged
-        existing_pr.update()
-        if existing_pr.mergeable and existing_pr.mergeable_state != "dirty":
-            # Try to merge the PR if it's ready
-            if safe_merge_pull_request(repo, existing_pr):
-                print(f"Auto-merged existing PR #{existing_pr.number}")
-                # Create a new PR for additional changes if needed
-                return create_new_pr_after_merge(repo, branch_name, confab_name, confab_id)
-        
         return existing_pr
     
     # Create new PR
     try:
         pr = repo.create_pull(
             title=f"Update confab {confab_name} (ID: {confab_id})",
-            body=f"""Automated update for confab {confab_name} (ID: {confab_id})
-
-**Changes made in the confabs/{confab_name}/ directory:**
-- Updated PURPOSE.md with latest purpose definition
-- Updated Confab.toml with current configuration
-- Updated GUARDRAILS.md with safety constraints
-- Updated TESTS.md with test cases
-
-**Workflow:** This PR was created automatically by the Foreman system during the confab elicitation process.
-""",
+            body=f"Automated update for confab {confab_name} (ID: {confab_id})\n\nChanges made in the confabs/{confab_name}/ directory.",
             head=branch_name,
             base=repo.default_branch
         )
         print(f"Created PR #{pr.number}")
-        
-        # Try to auto-merge if it's immediately mergeable
-        import time
-        time.sleep(2)  # Wait for GitHub to process
-        pr.update()
-        if pr.mergeable and pr.mergeable_state != "dirty":
-            if safe_merge_pull_request(repo, pr):
-                print(f"Auto-merged new PR #{pr.number}")
-        
         return pr
     except Exception as e:
         print(f"Failed to create PR: {e}")
-        return None
-
-def create_new_pr_after_merge(repo, branch_name: str, confab_name: str, confab_id: int) -> Optional[Any]:
-    """Create a new PR after previous one was merged."""
-    try:
-        # Update branch with latest from main
-        try:
-            main_branch = repo.get_branch(repo.default_branch)
-            branch_ref = repo.get_git_ref(f"heads/{branch_name}")
-            branch_ref.edit(sha=main_branch.commit.sha)
-            print(f"Updated branch {branch_name} with latest from {repo.default_branch}")
-        except Exception as e:
-            print(f"Failed to update branch {branch_name}: {e}")
-        
-        # Create new PR
-        pr = repo.create_pull(
-            title=f"Update confab {confab_name} (ID: {confab_id}) - Additional changes",
-            body=f"""Additional automated updates for confab {confab_name} (ID: {confab_id})
-
-**Changes:** Further updates to confab configuration files after previous merge.
-""",
-            head=branch_name,
-            base=repo.default_branch
-        )
-        print(f"Created new PR #{pr.number} after merge")
-        return pr
-    except Exception as e:
-        print(f"Failed to create new PR after merge: {e}")
         return None
 
 def safe_merge_pull_request(repo, pr) -> bool:
@@ -958,7 +1417,7 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                 file = repo.get_contents(purpose_file_path, ref=branch_name)
                 repo.update_file(
                     purpose_file_path, 
-                    f"Update purpose for confab {confab_name} via Foreman system", 
+                    f"Update purpose for confab {confab_name}", 
                     purpose_markdown, 
                     file.sha,
                     branch=branch_name
@@ -969,7 +1428,7 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                 try:
                     repo.create_file(
                         purpose_file_path, 
-                        f"Create purpose for confab {confab_name} via Foreman system", 
+                        f"Create purpose for confab {confab_name}", 
                         purpose_markdown,
                         branch=branch_name
                     )
@@ -977,13 +1436,6 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
                 except Exception as create_file_error:
                     print(f"Failed to create PURPOSE.md at {purpose_file_path}: {create_file_error}")
                     return False
-            
-            # Update confab's GitHub sync state
-            confab.github_path = f"confabs/{confab_name}"
-            confab.github_synced_at = datetime.datetime.now()
-            confab.github_sync_version = confab.version or "1.0.0"
-            confab.purpose = purpose_markdown  # Store purpose in database as well
-            db.commit()
             
             # Handle pull request logic
             if is_first_time:
@@ -1170,18 +1622,85 @@ def create_pull_request_tool(confab_id: int, file_path: str, content: str, title
     """Create a pull request for confab file changes in the GitHub repository. This tool facilitates code review and collaboration by creating pull requests for proposed confab changes."""
     return update_file_tool(confab_id, file_path, content)
 
+class GetGuardrailsInput(BaseModel):
+    confab_id: int = Field(description="The ID of the confab to get guardrails for")
+
+@tool(args_schema=GetGuardrailsInput)
+def get_guardrails_tool(confab_id: int) -> str:
+    """Get the guardrails for a confab from GitHub repo or database."""
+    result = get_guardrails(confab_id)
+    return result or "No guardrails found"
+
+class UpdateGuardrailsInput(BaseModel):
+    confab_id: int = Field(description="The ID of the confab to update guardrails for")
+    guardrails_markdown: str = Field(description="The guardrails markdown content")
+
+@tool(args_schema=UpdateGuardrailsInput)
+def update_guardrails_tool(confab_id: int, guardrails_markdown: str) -> str:
+    """Update the guardrails for a confab in GitHub repo and database."""
+    success = update_guardrails(confab_id, guardrails_markdown)
+    return "Guardrails updated successfully" if success else "Failed to update guardrails"
+
+class GetElicitationInput(BaseModel):
+    confab_id: int = Field(description="The ID of the confab to get elicitation for")
+
+@tool(args_schema=GetElicitationInput)
+def get_elicitation_tool(confab_id: int) -> str:
+    """Get the elicitation for a confab from GitHub repo or database."""
+    result = get_elicitation(confab_id)
+    return result or "No elicitation found"
+
+class UpdateElicitationInput(BaseModel):
+    confab_id: int = Field(description="The ID of the confab to update elicitation for")
+    elicitation_markdown: str = Field(description="The elicitation markdown content")
+
+@tool(args_schema=UpdateElicitationInput)
+def update_elicitation_tool(confab_id: int, elicitation_markdown: str) -> str:
+    """Update the elicitation for a confab in GitHub repo and database."""
+    success = update_elicitation(confab_id, elicitation_markdown)
+    return "Elicitation updated successfully" if success else "Failed to update elicitation"
+
+class GetTestsInput(BaseModel):
+    confab_id: int = Field(description="The ID of the confab to get tests for")
+
+@tool(args_schema=GetTestsInput)
+def get_tests_tool(confab_id: int) -> str:
+    """Get the tests for a confab from GitHub repo or database."""
+    result = get_tests(confab_id)
+    return result or "No tests found"
+
+class UpdateTestsInput(BaseModel):
+    confab_id: int = Field(description="The ID of the confab to update tests for")
+    tests_markdown: str = Field(description="The tests markdown content")
+
+@tool(args_schema=UpdateTestsInput)
+def update_tests_tool(confab_id: int, tests_markdown: str) -> str:
+    """Update the tests for a confab in GitHub repo and database."""
+    success = update_tests(confab_id, tests_markdown)
+    return "Tests updated successfully" if success else "Failed to update tests"
+
+class CreateConfabFolderInput(BaseModel):
+    confab_id: int = Field(description="The ID of the confab to create folder structure for")
+
+@tool(args_schema=CreateConfabFolderInput)
+def create_confab_folder_tool(confab_id: int) -> str:
+    """Create the confab folder structure in GitHub repository."""
+    success = create_confab_folder_structure(confab_id)
+    return "Confab folder created successfully" if success else "Failed to create confab folder"
+
 # Get all tools for LangGraph integration
 def get_langchain_tools():
     """Return all available tools for LangGraph agent."""
     return [
-        # New workflow tools
         get_purpose_tool,
-        generate_name_tool,
-        create_spec_tool,
-        save_spec_locally_tool,
-        github_push_tool,
-        # Existing tools
         update_purpose_tool,
+        get_guardrails_tool,
+        update_guardrails_tool,
+        get_elicitation_tool,
+        update_elicitation_tool,
+        get_tests_tool,
+        update_tests_tool,
+        create_confab_folder_tool,
         update_file_tool,
         create_commit_tool,
         create_pull_request_tool,
@@ -1190,85 +1709,6 @@ def get_langchain_tools():
         search_knowledge_base_tool,
         update_knowledge_base_tool,
     ]
-
-# LangChain tool wrappers for new workflow tools
-class GetPurposeInput(BaseModel):
-    confab_id: int = Field(description="The ID of the confab to extract purpose for")
-    user_input: str = Field(description="The user input to extract purpose from")
-
-@tool(args_schema=GetPurposeInput)
-async def get_purpose_tool(confab_id: int, user_input: str) -> str:
-    """Extract user purpose from chat and confirm with user (elicitation Yes/No)."""
-    result = await _get_purpose_internal(confab_id, user_input)
-    if isinstance(result, dict):
-        if result.get("status") == "success":
-            return result["data"]["message"]
-        else:
-            return f"ERROR: {result.get('error', 'Unknown error')}"
-    return str(result)
-
-class GenerateNameInput(BaseModel):
-    confab_id: int = Field(description="The ID of confab to generate name for")
-    purpose_text: str = Field(description="The purpose text to generate name from")
-
-@tool(args_schema=GenerateNameInput)
-async def generate_name_tool(confab_id: int, purpose_text: str) -> str:
-    """Derive confab name from purpose and confirm with user (elicitation Yes/No)."""
-    result = await _generate_name_internal(confab_id, purpose_text)
-    if isinstance(result, dict):
-        if result.get("status") == "success":
-            return result["data"]["message"]
-        else:
-            return f"ERROR: {result.get('error', 'Unknown error')}"
-    return str(result)
-
-class CreateSpecInput(BaseModel):
-    confab_id: int = Field(description="The ID of confab to create spec for")
-    purpose_text: str = Field(description="The purpose text for spec generation")
-    confab_name: str = Field(description="The confab name for spec generation")
-
-@tool(args_schema=CreateSpecInput)
-async def create_spec_tool(confab_id: int, purpose_text: str, confab_name: str) -> str:
-    """Generate spec files in correct OASF structure and ensure schema is valid."""
-    result = await _create_spec_internal(confab_id, purpose_text, confab_name)
-    if isinstance(result, dict):
-        if result.get("status") == "success":
-            return result["data"]["message"]
-        else:
-            return f"ERROR: {result.get('error', 'Unknown error')}"
-    return str(result)
-
-class SaveSpecLocallyInput(BaseModel):
-    confab_id: int = Field(description="The ID of confab to save spec for")
-    confab_name: str = Field(description="The confab name for file naming")
-    spec_files: dict = Field(description="Object containing spec file contents")
-
-@tool(args_schema=SaveSpecLocallyInput)
-async def save_spec_locally_tool(confab_id: int, confab_name: str, spec_files: dict) -> str:
-    """Save spec files in @spec folder with correct file names."""
-    result = await _save_spec_locally_internal(confab_id, confab_name, spec_files)
-    if isinstance(result, dict):
-        if result.get("status") == "success":
-            return result["data"]["message"]
-        else:
-            return f"ERROR: {result.get('error', 'Unknown error')}"
-    return str(result)
-
-class GithubPushInput(BaseModel):
-    confab_id: int = Field(description="The ID of confab to push spec for")
-    confab_name: str = Field(description="The confab name")
-    spec_files: dict = Field(description="Object containing spec file contents to push")
-
-@tool(args_schema=GithubPushInput)
-async def github_push_tool(confab_id: int, confab_name: str, spec_files: dict) -> str:
-    """Push spec files automatically to GitHub repo with commit message 'auto: update confab spec after elicitation step'."""
-    result = await _github_push_internal(confab_id, confab_name, spec_files)
-    if isinstance(result, dict):
-        if result.get("status") == "success":
-            return result["data"]["message"]
-        else:
-            return f"ERROR: {result.get('error', 'Unknown error')}"
-    return str(result)
 
 # Legacy setup step utilities (kept for backward compatibility)
 def mark_step_complete(db: Session, confab_id: int, step: int) -> bool:
@@ -1398,457 +1838,6 @@ def review_and_save(db: Session, confab_id: int) -> str:
     mark_step_complete(db, confab_id, 7)
     return "Review complete; confab marked ready."
 
-
-# =============================================================================
-# Workflow Tools for Agent Chat - Internal Functions
-# =============================================================================
-
-async def _get_purpose_internal(confab_id: int, user_input: str) -> dict:
-    """Internal function to extract user purpose from chat using Foreman system"""
-    print("get_purpose tool working properly")
-    try:
-        from database import get_db
-        from foreman import Foreman
-        
-        db = next(get_db())
-        
-        confab = db.query(Confab).filter(Confab.id == confab_id).first()
-        if not confab:
-            print(f"ERROR in get_purpose tool: Confab {confab_id} not found")
-            return {"status": "error", "tool": "get_purpose", "error": "Confab not found"}
-        
-        # Use Foreman system to extract purpose
-        foreman = Foreman(confab_id, db)
-        if not await foreman.initialize():
-            print(f"ERROR in get_purpose tool: Failed to initialize Foreman for confab {confab_id}")
-            return {"status": "error", "tool": "get_purpose", "error": "Failed to initialize Foreman"}
-        
-        # Process user message through Foreman to extract purpose
-        foreman_response = await foreman.process_message(user_input)
-        
-        # Extract purpose from Foreman response
-        purpose_text = foreman_response.get("response", "").strip()
-        
-        if not purpose_text:
-            print("ERROR in get_purpose tool: Empty purpose extracted")
-            return {"status": "error", "tool": "get_purpose", "error": "Empty purpose extracted"}
-        
-        # Save purpose to confab
-        confab.purpose = purpose_text
-        db.commit()
-        
-        print("STEP SUCCESS")
-        print("get_purpose tool working properly")
-        
-        return {
-            "status": "success",
-            "tool": "get_purpose",
-            "data": {
-                "purpose": purpose_text,
-                "message": f"Purpose extracted: {purpose_text}\n\nPlease confirm: Is this correct? (Yes/No)"
-            }
-        }
-        
-    except Exception as e:
-        print(f"ERROR in get_purpose tool: {e}")
-        return {
-            "status": "error",
-            "tool": "get_purpose",
-            "error": str(e)
-        }
-    finally:
-        if 'db' in locals():
-            db.close()
-
-async def _generate_name_internal(confab_id: int, purpose_text: str) -> dict:
-    """Internal function to derive confab name from purpose"""
-    print("generate_name tool working properly")
-    try:
-        from agent_runner import generate_confab_name_from_purpose
-        
-        # Generate name from purpose
-        confab_name = generate_confab_name_from_purpose(purpose_text)
-        
-        if not confab_name:
-            print("ERROR in generate_name tool: Failed to generate name")
-            return {"status": "error", "tool": "generate_name", "error": "Failed to generate name"}
-        
-        # Add timestamp to name
-        import datetime
-        timestamp = datetime.datetime.now().strftime("-%Y%m%d-%H%M")
-        confab_name_with_timestamp = f"{confab_name}{timestamp}"
-        
-        # Update confab with generated name
-        from database import get_db
-        db = next(get_db())
-        
-        confab = db.query(Confab).filter(Confab.id == confab_id).first()
-        if not confab:
-            print(f"ERROR in generate_name tool: Confab {confab_id} not found")
-            return {"status": "error", "tool": "generate_name", "error": "Confab not found"}
-        
-        confab.name = confab_name_with_timestamp
-        db.commit()
-        
-        print("STEP SUCCESS")
-        print("generate_name tool working properly")
-        
-        return {
-            "status": "success",
-            "tool": "generate_name",
-            "data": {
-                "confab_name": confab_name_with_timestamp,
-                "message": f"Generated confab name: {confab_name_with_timestamp}\\n\\nPlease confirm: Is this correct? (Yes/No)"
-            }
-        }
-        
-    except Exception as e:
-        print(f"ERROR in generate_name tool: {e}")
-        return {
-            "status": "error",
-            "tool": "generate_name",
-            "error": str(e)
-        }
-    finally:
-        if 'db' in locals():
-            db.close()
-
-async def _create_spec_internal(confab_id: int, purpose_text: str, confab_name: str) -> dict:
-    """Internal function to generate spec files in correct OASF structure"""
-    print("create_spec tool working properly")
-    try:
-        from agent_runner import format_purpose_markdown, slugify
-        from database import get_db
-        
-        db = next(get_db())
-        
-        confab = db.query(Confab).filter(Confab.id == confab_id).first()
-        if not confab:
-            print(f"ERROR in create_spec tool: Confab {confab_id} not found")
-            return {"status": "error", "tool": "create_spec", "error": "Confab not found"}
-        
-        # Generate OASF spec files
-        slug_name = slugify(confab_name)
-        
-        # Create PURPOSE.md content using the formatted purpose from confab
-        purpose_content = format_purpose_markdown(purpose_text, confab_name)
-        
-        # Update confab's purpose field with formatted content
-        confab.purpose = purpose_content
-        db.commit()
-        
-        # Create Confab.toml content
-        import json
-        
-        # Parse domains and skills from confab or use defaults
-        domains = confab.domains if isinstance(confab.domains, list) else ['general']
-        skills = confab.skills if isinstance(confab.skills, list) else ['conversation', 'question-answering']
-        
-        # Pre-compute escaped purpose text to avoid backslash in f-string
-        escaped_purpose_text = purpose_text.replace('"', '\\"')
-        
-        confab_toml_content = f"""[confab]
-name = "{confab_name}"
-slug = "{slug_name}"
-version = "{confab.version or '1.0.0'}"
-status = "{confab.status or 'building'}"
-created_at = "{confab.created_at.isoformat() if confab.created_at else datetime.datetime.now().isoformat()}"
-updated_at = "{datetime.datetime.now().isoformat()}"
-
-[agent]
-model_provider = "{confab.model_provider or 'groq'}"
-model_name = "{confab.model_name or 'qwen/qwen3-32b'}"
-temperature = {confab.temperature or 0.7}
-
-[oasf]
-schema_version = "{confab.oasf_schema_version or '1.0.0'}"
-
-[domains]
-names = {json.dumps(domains)}
-
-[skills]
-ids = {json.dumps(skills)}
-
-[purpose]
-description = "{escaped_purpose_text}"
-
-[metadata]
-created_by = "foreman_system"
-auto_generated = true
-"""
-        
-        # Create GUARDRAILS.md content
-        guardrails_content = f"""# Guardrails for {confab_name}
-
-## Safety Constraints
-- Do not provide harmful, illegal, or unethical advice
-- Respect user privacy and confidentiality
-- Do not make false claims or hallucinate facts
-
-## Behavioral Boundaries
-- Stay within the defined purpose: {purpose_text}
-- Be helpful and professional
-- Ask for clarification when needed
-
-## Content Guidelines
-- Use clear and concise language
-- Provide accurate and relevant information
-- Acknowledge limitations when appropriate
-"""
-        
-        # Create TESTS.md content
-        tests_content = f"""# Test Cases for {confab_name}
-
-## Purpose Adherence Tests
-- Test agent stays within defined purpose: {purpose_text}
-- Test response relevance to core functionality
-- Test edge case handling within scope
-
-## Conversation Flow Tests
-- Test greeting and introduction
-- Test basic question answering
-- Test clarification requests
-- Test conversation closure
-
-## Guardrail Compliance Tests
-- Test safety constraint enforcement
-- Test privacy protection
-- Test refusal of inappropriate requests
-- Test professional conduct
-
-## Performance Tests
-- Test response time (< 3 seconds)
-- Test concurrent request handling
-- Test memory usage efficiency
-- Test error recovery
-
-## Integration Tests
-- Test with different user personas
-- Test multi-turn conversations
-- Test context retention
-- Test tool integration (if applicable)
-"""
-        
-        spec_files = {
-            "PURPOSE.md": purpose_content,
-            "Confab.toml": confab_toml_content,
-            "GUARDRAILS.md": guardrails_content,
-            "TESTS.md": tests_content
-        }
-        
-        print("STEP SUCCESS")
-        print("create_spec tool working properly")
-        
-        return {
-            "status": "success",
-            "tool": "create_spec",
-            "data": {
-                "spec_files": spec_files,
-                "message": f"Generated {len(spec_files)} spec files for {confab_name}"
-            }
-        }
-        
-    except Exception as e:
-        print(f"ERROR in create_spec tool: {e}")
-        return {
-            "status": "error",
-            "tool": "create_spec",
-            "error": str(e)
-        }
-    finally:
-        if 'db' in locals():
-            db.close()
-
-async def _save_spec_locally_internal(confab_id: int, confab_name: str, spec_files: dict) -> dict:
-    """Internal function to save spec files in @spec folder"""
-    print("save_spec_locally tool working properly")
-    try:
-        from agent_runner import slugify
-        import os
-        
-        # Create spec directory if it doesn't exist
-        spec_dir = "spec"
-        if not os.path.exists(spec_dir):
-            os.makedirs(spec_dir)
-        
-        # Create confab-specific subdirectory
-        confab_dir = os.path.join(spec_dir, slugify(confab_name))
-        if not os.path.exists(confab_dir):
-            os.makedirs(confab_dir)
-        
-        saved_files = []
-        
-        # Save each spec file
-        for filename, content in spec_files.items():
-            file_path = os.path.join(confab_dir, filename)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            saved_files.append(file_path)
-            print(f"Saved spec file: {file_path}")
-        
-        print("STEP SUCCESS")
-        print("save_spec_locally tool working properly")
-        
-        return {
-            "status": "success",
-            "tool": "save_spec_locally",
-            "data": {
-                "saved_files": saved_files,
-                "confab_dir": confab_dir,
-                "message": f"Saved {len(saved_files)} spec files to {confab_dir}"
-            }
-        }
-        
-    except Exception as e:
-        print(f"ERROR in save_spec_locally tool: {e}")
-        return {
-            "status": "error",
-            "tool": "save_spec_locally",
-            "error": str(e)
-        }
-
-async def _github_push_internal(confab_id: int, confab_name: str, spec_files: dict, max_retries: int = 3) -> dict:
-    """Internal function to push spec files automatically to GitHub repo with retry logic"""
-    print("github_push tool working properly")
-    
-    for attempt in range(max_retries):
-        try:
-            from database import get_db
-            from agent_runner import slugify
-            import time
-            
-            db = next(get_db())
-            
-            confab = db.query(Confab).filter(Confab.id == confab_id).first()
-            if not confab:
-                print(f"ERROR in github_push tool: Confab {confab_id} not found")
-                return {"status": "error", "tool": "github_push", "error": "Confab not found"}
-            
-            github_account = db.query(GitHubAccount).filter(GitHubAccount.user_id == confab.user_id).first()
-            if not github_account:
-                print("ERROR in github_push tool: No GitHub account connected")
-                return {"status": "error", "tool": "github_push", "error": "No GitHub account connected"}
-            
-            # Validate GitHub token
-            if not github_account.access_token:
-                print("ERROR in github_push tool: No GitHub access token")
-                return {"status": "error", "tool": "github_push", "error": "No GitHub access token"}
-            
-            # Use existing GitHub integration
-            from github import Github
-            g = Github(github_account.access_token)
-            
-            # Test token validity
-            try:
-                user = g.get_user()
-                print(f"GitHub token valid for user: {user.login}")
-            except Exception as token_error:
-                print(f"Invalid GitHub token: {token_error}")
-                return {"status": "error", "tool": "github_push", "error": "GitHub token is invalid or expired"}
-            
-            repo_name = github_account.selected_repo
-            repo_owner = github_account.selected_org or github_account.github_username
-            full_repo_name = f"{repo_owner}/{repo_name}"
-            
-            # Verify repository exists and is accessible
-            try:
-                repo = g.get_repo(full_repo_name)
-                print(f"Repository access confirmed: {full_repo_name}")
-            except Exception as repo_error:
-                print(f"Repository access error: {repo_error}")
-                return {"status": "error", "tool": "github_push", "error": f"Cannot access repository {full_repo_name}: {str(repo_error)}"}
-            
-            # Use simplified direct push to main branch approach
-            slug_name = slugify(confab_name)
-            pushed_files = []
-            failed_files = []
-            
-            # Push each spec file directly to main branch
-            for filename, content in spec_files.items():
-                file_path = f"confabs/{slug_name}/{filename}"
-                
-                try:
-                    # Try to update existing file
-                    existing_file = repo.get_contents(file_path)  # Default to main branch
-                    repo.update_file(
-                        file_path,
-                        f"auto: update confab spec after elicitation step",
-                        content,
-                        existing_file.sha
-                    )
-                    print(f"Updated file in GitHub: {file_path}")
-                    pushed_files.append(file_path)
-                except Exception as update_error:
-                    # Create new file if it doesn't exist
-                    try:
-                        repo.create_file(
-                            file_path,
-                            f"auto: update confab spec after elicitation step",
-                            content
-                        )
-                        print(f"Created new file in GitHub: {file_path}")
-                        pushed_files.append(file_path)
-                    except Exception as create_error:
-                        print(f"Failed to create file {file_path}: {create_error}")
-                        failed_files.append({"file": file_path, "error": str(create_error)})
-                        continue
-            
-            # Check if any files failed
-            if failed_files and not pushed_files:
-                if attempt < max_retries - 1:
-                    print(f"All files failed, retrying in 2 seconds... (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(2)
-                    continue
-                else:
-                    error_summary = "; ".join([f"{f['file']}: {f['error']}" for f in failed_files])
-                    return {
-                        "status": "error", 
-                        "tool": "github_push", 
-                        "error": f"Failed to push all files to GitHub: {error_summary}"
-                    }
-            
-            # Update confab's GitHub sync state
-            confab.github_path = f"confabs/{slug_name}"
-            confab.github_synced_at = datetime.datetime.now()
-            confab.github_sync_version = confab.version or "1.0.0"
-            db.commit()
-            
-            # Prepare success message
-            message = f"Successfully pushed {len(pushed_files)} files to GitHub repository {full_repo_name}"
-            if failed_files:
-                message += f" (Warning: {len(failed_files)} files failed)"
-            
-            print("STEP SUCCESS")
-            print("github_push tool working properly")
-            
-            return {
-                "status": "success",
-                "tool": "github_push",
-                "data": {
-                    "pushed_files": pushed_files,
-                    "failed_files": failed_files,
-                    "repo": full_repo_name,
-                    "attempt": attempt + 1,
-                    "message": message
-                }
-            }
-            
-        except Exception as e:
-            print(f"ERROR in github_push tool (attempt {attempt + 1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
-                print(f"Retrying in 2 seconds...")
-                import time
-                time.sleep(2)
-                continue
-            else:
-                return {
-                    "status": "error",
-                    "tool": "github_push",
-                    "error": f"Failed after {max_retries} attempts: {str(e)}"
-                }
-        finally:
-            if 'db' in locals():
-                db.close()
 
 # =============================================================================
 # Document Store Tools

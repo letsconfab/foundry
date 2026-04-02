@@ -78,24 +78,5 @@ class LLMClient:
 llm_client = LLMClient()
 
 async def ask_llm(prompt: str, temperature: float = 0.7) -> str:
-    """Convenience function to ask the LLM a question using LangChain with bound tools."""
-    try:
-        from agent_runner import get_llm
-        
-        # Get the LLM instance with tools bound
-        llm = get_llm()
-        
-        # Create a message format for the LLM
-        from langchain_core.messages import HumanMessage
-        
-        messages = [HumanMessage(content=prompt)]
-        
-        # Invoke the LLM - it will have access to bound tools
-        response = llm.invoke(messages)
-        
-        return response.content
-        
-    except Exception as e:
-        logger.error(f"Error using LangChain LLM: {e}")
-        # Fallback to direct HTTP call if LangChain fails
-        return await llm_client.generate_response(prompt, temperature)
+    """Convenience function to ask the LLM a question."""
+    return await llm_client.generate_response(prompt, temperature=temperature)

@@ -125,6 +125,21 @@ class ApiClient {
     return this.request('/auth/github/repos');
   }
 
+  async checkGitHubRepoExists(repoName = 'confabs') {
+    return this.request(`/auth/github/repos/${repoName}/exists`);
+  }
+
+  async createGitHubRepo(repoName, description = 'Confabs repository for storing AI agent configurations') {
+    return this.request('/auth/github/repos', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: repoName,
+        description: description,
+        private: false
+      }),
+    });
+  }
+
   // Confab endpoints
   async createConfab(options = {}) {
     console.log('API Client: Creating confab with options:', options);
@@ -311,6 +326,13 @@ class ApiClient {
 
   async getDocumentStats(confabId) {
     return this.request(`/confabs/${confabId}/documents/stats`);
+  }
+
+  // GitHub Push endpoint
+  async pushConfabToGitHub(confabId) {
+    return this.request(`/confabs/${confabId}/push-to-github`, {
+      method: 'POST',
+    });
   }
 
   // REMOVED: chatWithLangGraphAgent - use chat() instead

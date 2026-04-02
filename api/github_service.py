@@ -678,6 +678,76 @@ license = "MIT"
 
         return pr["html_url"]
 
+    async def create_confab_structure(
+        self,
+        user_token: str,
+        repo_owner: str,
+        repo_name: str,
+        confab_name: str,
+        files: Dict[str, str]
+    ) -> str:
+        """
+        Create confab folder structure and push all spec files to GitHub.
+        
+        Args:
+            user_token: GitHub access token
+            repo_owner: Repository owner (user or org)
+            repo_name: Repository name
+            confab_name: Name of the confab
+            files: Dictionary of file paths to content
+            
+        Returns:
+            Repository URL with confab folder path
+        """
+        # Update service with provided credentials
+        self.access_token = user_token
+        self.repo_owner = repo_owner
+        self.repo_name = repo_name
+        
+        # Create a unique branch for this push
+        timestamp = int(datetime.now().timestamp())
+        branch_name = f"confab-push-{confab_name.lower().replace(' ', '-')}-{timestamp}"
+        
+        try:
+            # Get default branch and create new branch
+            default_branch = await self.get_default_branch()
+            default_sha = await self.get_branch_sha(default_branch)
+            await self.create_branch_from_sha(branch_name, default_sha)
+            
+            # Push each file to the confabs/{confab_name}/ directory
+            confab_dir = confab_name.lower().replace(' ', '-')
+            base_path = f"confabs/{confab_dir}"
+            
+            for file_path, content in files.items():
+                full_path = f"{base_path}/{file_path}"
+                await self.create_or_update_file(
+                    full_path,
+                    content,
+                    branch_name,
+                    f"Add {file_path} for confab {confab_name}"
+                )
+            
+            # Create pull request
+            pr = await self.create_pr(
+                branch=branch_name,
+                title=f"Add confab: {confab_name}",
+                body=f"Automated confab creation for {confab_name}\n\nFiles added:\n" + 
+                      "\n".join(f"- {file}" for file in files.keys())
+            )
+            
+            # Return the repository URL with the confab folder path
+            repo_url = f"https://github.com/{repo_owner}/{repo_name}/tree/main/{base_path}"
+            return repo_url
+            
+        except Exception as e:
+            logger.error(f"Error creating confab structure: {e}")
+            # Clean up branch on error
+            try:
+                await self.delete_branch(branch_name)
+            except:
+                pass  # Best effort cleanup
+            raise
+
 
 # ==================== Module-level helper functions ====================
 
