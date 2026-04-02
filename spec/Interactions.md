@@ -41,21 +41,51 @@
 5. Backend creates or updates the `GitHubAccount` linked to the current user.
 6. User is redirected to Dashboard with GitHub now connected.
 
-### 5. Creating a Confab
+### 5. Creating a Confab (with Foreman)
 
 1. From the Dashboard, user clicks "Create New Confab".
-2. Navigates to the `AgentChat` wizard.
-3. Walks through 7 steps via a conversational chat interface:
-   - **Define Purpose** — Name, description, objectives.
-   - **Add Participants** — Users and other confabs with roles.
-   - **Configure Memory** — Memory and conversation settings.
-   - **Add Tools & APIs** — External integrations.
-   - **Guardrails** — Safety constraints and boundaries.
-   - **Sample Inputs/Outputs** — Example interactions.
-   - **Review & Save** — Final review and submission.
-4. On save → `POST /confabs`.
-5. If GitHub is connected, backend creates a branch, commits the 4 confab files, and opens a pull request.
-6. Confab appears on the Dashboard with `draft` status.
+2. Backend creates a new confab with `status='building'` and no content → `POST /confabs`.
+3. Backend creates a thread with two participants:
+   - The user (owner)
+   - The Foreman (system agent)
+4. UI navigates to `AgentChat` wizard.
+5. Foreman sends initial greeting:
+   > "Welcome to the Agent Foundry. I am the Foreman, and will walk you through the creation of this confab (Collaborative Agent)."
+6. User converses with Foreman through 7 steps:
+   - **Define Purpose** — Foreman asks what the agent should do
+   - **Add Participants** — Who can access it
+   - **Configure Memory** — Should it remember conversations
+   - **Set Up Tools** — External capabilities
+   - **Establish Guardrails** — Safety boundaries
+   - **Sample I/O** — Example interactions
+   - **Review** — Finalize configuration
+7. Foreman uses tools (`define_purpose`, `guardrails`, etc.) to save configuration incrementally to the confab record.
+8. Progress is tracked in `confab.setup_progress` JSON field.
+9. On completion, Foreman sets confab status to `draft` (ready for deployment).
+10. If GitHub is connected, confab files are synced to the repository.
+
+### 5a. Resuming Confab Building ("Continue Building")
+
+1. From Dashboard, user clicks "Continue Building" on a confab with `status='building'`.
+2. Frontend loads the existing confab and finds its Foreman thread.
+3. Previous messages are loaded from the thread's message history.
+4. Foreman generates a resume prompt based on `setup_progress`:
+   - Summarizes completed steps
+   - Shows current progress
+   - Asks about the next incomplete step
+5. User continues the conversation from where they left off.
+
+### 5b. Chatting with Foreman During Building
+
+1. User sends a message in the AgentChat interface.
+2. Frontend calls `POST /threads/{thread_id}/chat` with the message.
+3. Backend identifies the Foreman as a system participant.
+4. Backend finds the user's confab with `status='building'`.
+5. Foreman loads full context: confab state, thread history, setup progress.
+6. Foreman generates a directive response (acknowledges input, saves relevant data, asks next question).
+7. If the response signals step completion, progress is updated in `confab.setup_progress`.
+8. Response is saved to the thread and returned to the frontend.
+9. UI displays the Foreman's response with HardHat icon and amber gradient.
 
 ### 6. Updating a Confab
 
@@ -79,12 +109,12 @@
 4. Picks an LLM provider (OpenAI, Anthropic, Google, Cohere) and model.
 5. Submits the configuration. (Backend deployment provisioning is not yet implemented.)
 
-### 9. Chatting with a Confab
+### 9. Chatting with a Deployed Confab
 
 1. User navigates to the Confab Chat view.
 2. Sends messages in a chat interface.
 3. Can provide feedback on responses (thumbs up/down with optional modal).
-4. Participant list shows who is in the conversation. (Live LLM execution is not yet implemented.)
+4. Participant list shows who is in the conversation. (Live LLM execution for deployed confabs is not yet implemented.)
 
 ### 10. Testing GitHub Integration
 
@@ -124,7 +154,23 @@
 | GET | `/confabs/{confab_id}` | Get a specific confab | Yes |
 | PUT | `/confabs/{confab_id}` | Update a confab | Yes |
 | DELETE | `/confabs/{confab_id}` | Delete a confab | Yes |
+| GET | `/confabs/{confab_id}/export` | Export as OASF files | Yes |
 | POST | `/confabs/test-repo` | Test GitHub repository initialization | Yes |
+
+### Thread Endpoints
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/threads` | List threads owned by current user | Yes |
+| POST | `/threads` | Create a new thread | Yes |
+| GET | `/threads/{thread_id}` | Get thread with participants | Yes |
+| DELETE | `/threads/{thread_id}` | Delete a thread | Yes |
+| GET | `/threads/{thread_id}/participants` | List participants | Yes |
+| POST | `/threads/{thread_id}/participants` | Add participant | Yes |
+| DELETE | `/threads/{thread_id}/participants/{id}` | Remove participant | Yes |
+| GET | `/threads/{thread_id}/messages` | List messages | Yes |
+| POST | `/threads/{thread_id}/messages` | Add message (no agent response) | Yes |
+| POST | `/threads/{thread_id}/chat` | Chat with agent responses | Yes |
 
 ### Utility Endpoints
 
@@ -161,17 +207,24 @@ The backend communicates with GitHub's REST API v3 for:
 | List user orgs | `GET https://api.github.com/user/orgs` | `github_oauth.py` |
 | List org repos | `GET https://api.github.com/orgs/{org}/repos` | `github_oauth.py` |
 | Check repo permissions | `GET https://api.github.com/repos/{owner}/{repo}` | `github_oauth.py` |
-| Get branch reference | `GET https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{branch}` | `confab_manager.py` |
-| Create branch | `POST https://api.github.com/repos/{owner}/{repo}/git/refs` | `confab_manager.py` |
-| Create/update file | `PUT https://api.github.com/repos/{owner}/{repo}/contents/{path}` | `confab_manager.py` |
-| Create pull request | `POST https://api.github.com/repos/{owner}/{repo}/pulls` | `confab_manager.py` |
-| Create repository | `POST https://api.github.com/user/repos` | `confab_manager.py` |
+| Get branch reference | `GET https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{branch}` | `github_service.py` |
+| Create branch | `POST https://api.github.com/repos/{owner}/{repo}/git/refs` | `github_service.py` |
+| Create/update file | `PUT https://api.github.com/repos/{owner}/{repo}/contents/{path}` | `github_service.py` |
+| Create pull request | `POST https://api.github.com/repos/{owner}/{repo}/pulls` | `github_service.py` |
+| Create repository | `POST https://api.github.com/user/repos` | `github_service.py` |
+
+### Groq API (LLM)
+
+- **Provider:** Groq
+- **Model:** qwen/qwen3-32b
+- **Used By:** `llm_service.py`
+- **Purpose:** Powers the Foreman agent and confab conversations
 
 ### PostgreSQL (Database)
 
 - Connection via SQLAlchemy engine using `DATABASE_URL`.
 - Default: `postgresql://postgres:password@localhost:7432/confab_foundry_db`.
-- Three tables: `users`, `github_accounts`, `confabs`.
+- Tables: `users`, `github_accounts`, `confabs`, `confab_learnings`, `threads`, `thread_participants`, `messages`.
 
 ### Frontend → Backend (Internal)
 

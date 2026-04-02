@@ -23,6 +23,26 @@ services:
       retries: 5
     restart: unless-stopped
 
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: confab-foundry-api
+    env_file:
+      - ./api/.env
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-default_pass_change_me}@db:5432/confab_foundry_db
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./api:/app
+    networks:
+      - confab-foundry-network
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 networks:
   confab-foundry-network:
     driver: bridge

@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Github, Plus, Bot, Shield, Network, Users, Mail, User, ArrowLeft, Folder, FileText, ChevronRight, ChevronDown, ChevronLeft, Menu, MessageSquare, List } from 'lucide-react';
+import { Send, Sparkles, Save, Loader2, Paperclip, File, X, Github, Plus, Bot, Shield, Network, Users, Mail, User, ArrowLeft, Folder, FileText, ChevronRight, ChevronDown, ChevronLeft, MessageSquare, List, Trash2, RefreshCw, Eye, Pencil, CheckCircle2, AlertTriangle, GitBranch } from 'lucide-react';
+import { apiClient } from '../api/client';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { Label } from './ui/label';
 import { Input } from './ui/input';
+import ReactMarkdown from 'react-markdown';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Select,
   SelectContent,
@@ -21,6 +24,7 @@ interface ConfigureConfabProps {
   onNavigate: (view: View, confabName?: string) => void;
   confabName: string;
   version: string;
+  confabId?: number;
 }
 
 interface Message {
@@ -40,8 +44,23 @@ interface SubThread {
 }
 
 interface UploadedFile {
+  tempId: string;
   name: string;
   size: number;
+  id?: number;
+  status: 'pending' | 'uploading' | 'indexed' | 'duplicate' | 'failed';
+  error?: string;
+  chunkCount?: number;
+  file?: File;
+}
+
+interface DocumentListItem {
+  id: number;
+  filename: string;
+  content_type: string;
+  chunk_count: number;
+  status: string;
+  created_at?: string;
 }
 
 interface Participant {
@@ -53,6 +72,138 @@ interface Participant {
   isOnline: boolean;
   type: 'user' | 'confab';
 }
+
+type DefinitionFileKey = 'purpose' | 'guardrails';
+type DefinitionFileStatus = 'hidden' | 'uncommitted' | 'locally-modified' | 'ready-to-push' | 'up-to-date';
+
+interface DefinitionFileState {
+  key: DefinitionFileKey;
+  fileName: 'PURPOSE.md' | 'GUARDRAILS.md';
+  content: string;
+  savedContent: string;
+  remoteContent: string | null;
+  isEditing: boolean;
+  visible: boolean;
+  acceptedForCommit: boolean;
+}
+
+interface ConfabRecord {
+  id: number;
+  name: string;
+  version: string;
+  purpose?: string | null;
+  guardrails?: Array<{ id: string; rule: string; severity: string; enabled: boolean }> | null;
+  github_synced_at?: string | null;
+  github_path?: string | null;
+}
+
+interface RefreshDefinitionResponse {
+  confab_id: number;
+  purpose: string | null;
+  guardrails_markdown: string | null;
+  remote_branch: string | null;
+  remote_source: 'branch' | 'default' | 'none' | null;
+  refreshed_at: string;
+}
+
+interface CommitDefinitionResponse {
+  confab_id: number;
+  branch: string;
+  folder_path: string;
+  committed_files: string[];
+  commit_sha?: string | null;
+  status: 'committed' | 'no-op';
+  synced_at: string;
+}
+
+interface DefinitionConflict {
+  fileKey: DefinitionFileKey;
+  local: string;
+  remote: string;
+  mode: 'choose' | 'manual';
+  merged: string;
+}
+
+// V2 Foreman metadata from API response
+interface ForemanV2Metadata {
+  stage: string;
+  stage_status: 'complete' | 'clarify' | 'skip' | 'error' | null;
+  saved_fields: Record<string, unknown> | null;
+  next_question: string | null;
+  next_stage: string | null;
+  clarification_needed: boolean;
+}
+
+interface ForemanMetadata {
+  response: string;
+  confab_id: number;
+  thread_id: number;
+  setup_progress: {
+    completed_steps: number[];
+    current_stage: string;
+    total_steps: number;
+    remaining_steps: number[];
+  } | null;
+  v2_metadata: ForemanV2Metadata | null;
+  is_v2: boolean;
+}
+
+const PURPOSE_TEMPLATE = (name: string, firstUserInput: string) => `# ${name} Purpose
+
+## Overview
+${firstUserInput || 'Define what this confab should accomplish for users.'}
+
+## Primary Objectives
+- Clarify expected outcomes for this confab
+- Keep behavior consistent and measurable
+- Document constraints and boundaries
+`;
+
+const guardrailsToMarkdown = (name: string, guardrails: Array<{ id: string; rule: string; severity: string; enabled: boolean }> | null | undefined) => {
+  if (!guardrails || guardrails.length === 0) {
+    return `# Guardrails for ${name}\n\n_No guardrails defined yet._\n`;
+  }
+
+  const lines = [`# Guardrails for ${name}`, '', '## Rules', ''];
+  guardrails.forEach((g, idx) => {
+    lines.push(`${idx + 1}. ${g.rule}`);
+    lines.push(`   - severity: \`${g.severity || 'error'}\``);
+    lines.push(`   - status: \`${g.enabled === false ? 'disabled' : 'enabled'}\``);
+  });
+  lines.push('');
+  return lines.join('\n');
+};
+
+const guardrailsFromMarkdown = (markdown: string) => {
+  const rules: Array<{ id: string; rule: string; severity: 'error' | 'warning' | 'info'; enabled: boolean }> = [];
+  const lines = (markdown || '').split('\n');
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    const numbered = trimmed.match(/^\d+\.\s+(.*)$/);
+    const bulleted = trimmed.match(/^[-*]\s+(.*)$/);
+    const match = numbered || bulleted;
+    if (!match) return;
+    const value = match[1].trim();
+    if (!value || value.startsWith('severity:') || value.startsWith('status:')) return;
+    rules.push({
+      id: `gr-${rules.length + 1}`,
+      rule: value,
+      severity: 'error',
+      enabled: true,
+    });
+  });
+
+  if (rules.length === 0 && markdown.trim()) {
+    rules.push({
+      id: 'gr-1',
+      rule: markdown.trim(),
+      severity: 'error',
+      enabled: true,
+    });
+  }
+
+  return rules;
+};
 
 const PROMPT_SUGGESTIONS = [
   "Add a new capability to handle product recommendations",
@@ -72,7 +223,8 @@ const AGENT_CREATION_STEPS = [
   { id: 8, label: 'Review & Save', keywords: ['review', 'summary', 'confirm', 'save', 'finish'] },
 ];
 
-export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: ConfigureConfabProps) {
+export function ConfigureConfabWithThreads({ onNavigate, confabName, version, confabId }: ConfigureConfabProps) {
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -98,6 +250,11 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
 
+  // Document State
+  const [documents, setDocuments] = useState<DocumentListItem[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentError, setDocumentError] = useState<string | null>(null);
+
   // Participants State
   const [participants] = useState<Participant[]>([
     { id: '1', name: 'John Smith', email: 'john@example.com', role: 'owner', isOnline: true, type: 'user' },
@@ -108,6 +265,42 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
     { id: '6', name: 'Code Review Assistant', role: 'viewer', isOnline: false, type: 'confab' },
   ]);
 
+  const [confabRecord, setConfabRecord] = useState<ConfabRecord | null>(null);
+  const [definitionFiles, setDefinitionFiles] = useState<Record<DefinitionFileKey, DefinitionFileState>>({
+    purpose: {
+      key: 'purpose',
+      fileName: 'PURPOSE.md',
+      content: '',
+      savedContent: '',
+      remoteContent: null,
+      isEditing: false,
+      visible: false,
+      acceptedForCommit: false,
+    },
+    guardrails: {
+      key: 'guardrails',
+      fileName: 'GUARDRAILS.md',
+      content: '',
+      savedContent: '',
+      remoteContent: null,
+      isEditing: false,
+      visible: false,
+      acceptedForCommit: false,
+    },
+  });
+  const [definitionLoading, setDefinitionLoading] = useState(false);
+  const [definitionError, setDefinitionError] = useState<string | null>(null);
+  const [isCommittingDefinitions, setIsCommittingDefinitions] = useState(false);
+  const [definitionCommitInfo, setDefinitionCommitInfo] = useState<string | null>(null);
+  const [remoteBranchHint, setRemoteBranchHint] = useState<string | null>(null);
+  const [definitionConflict, setDefinitionConflict] = useState<DefinitionConflict | null>(null);
+  const [showRegistryTokenBanner, setShowRegistryTokenBanner] = useState(false);
+
+  // V2 Foreman state
+  const [threadId, setThreadId] = useState<number | null>(null);
+  const [foremanMetadata, setForemanMetadata] = useState<ForemanMetadata | null>(null);
+  const [stageSummaries, setStageSummaries] = useState<Record<string, string>>({});
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -116,20 +309,372 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
     scrollToBottom();
   }, [messages, activeThreadId]);
 
-  const handleSend = () => {
-    if (!input.trim()) return;
+  // Initialize thread for Foreman chat
+  useEffect(() => {
+    if (!confabId) return;
+    let cancelled = false;
+
+    const initThread = async () => {
+      try {
+        // Create a new thread for this confab configuration session
+        const thread = await apiClient.createThread(`Configure ${confabName}`);
+        if (!cancelled && thread?.id) {
+          setThreadId(thread.id);
+          // Add Foreman as a participant
+          await apiClient.addThreadParticipant(thread.id, 'system', null, 'foreman');
+        }
+      } catch (err) {
+        console.error('Failed to initialize thread:', err);
+      }
+    };
+
+    initThread();
+    return () => { cancelled = true; };
+  }, [confabId, confabName]);
+
+  const getDefinitionFileStatus = (file: DefinitionFileState): DefinitionFileStatus => {
+    if (!file.visible) return 'hidden';
+    if (file.acceptedForCommit) return 'ready-to-push';
+    const remote = file.remoteContent;
+    const current = file.content.trim();
+    if (!remote || remote.trim() === '') return 'uncommitted';
+    if (current !== remote.trim()) return 'locally-modified';
+    return 'up-to-date';
+  };
+
+  const updateDefinitionFile = (fileKey: DefinitionFileKey, updater: (prev: DefinitionFileState) => DefinitionFileState) => {
+    setDefinitionFiles((prev) => ({
+      ...prev,
+      [fileKey]: updater(prev[fileKey]),
+    }));
+  };
+
+  // Load existing documents when confabId is available
+  useEffect(() => {
+    if (!confabId) return;
+    let cancelled = false;
+
+    setDocumentsLoading(true);
+    apiClient.listDocuments(confabId)
+      .then((docs: DocumentListItem[]) => {
+        if (!cancelled) setDocuments(docs);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setDocumentError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setDocumentsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [confabId]);
+
+  const loadConfabDefinitionData = async (id: number) => {
+    setDefinitionLoading(true);
+    setDefinitionError(null);
+    try {
+      const confab: ConfabRecord = await apiClient.getConfab(id);
+      setConfabRecord(confab);
+      const purpose = confab.purpose || '';
+      const guardrailsMd = confab.guardrails && confab.guardrails.length > 0
+        ? guardrailsToMarkdown(confab.name || confabName, confab.guardrails || [])
+        : '';
+
+      setDefinitionFiles((prev) => ({
+        ...prev,
+        purpose: {
+          ...prev.purpose,
+          content: purpose,
+          savedContent: purpose,
+          visible: prev.purpose.visible || purpose.trim().length > 0,
+          acceptedForCommit: false,
+        },
+        guardrails: {
+          ...prev.guardrails,
+          content: guardrailsMd,
+          savedContent: guardrailsMd,
+          visible: prev.guardrails.visible || guardrailsMd.trim().length > 0,
+          acceptedForCommit: false,
+        },
+      }));
+      setGithubConnected(!!confab.github_path);
+    } catch (err: unknown) {
+      setDefinitionError(err instanceof Error ? err.message : 'Failed to load confab definition');
+    } finally {
+      setDefinitionLoading(false);
+    }
+  };
+
+  const refreshDefinitionFromRemote = async (id: number) => {
+    try {
+      const remote: RefreshDefinitionResponse = await apiClient.refreshDefinitionFiles(id);
+      setShowRegistryTokenBanner(false);
+      setRemoteBranchHint(remote.remote_branch || null);
+
+      const incoming: Partial<Record<DefinitionFileKey, string>> = {
+        purpose: remote.purpose || '',
+        guardrails: remote.guardrails_markdown || '',
+      };
+      let hasConflict = false;
+
+      (['purpose', 'guardrails'] as DefinitionFileKey[]).forEach((fileKey) => {
+        const remoteContent = incoming[fileKey] ?? '';
+        if (!remoteContent.trim()) return;
+
+        const localFile = definitionFiles[fileKey];
+        const localUnsaved = localFile.content !== localFile.savedContent;
+        const remoteDiffersFromLocal = localFile.content.trim() !== remoteContent.trim();
+
+        if (localUnsaved && remoteDiffersFromLocal) {
+          hasConflict = true;
+          setDefinitionConflict({
+            fileKey,
+            local: localFile.content,
+            remote: remoteContent,
+            mode: 'choose',
+            merged: localFile.content,
+          });
+          return;
+        }
+
+        setDefinitionFiles((prev) => ({
+          ...prev,
+          [fileKey]: {
+            ...prev[fileKey],
+            content: remoteContent,
+            savedContent: remoteContent,
+            remoteContent,
+            visible: true,
+            acceptedForCommit: false,
+          },
+        }));
+      });
+
+      if (!hasConflict) {
+        await loadConfabDefinitionData(id);
+      }
+    } catch (err: unknown) {
+      // Remote refresh is best effort; local editing should continue.
+      const message = err instanceof Error ? err.message : 'Failed to refresh definition files from GitHub';
+      setDefinitionError(message);
+      if (!user?.github_connected && message.toLowerCase().includes('registry sync token missing')) {
+        setShowRegistryTokenBanner(true);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!confabId) return;
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      await loadConfabDefinitionData(confabId);
+      if (!cancelled) {
+        await refreshDefinitionFromRemote(confabId);
+      }
+    };
+
+    bootstrap();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confabId]);
+
+  useEffect(() => {
+    // As soon as first question is answered, create a purpose draft if none exists yet.
+    const firstUserMessage = messages.find((m) => m.role === 'user');
+    if (!firstUserMessage) return;
+
+    setDefinitionFiles((prev) => {
+      if (prev.purpose.content.trim()) return prev;
+      const draft = PURPOSE_TEMPLATE(confabRecord?.name || confabName, firstUserMessage.content);
+      return {
+        ...prev,
+        purpose: {
+          ...prev.purpose,
+          content: draft,
+          savedContent: prev.purpose.savedContent || draft,
+          visible: true,
+        },
+      };
+    });
+  }, [messages, confabName, confabRecord?.name]);
+
+  const toggleDefinitionEdit = (fileKey: DefinitionFileKey, isEditing: boolean) => {
+    updateDefinitionFile(fileKey, (prev) => ({ ...prev, isEditing }));
+  };
+
+  const handleDefinitionContentChange = (fileKey: DefinitionFileKey, content: string) => {
+    updateDefinitionFile(fileKey, (prev) => ({
+      ...prev,
+      content,
+      visible: prev.visible || content.trim().length > 0,
+      acceptedForCommit: false,
+    }));
+  };
+
+  const saveDefinitionFile = async (fileKey: DefinitionFileKey) => {
+    if (!confabId) return;
+    setDefinitionError(null);
+
+    try {
+      const file = definitionFiles[fileKey];
+      const updatePayload: Record<string, unknown> = {};
+
+      if (fileKey === 'purpose') {
+        updatePayload.purpose = file.content;
+      } else {
+        updatePayload.guardrails = guardrailsFromMarkdown(file.content);
+      }
+
+      await apiClient.updateConfab(confabId, updatePayload);
+      const refreshed: ConfabRecord = await apiClient.getConfab(confabId);
+      setConfabRecord(refreshed);
+
+      const nextSaved = file.content;
+      updateDefinitionFile(fileKey, (prev) => ({
+        ...prev,
+        savedContent: nextSaved,
+        visible: true,
+        isEditing: false,
+        acceptedForCommit: false,
+      }));
+      setShowRegistryTokenBanner(false);
+    } catch (err: unknown) {
+      setDefinitionError(err instanceof Error ? err.message : 'Failed to save file');
+    }
+  };
+
+  const saveAllPendingDefinitionEdits = async () => {
+    if (!confabId) return;
+    const purposeChanged = definitionFiles.purpose.content !== definitionFiles.purpose.savedContent;
+    const guardrailsChanged = definitionFiles.guardrails.content !== definitionFiles.guardrails.savedContent;
+
+    if (!purposeChanged && !guardrailsChanged) return;
+
+    const updatePayload: Record<string, unknown> = {};
+    if (purposeChanged) updatePayload.purpose = definitionFiles.purpose.content;
+    if (guardrailsChanged) updatePayload.guardrails = guardrailsFromMarkdown(definitionFiles.guardrails.content);
+
+    await apiClient.updateConfab(confabId, updatePayload);
+    const refreshed: ConfabRecord = await apiClient.getConfab(confabId);
+    setConfabRecord(refreshed);
+
+    setDefinitionFiles((prev) => ({
+      ...prev,
+      purpose: purposeChanged
+        ? { ...prev.purpose, savedContent: prev.purpose.content }
+        : prev.purpose,
+      guardrails: guardrailsChanged
+        ? { ...prev.guardrails, savedContent: prev.guardrails.content }
+        : prev.guardrails,
+    }));
+  };
+
+  const handleAcceptChangesAndCommit = async () => {
+    if (!confabId) return;
+    setDefinitionError(null);
+    setDefinitionCommitInfo(null);
+    setIsCommittingDefinitions(true);
+
+    const purposeShouldCommit = definitionFiles.purpose.visible && definitionFiles.purpose.content.trim().length > 0;
+    const guardrailsShouldCommit = definitionFiles.guardrails.visible && definitionFiles.guardrails.content.trim().length > 0;
+
+    setDefinitionFiles((prev) => ({
+      ...prev,
+      purpose: purposeShouldCommit ? { ...prev.purpose, acceptedForCommit: true } : prev.purpose,
+      guardrails: guardrailsShouldCommit ? { ...prev.guardrails, acceptedForCommit: true } : prev.guardrails,
+    }));
+
+    try {
+      await saveAllPendingDefinitionEdits();
+      const response: CommitDefinitionResponse = await apiClient.acceptAndCommitDefinitionFiles(confabId, {
+        commit_message: `accept-changes-and-commit ${confabRecord?.name || confabName}`,
+        include_purpose: purposeShouldCommit,
+        include_guardrails: guardrailsShouldCommit,
+      });
+      setShowRegistryTokenBanner(false);
+
+      const committedSet = new Set(response.committed_files || []);
+      setDefinitionFiles((prev) => ({
+        ...prev,
+        purpose: {
+          ...prev.purpose,
+          acceptedForCommit: false,
+          remoteContent: committedSet.has('PURPOSE.md') ? prev.purpose.content : prev.purpose.remoteContent,
+        },
+        guardrails: {
+          ...prev.guardrails,
+          acceptedForCommit: false,
+          remoteContent: committedSet.has('GUARDRAILS.md') ? prev.guardrails.content : prev.guardrails.remoteContent,
+        },
+      }));
+
+      setDefinitionCommitInfo(
+        response.status === 'no-op'
+          ? 'No file changes to commit.'
+          : `Committed ${response.committed_files.length} file(s) on ${response.branch}${response.commit_sha ? ` (${response.commit_sha.slice(0, 7)})` : ''}.`
+      );
+      setRemoteBranchHint(response.branch);
+      await loadConfabDefinitionData(confabId);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to commit definition files';
+      setDefinitionError(message);
+      if (!user?.github_connected && message.toLowerCase().includes('registry sync token missing')) {
+        setShowRegistryTokenBanner(true);
+      }
+    } finally {
+      setIsCommittingDefinitions(false);
+    }
+  };
+
+  const applyConflictResolution = async (action: 'use-local' | 'use-remote' | 'manual') => {
+    if (!definitionConflict) return;
+    const { fileKey, local, remote, merged } = definitionConflict;
+
+    if (action === 'use-local') {
+      updateDefinitionFile(fileKey, (prev) => ({
+        ...prev,
+        content: local,
+      }));
+    }
+
+    if (action === 'use-remote') {
+      updateDefinitionFile(fileKey, (prev) => ({
+        ...prev,
+        content: remote,
+        savedContent: remote,
+        remoteContent: remote,
+        acceptedForCommit: false,
+      }));
+    }
+
+    if (action === 'manual') {
+      updateDefinitionFile(fileKey, (prev) => ({
+        ...prev,
+        content: merged,
+      }));
+    }
+
+    setDefinitionConflict(null);
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || !threadId) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: input,
       timestamp: new Date(),
+      userName: user?.name || 'You',
     };
 
     if (activeThreadId) {
       // Add to subthread
-      setSubThreads(prev => prev.map(thread => 
-        thread.id === activeThreadId 
+      setSubThreads(prev => prev.map(thread =>
+        thread.id === activeThreadId
           ? { ...thread, messages: [...thread.messages, userMessage] }
           : thread
       ));
@@ -137,39 +682,80 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
       // Add to main conversation
       setMessages((prev) => [...prev, userMessage]);
     }
-    
+
+    const messageContent = input;
     setInput('');
     setIsTyping(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const responses = [
-        "Great! I'm updating the confab configuration with that change. What LLM provider would you prefer for this update? We support OpenAI, Anthropic, Google AI, and more.",
-        "Perfect! I'm configuring those capabilities now. Would you like to adjust the memory settings for this confab?",
-        "Excellent choice! Your confab configuration is being updated. Should I modify any tool or API access?",
-        "Looking good! Let me summarize what we've configured and you can review the changes before saving.",
-      ];
-      
-      const assistantMessage: Message = {
+    try {
+      // Call the actual chat API
+      const response = await apiClient.chat(threadId, messageContent);
+
+      // Extract Foreman's response from agent_responses
+      const foremanResponse = response.agent_responses?.find(
+        (r: { sender_name: string }) => r.sender_name === 'Foreman'
+      );
+
+      if (foremanResponse) {
+        const assistantMessage: Message = {
+          id: foremanResponse.id?.toString() || (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: foremanResponse.content,
+          timestamp: new Date(foremanResponse.created_at || Date.now()),
+        };
+
+        if (activeThreadId) {
+          setSubThreads(prev => prev.map(thread =>
+            thread.id === activeThreadId
+              ? { ...thread, messages: [...thread.messages, assistantMessage] }
+              : thread
+          ));
+        } else {
+          setMessages((prev) => [...prev, assistantMessage]);
+        }
+      }
+
+      // Update state from foreman metadata (V2 flow)
+      if (response.foreman_metadata) {
+        setForemanMetadata(response.foreman_metadata);
+
+        // Update current step based on backend state
+        const setupProgress = response.foreman_metadata.setup_progress;
+        if (setupProgress) {
+          const stageToStep: Record<string, number> = {
+            purpose: 2,
+            participants: 3,
+            memory: 4,
+            tools: 5,
+            guardrails: 6,
+            sample_io: 7,
+            review: 8,
+          };
+          const newStep = stageToStep[setupProgress.current_stage] || currentStep;
+          setCurrentStep(newStep);
+        }
+
+        // Update stage summaries for completed stages
+        const v2 = response.foreman_metadata.v2_metadata;
+        if (v2?.stage_status === 'complete' && v2?.saved_fields) {
+          const stage = v2.stage;
+          const summary = JSON.stringify(v2.saved_fields).slice(0, 100);
+          setStageSummaries(prev => ({ ...prev, [stage]: summary }));
+        }
+      }
+    } catch (err) {
+      console.error('Chat API error:', err);
+      // Add error message
+      const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: responses[messages.filter(m => m.role === 'user').length % responses.length],
+        content: 'Sorry, I encountered an error. Please try again.',
         timestamp: new Date(),
       };
-
-      if (activeThreadId) {
-        setSubThreads(prev => prev.map(thread => 
-          thread.id === activeThreadId 
-            ? { ...thread, messages: [...thread.messages, assistantMessage] }
-            : thread
-        ));
-      } else {
-        setMessages((prev) => [...prev, assistantMessage]);
-      }
-      
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsTyping(false);
-      updateStep(assistantMessage.content);
-    }, 1000);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -183,21 +769,100 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
     setInput(suggestion);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files) {
-      const newFiles = Array.from(files).map(file => ({ name: file.name, size: file.size }));
-      setUploadedFiles(prev => [...prev, ...newFiles]);
+    if (!files || !confabId) return;
+
+    for (const file of Array.from(files)) {
+      const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+      if (!['.pdf', '.txt', '.md'].includes(ext)) {
+        setDocumentError(`Unsupported file type: ${file.name}`);
+        continue;
+      }
+
+      if (file.size > MAX_FILE_SIZE) {
+        setDocumentError(`File too large: ${file.name} (max 10MB)`);
+        continue;
+      }
+
+      const tempId = crypto.randomUUID();
+      const pending: UploadedFile = {
+        tempId,
+        name: file.name,
+        size: file.size,
+        status: 'uploading',
+        file,
+      };
+      setUploadedFiles(prev => [...prev, pending]);
+
+      let response;
+      try {
+        response = await apiClient.uploadDocument(confabId, file);
+        setDocumentError(null); // Clear error on success
+        setUploadedFiles(prev =>
+          prev.map(f => f.tempId === tempId ? {
+            ...f,
+            // Don't store id for duplicates - prevents accidental deletion of existing doc
+            id: response.status === 'duplicate' ? undefined : response.document_id,
+            status: response.status,
+            chunkCount: response.chunk_count,
+            file: undefined, // Clear file blob to free memory
+          } : f)
+        );
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Upload failed';
+        setUploadedFiles(prev =>
+          prev.map(f => f.tempId === tempId ? {
+            ...f,
+            status: 'failed',
+            error: errorMessage,
+          } : f)
+        );
+        continue;
+      }
+
+      try {
+        const docs = await apiClient.listDocuments(confabId);
+        setDocuments(docs);
+      } catch {
+        // List refresh failure is non-critical
+      }
+    }
+    e.target.value = '';
+  };
+
+  const handleDeleteDocument = async (documentId: number) => {
+    if (!confabId) return;
+    try {
+      await apiClient.deleteDocument(confabId, documentId);
+      setDocumentError(null); // Clear error on success
+      setDocuments(prev => prev.filter(d => d.id !== documentId));
+      setUploadedFiles(prev => prev.filter(f => f.id !== documentId));
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Delete failed';
+      setDocumentError(errorMessage);
     }
   };
 
-  const handleRemoveFile = (index: number) => {
-    setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+  const handleRemoveFile = async (index: number) => {
+    const file = uploadedFiles[index];
+    if (file.id && confabId) {
+      await handleDeleteDocument(file.id);
+    } else {
+      setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+    }
   };
 
+  // DEPRECATED: V1 keyword-based step detection
+  // V2 uses backend metadata from foreman_metadata.setup_progress
   const updateStep = (messageContent: string) => {
+    // Only use keyword detection as fallback when V2 metadata is not available
+    if (foremanMetadata?.is_v2) return;
+
     const content = messageContent.toLowerCase();
-    
+
     for (let i = AGENT_CREATION_STEPS.length - 1; i >= 0; i--) {
       const step = AGENT_CREATION_STEPS[i];
       if (step.keywords.some(keyword => content.includes(keyword))) {
@@ -205,6 +870,13 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
         return;
       }
     }
+  };
+
+  // V2: Send skip message to Foreman
+  const handleSkipStep = async () => {
+    if (!threadId) return;
+    setInput('skip');
+    await handleSend();
   };
 
   const createSubThread = (parentMessageId: string) => {
@@ -256,6 +928,14 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
 
   const backToMainThread = () => {
     setActiveThreadId(null);
+  };
+
+  const statusBadgeClass = (status: DefinitionFileStatus) => {
+    if (status === 'up-to-date') return 'bg-green-100 text-green-700';
+    if (status === 'ready-to-push') return 'bg-blue-100 text-blue-700';
+    if (status === 'locally-modified') return 'bg-amber-100 text-amber-700';
+    if (status === 'uncommitted') return 'bg-slate-200 text-slate-700';
+    return 'bg-slate-100 text-slate-500';
   };
 
   return (
@@ -323,43 +1003,242 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
                 </Button>
               </div>
             <div className="space-y-2">
-              {AGENT_CREATION_STEPS.map(step => (
-                <button
-                  key={step.id}
-                  onClick={() => setSelectedConfigStep(step.id)}
-                  className={`w-full text-sm p-3 rounded-lg transition-all text-left ${
-                    selectedConfigStep === step.id
-                      ? 'bg-indigo-600 text-white border-2 border-indigo-700'
-                      : step.id === currentStep 
-                      ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300' 
-                      : step.id < currentStep 
-                      ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100' 
-                      : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
+              {AGENT_CREATION_STEPS.map(step => {
+                const stageKey = ['github', 'purpose', 'participants', 'memory', 'tools', 'guardrails', 'sample_io', 'review'][step.id - 1];
+                const stageSummary = stageSummaries[stageKey];
+                const isCompleted = step.id < currentStep;
+                const isCurrent = step.id === currentStep;
+
+                return (
+                  <button
+                    key={step.id}
+                    onClick={() => setSelectedConfigStep(step.id)}
+                    className={`w-full text-sm p-3 rounded-lg transition-all text-left ${
                       selectedConfigStep === step.id
-                        ? 'bg-white text-indigo-600'
-                        : step.id === currentStep 
-                        ? 'bg-indigo-600 text-white' 
-                        : step.id < currentStep 
-                        ? 'bg-green-600 text-white' 
-                        : 'bg-slate-300 text-white'
-                    }`}>
-                      {step.id}
+                        ? 'bg-indigo-600 text-white border-2 border-indigo-700'
+                        : isCurrent
+                        ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300'
+                        : isCompleted
+                        ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                        : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
+                        selectedConfigStep === step.id
+                          ? 'bg-white text-indigo-600'
+                          : isCurrent
+                          ? 'bg-indigo-600 text-white'
+                          : isCompleted
+                          ? 'bg-green-600 text-white'
+                          : 'bg-slate-300 text-white'
+                      }`}>
+                        {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : step.id}
+                      </div>
+                      <div className="flex-1">
+                        <span className="block">{step.label}</span>
+                        {isCompleted && stageSummary && (
+                          <span className="text-xs opacity-70 truncate block">{stageSummary}</span>
+                        )}
+                        {isCurrent && foremanMetadata?.is_v2 && (
+                          <span className="text-xs text-indigo-500 block">Current step</span>
+                        )}
+                      </div>
                     </div>
-                    <span>{step.label}</span>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
+            {/* Skip Step Button */}
+            {foremanMetadata?.is_v2 && currentStep > 1 && currentStep < 8 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full mt-2 text-slate-500 hover:text-slate-700"
+                onClick={handleSkipStep}
+              >
+                Skip this step
+              </Button>
+            )}
             </Card>
           </div>
         )}
 
         {/* Center Panel - Dynamic Content Based on Selected Step */}
         <div className={isSidebarCollapsed ? "lg:col-span-2" : "lg:col-span-2"}>
+          <Card className="p-4 mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <GitBranch className="w-4 h-4 text-slate-700" />
+                <h3 className="text-slate-900">Definition Files</h3>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2"
+                  disabled={!confabId || definitionLoading}
+                  onClick={() => confabId && refreshDefinitionFromRemote(confabId)}
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Refresh from GitHub
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-2"
+                  disabled={!confabId || isCommittingDefinitions || (!definitionFiles.purpose.visible && !definitionFiles.guardrails.visible)}
+                  onClick={handleAcceptChangesAndCommit}
+                >
+                  {isCommittingDefinitions ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                  accept-changes-and-commit
+                </Button>
+              </div>
+            </div>
+
+            {remoteBranchHint && (
+              <p className="text-xs text-slate-500 mb-2">
+                Remote branch: <span className="font-mono">{remoteBranchHint}</span>
+              </p>
+            )}
+
+            {definitionError && (
+              <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {definitionError}
+              </div>
+            )}
+
+            {definitionCommitInfo && (
+              <div className="mb-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+                {definitionCommitInfo}
+              </div>
+            )}
+
+            {showRegistryTokenBanner && !user?.github_connected && (
+              <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Email-login sync requires server configuration. Ask an admin to set `REGISTRY_GITHUB_TOKEN` for writes to `letsconfab/registry`.
+              </div>
+            )}
+
+            {definitionConflict && (
+              <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-700" />
+                  <p className="text-sm text-amber-900">
+                    Remote changes conflict with unsaved local edits in {definitionConflict.fileKey === 'purpose' ? 'PURPOSE.md' : 'GUARDRAILS.md'}.
+                  </p>
+                </div>
+                {definitionConflict.mode === 'manual' ? (
+                  <div className="space-y-2">
+                    <Textarea
+                      className="min-h-[180px] font-mono text-sm"
+                      value={definitionConflict.merged}
+                      onChange={(e) => setDefinitionConflict((prev) => prev ? { ...prev, merged: e.target.value } : prev)}
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => applyConflictResolution('manual')}>Apply Merge</Button>
+                      <Button size="sm" variant="outline" onClick={() => setDefinitionConflict((prev) => prev ? { ...prev, mode: 'choose' } : prev)}>Back</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => applyConflictResolution('use-local')}>Keep Local</Button>
+                    <Button size="sm" variant="outline" onClick={() => applyConflictResolution('use-remote')}>Use Remote</Button>
+                    <Button size="sm" onClick={() => setDefinitionConflict((prev) => prev ? ({ ...prev, mode: 'manual', merged: `${prev.local}\n\n<<<<<<< REMOTE\n${prev.remote}\n>>>>>>>` }) : prev)}>
+                      Manual Merge
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {(['purpose', 'guardrails'] as DefinitionFileKey[]).map((key) => {
+                const file = definitionFiles[key];
+                const status = getDefinitionFileStatus(file);
+                if (!file.visible) return null;
+                return (
+                  <div key={key} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-slate-600" />
+                      <span className="text-sm text-slate-900">{file.fileName}</span>
+                      <Badge className={`text-[10px] ${statusBadgeClass(status)}`}>{status}</Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => setSelectedConfigStep(key === 'purpose' ? 2 : 6)}>
+                        Open
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+              {!definitionFiles.purpose.visible && !definitionFiles.guardrails.visible && (
+                <p className="text-sm text-slate-500">
+                  Files will appear as the confab conversation generates drafts.
+                </p>
+              )}
+            </div>
+          </Card>
+
+          <Card className="p-4 mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Folder className="w-4 h-4 text-slate-700" />
+                <h3 className="text-slate-900">Documents</h3>
+              </div>
+              <Badge variant="secondary" className="text-xs">
+                {documentsLoading ? 'Loading' : `${documents.length} file${documents.length === 1 ? '' : 's'}`}
+              </Badge>
+            </div>
+
+            {documentError && (
+              <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {documentError}
+              </div>
+            )}
+
+            {!confabId && (
+              <p className="text-sm text-amber-700">
+                Save your confab first to enable document uploads and indexing.
+              </p>
+            )}
+
+            {confabId && documentsLoading && (
+              <div className="flex items-center gap-2 text-slate-500 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading documents...
+              </div>
+            )}
+
+            {confabId && !documentsLoading && documents.length === 0 && (
+              <p className="text-sm text-slate-500">
+                No documents uploaded yet. Use <span className="font-medium">Upload Document</span> in the chat panel below.
+              </p>
+            )}
+
+            {confabId && !documentsLoading && documents.length > 0 && (
+              <div className="space-y-2">
+                {documents.map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm text-slate-900 truncate">{doc.filename}</p>
+                      <p className="text-xs text-slate-500">
+                        {doc.content_type} | {doc.chunk_count} chunks
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-600 hover:text-red-700"
+                      onClick={() => handleDeleteDocument(doc.id)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
           {/* Default view when no step is selected */}
           {!selectedConfigStep && (
             <Card className="p-6">
@@ -456,48 +1335,42 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version }: 
               <div className="flex items-center gap-2 mb-4">
                 <FileText className="w-5 h-5 text-slate-900" />
                 <h3 className="text-slate-900">Confab Purpose</h3>
-                <Badge variant="secondary" className="ml-auto text-xs">purpose.md</Badge>
+                <Badge variant="secondary" className="ml-auto text-xs">PURPOSE.md</Badge>
               </div>
               
               <div className="space-y-4">
                 <div>
                   <Label className="text-sm text-slate-700 mb-2 block">Purpose Definition</Label>
-                  <Textarea 
-                    className="min-h-[400px] font-mono text-sm"
-                    defaultValue={`# ${confabName} Purpose
-
-## Overview
-This confab is designed to assist users with intelligent, context-aware responses for customer support and product inquiries.
-
-## Primary Objectives
-- Provide accurate and helpful responses to customer queries
-- Maintain a professional and friendly tone
-- Escalate complex issues to human agents when necessary
-- Learn from interactions to improve response quality
-
-## Key Capabilities
-- Natural language understanding
-- Multi-turn conversation handling
-- Integration with knowledge base
-- Sentiment analysis and adaptive responses
-
-## Success Metrics
-- Customer satisfaction scores
-- Response accuracy rate
-- Average resolution time
-- Escalation rate
-
-## Constraints
-- Must not provide medical or legal advice
-- Should respect user privacy and data protection
-- Cannot make financial commitments on behalf of the company`}
-                  />
+                  {definitionFiles.purpose.isEditing ? (
+                    <Textarea
+                      className="min-h-[400px] font-mono text-sm"
+                      value={definitionFiles.purpose.content}
+                      onChange={(e) => handleDefinitionContentChange('purpose', e.target.value)}
+                    />
+                  ) : (
+                    <div className="min-h-[240px] max-h-[400px] overflow-auto rounded-lg border border-slate-200 bg-white p-4 prose prose-slate max-w-none">
+                      {definitionFiles.purpose.content.trim() ? (
+                        <ReactMarkdown>{definitionFiles.purpose.content}</ReactMarkdown>
+                      ) : (
+                        <p className="text-sm text-slate-500">No purpose draft yet.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1">
-                    Reset to Default
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => toggleDefinitionEdit('purpose', !definitionFiles.purpose.isEditing)}
+                  >
+                    {definitionFiles.purpose.isEditing ? <Eye className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
+                    {definitionFiles.purpose.isEditing ? 'Preview' : 'Edit In Place'}
                   </Button>
-                  <Button className="flex-1">
+                  <Button
+                    className="gap-2"
+                    disabled={!confabId || definitionFiles.purpose.content.trim().length === 0}
+                    onClick={() => saveDefinitionFile('purpose')}
+                  >
                     Save Purpose
                   </Button>
                 </div>
@@ -759,61 +1632,42 @@ This confab is designed to assist users with intelligent, context-aware response
               <div className="flex items-center gap-2 mb-4">
                 <Shield className="w-5 h-5 text-slate-900" />
                 <h3 className="text-slate-900">Guardrails & Rules</h3>
-                <Badge variant="secondary" className="ml-auto text-xs">guardrails.txt</Badge>
+                <Badge variant="secondary" className="ml-auto text-xs">GUARDRAILS.md</Badge>
               </div>
               
               <div className="space-y-4">
                 <div>
                   <Label className="text-sm text-slate-700 mb-2 block">System Prompt Extensions</Label>
-                  <Textarea 
-                    className="min-h-[400px] font-mono text-sm"
-                    defaultValue={`# Guardrails for ${confabName}
-
-## Mandatory Rules (Cannot be overridden)
-
-1. **Privacy & Data Protection**
-   - Never share or store personally identifiable information (PII)
-   - Do not request sensitive information like passwords or SSNs
-   - Comply with GDPR and data protection regulations
-
-2. **Safety & Ethics**
-   - Refuse requests for harmful, illegal, or unethical content
-   - Do not provide medical, legal, or financial advice
-   - Avoid discriminatory or biased responses
-
-3. **Operational Boundaries**
-   - Cannot access systems outside designated APIs
-   - Must verify user permissions before executing actions
-   - Log all interactions for audit purposes
-
-## Behavioral Guidelines
-
-1. **Tone & Communication**
-   - Maintain professional and friendly tone
-   - Be concise but thorough in responses
-   - Acknowledge uncertainty when appropriate
-
-2. **Escalation Triggers**
-   - Complex technical issues beyond scope
-   - Customer dissatisfaction or complaints
-   - Requests requiring human judgment
-
-3. **Content Restrictions**
-   - No political or religious discussions
-   - Avoid controversial topics
-   - Stay within domain expertise
-
-## Error Handling
-- Gracefully handle API failures
-- Provide clear error messages to users
-- Auto-retry with exponential backoff`}
-                  />
+                  {definitionFiles.guardrails.isEditing ? (
+                    <Textarea
+                      className="min-h-[400px] font-mono text-sm"
+                      value={definitionFiles.guardrails.content}
+                      onChange={(e) => handleDefinitionContentChange('guardrails', e.target.value)}
+                    />
+                  ) : (
+                    <div className="min-h-[240px] max-h-[400px] overflow-auto rounded-lg border border-slate-200 bg-white p-4 prose prose-slate max-w-none">
+                      {definitionFiles.guardrails.content.trim() ? (
+                        <ReactMarkdown>{definitionFiles.guardrails.content}</ReactMarkdown>
+                      ) : (
+                        <p className="text-sm text-slate-500">No guardrails draft yet.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1">
-                    Reset to Default
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => toggleDefinitionEdit('guardrails', !definitionFiles.guardrails.isEditing)}
+                  >
+                    {definitionFiles.guardrails.isEditing ? <Eye className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
+                    {definitionFiles.guardrails.isEditing ? 'Preview' : 'Edit In Place'}
                   </Button>
-                  <Button className="flex-1">
+                  <Button
+                    className="gap-2"
+                    disabled={!confabId || definitionFiles.guardrails.content.trim().length === 0}
+                    onClick={() => saveDefinitionFile('guardrails')}
+                  >
                     Save Guardrails
                   </Button>
                 </div>
@@ -1233,42 +2087,118 @@ This confab is designed to assist users with intelligent, context-aware response
               
               {/* File Upload */}
               <div className="mt-4">
+                {/* Error Alert */}
+                {documentError && (
+                  <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
+                    <p className="text-sm text-red-700">{documentError}</p>
+                    <button onClick={() => setDocumentError(null)} className="text-red-400 hover:text-red-600">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-2">
                   <input
                     type="file"
                     multiple
+                    accept=".pdf,.txt,.md"
                     onChange={handleFileUpload}
                     className="hidden"
                     id="file-upload"
+                    disabled={!confabId}
                   />
                   <label
                     htmlFor="file-upload"
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm cursor-pointer rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 transition-colors"
+                    className={`inline-flex items-center gap-2 px-3 py-2 text-sm cursor-pointer rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 transition-colors ${!confabId ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     <Paperclip className="w-4 h-4" />
                     Upload Document
                   </label>
-                  <span className="text-xs text-slate-500">PDF, TXT, DOCX (optional)</span>
+                  <span className="text-xs text-slate-500">PDF, TXT, MD</span>
                 </div>
+
+                {!confabId && (
+                  <p className="text-xs text-amber-600 mt-2">Save your confab first to enable document uploads</p>
+                )}
+
+                {/* Pending Uploads with Status */}
                 {uploadedFiles.length > 0 && (
                   <div className="mt-3 space-y-2">
                     {uploadedFiles.map((file, index) => (
-                      <div key={index} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
-                        <div className="flex items-center gap-2">
-                          <File className="w-4 h-4 text-slate-600" />
-                          <p className="text-sm text-slate-700">{file.name}</p>
-                          <span className="text-xs text-slate-500">
-                            ({(file.size / 1024).toFixed(1)} KB)
-                          </span>
+                      <div key={file.tempId} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <File className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-slate-700 truncate">{file.name}</p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500">({(file.size / 1024).toFixed(1)} KB)</span>
+                              {file.status === 'uploading' && (
+                                <Badge variant="secondary" className="text-xs">
+                                  <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                                  Uploading
+                                </Badge>
+                              )}
+                              {file.status === 'indexed' && (
+                                <Badge className="text-xs bg-green-100 text-green-700">
+                                  Indexed ({file.chunkCount} chunks)
+                                </Badge>
+                              )}
+                              {file.status === 'duplicate' && (
+                                <Badge className="text-xs bg-amber-100 text-amber-700">Duplicate</Badge>
+                              )}
+                              {file.status === 'failed' && (
+                                <Badge variant="destructive" className="text-xs">Failed: {file.error}</Badge>
+                              )}
+                            </div>
+                          </div>
                         </div>
                         <button
                           onClick={() => handleRemoveFile(index)}
-                          className="text-slate-400 hover:text-red-600 transition-colors"
+                          className="text-slate-400 hover:text-red-600 transition-colors ml-2"
+                          disabled={file.status === 'uploading'}
                         >
                           <X className="w-4 h-4" />
                         </button>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Loading Documents */}
+                {documentsLoading && (
+                  <div className="mt-3 flex items-center gap-2 text-slate-500">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Loading documents...</span>
+                  </div>
+                )}
+
+                {/* Existing Documents from Server */}
+                {documents.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="text-sm font-medium text-slate-700 mb-2">
+                      Uploaded Documents ({documents.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {documents.map((doc) => (
+                        <div key={doc.id} className="flex items-center justify-between p-2 bg-white border border-slate-200 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-slate-600" />
+                            <div>
+                              <p className="text-sm text-slate-700">{doc.filename}</p>
+                              <p className="text-xs text-slate-500">
+                                {doc.content_type} | {doc.chunk_count} chunks
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteDocument(doc.id)}
+                            className="text-slate-400 hover:text-red-600 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

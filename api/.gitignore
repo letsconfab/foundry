@@ -186,6 +186,9 @@ cython_debug/
 logs/
 *.log
 
+# Local data (ChromaDB, uploads)
+data/
+
 # OS
 .DS_Store
 .DS_Store?

@@ -1,8 +1,31 @@
+"""
+DEPRECATED: This module is deprecated in favor of github_service.py
+
+To enable the new GitHubService, set the environment variable:
+    USE_NEW_GITHUB_SERVICE=true
+
+Migration timeline:
+1. Enable feature flag in development
+2. Run migrate_branches.py to convert existing branches
+3. Enable feature flag in production
+4. Remove this module after verification
+"""
+
 import httpx
+import warnings
 from typing import Dict, Any, Optional
 from base64 import b64encode
 import json
 from datetime import datetime
+
+# Deprecation warning
+warnings.warn(
+    "confab_manager module is deprecated. Use github_service.GitHubService instead. "
+    "Set USE_NEW_GITHUB_SERVICE=true to enable the new service.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 
 class ConfabManager:
     """Manages confab creation and updates in GitHub repositories."""
@@ -384,6 +407,65 @@ license = "MIT"
             "TESTS.md": tests_md
         }
 
+    async def commit_confab_file(
+        self,
+        confab_name: str,
+        file_path: str,
+        content: str,
+        repo_owner: str,
+        repo_name: str,
+        access_token: Optional[str] = None
+    ) -> str:
+        """Create or update a single file for a confab and open a PR.
+
+        The behaviour mirrors the standalone ``commit_confab_file`` helper but
+        is provided as an instance method for easier reuse by tools.  The file
+        is written under ``confabs/<confab-name>/<file_path>`` on a new branch.
+        """
+        # reuse the free function logic by calling it, passing through the
+        # parameters.  we could inline here, but keeping a single implementation
+        # reduces duplication.
+        return await commit_confab_file(
+            confab_name, file_path, content, repo_owner, repo_name, access_token
+        )
+
+    async def commit_purpose(
+        self,
+        confab_name: str,
+        purpose_markdown: str,
+        repo_owner: str,
+        repo_name: str,
+        access_token: Optional[str] = None
+    ) -> str:
+        """Helper that commits the PURPOSE.md file for a confab."""
+        return await self.commit_confab_file(
+            confab_name,
+            "PURPOSE.md",
+            purpose_markdown,
+            repo_owner,
+            repo_name,
+            access_token,
+        )
+
+    async def commit_knowledge_base(
+        self,
+        confab_name: str,
+        file_name: str,
+        content: str,
+        repo_owner: str,
+        repo_name: str,
+        access_token: Optional[str] = None
+    ) -> str:
+        """Commit a knowledge-base document (arbitrary filename) for a confab."""
+        return await self.commit_confab_file(
+            confab_name,
+            file_name,
+            content,
+            repo_owner,
+            repo_name,
+            access_token,
+        )
+
 # Global instance
 confab_manager = ConfabManager()
 
@@ -481,3 +563,115 @@ async def initialize_confab_repository(
             "error": str(e),
             "message": f"Failed to initialize repository: {str(e)}"
         }
+
+
+async def commit_confab_file(
+    confab_name: str,
+    file_path: str,
+    content: str,
+    repo_owner: str,
+    repo_name: str,
+    access_token: Optional[str] = None
+) -> str:
+    """Commit a single file for a confab into a GitHub repository.
+
+    A new branch is created (based on the current timestamp) and the provided
+    file is added or updated under the `confabs/<confab-name>/` directory. A
+    pull request is opened against the default branch and the URL is returned.
+
+    This helper is used by the chat tools when the user updates the purpose or
+    memory documents so that changes are saved in GitHub automatically.
+    """
+    branch_name = f"{file_path.replace('/', '-')}-{confab_name.lower().replace(' ', '-')}-{int(datetime.now().timestamp())}"
+
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+    }
+    if access_token:
+        headers["Authorization"] = f"token {access_token}"
+
+    async with httpx.AsyncClient() as client:
+        # get the default branch for the repo
+        repo_resp = await client.get(
+            f"https://api.github.com/repos/{repo_owner}/{repo_name}",
+            headers=headers
+        )
+        if repo_resp.status_code != 200:
+            raise Exception(f"Repository {repo_owner}/{repo_name} not found")
+        default_branch = repo_resp.json().get("default_branch")
+
+        # obtain the sha of the default branch
+        ref_resp = await client.get(
+            f"https://api.github.com/repos/{repo_owner}/{repo_name}/git/ref/heads/{default_branch}",
+            headers=headers
+        )
+        if ref_resp.status_code != 200:
+            raise Exception("Failed to get base branch reference")
+        base_sha = ref_resp.json()["object"]["sha"]
+
+        # create the new branch
+        branch_data = {"ref": f"refs/heads/{branch_name}", "sha": base_sha}
+        br_resp = await client.post(
+            f"https://api.github.com/repos/{repo_owner}/{repo_name}/git/refs",
+            headers=headers,
+            json=branch_data
+        )
+        if br_resp.status_code not in (201,):
+            raise Exception("Failed to create branch")
+
+        # compute the path within the repository
+        confab_dir = f"confabs/{confab_name.lower().replace(' ', '-') }"
+        full_path = f"{confab_dir}/{file_path}"
+
+        # create or update the file
+        existing_file_resp = await client.get(
+            f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{full_path}",
+            headers=headers
+        )
+        file_data: Dict[str, Any] = {
+            "message": f"Update {file_path} for confab {confab_name}",
+            "content": b64encode(content.encode()).decode(),
+            "branch": branch_name
+        }
+        if existing_file_resp.status_code == 200:
+            file_sha = existing_file_resp.json().get("sha")
+            file_data["sha"] = file_sha
+
+        file_resp = await client.put(
+            f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{full_path}",
+            headers=headers,
+            json=file_data
+        )
+        if file_resp.status_code not in (200, 201):
+            raise Exception(f"Failed to commit {file_path}")
+
+        # create a pull request
+        pr_data = {
+            "title": f"Update {file_path} for confab: {confab_name}",
+            "body": f"Automated update of {file_path} for confab {confab_name}",
+            "head": branch_name,
+            "base": default_branch
+        }
+        pr_resp = await client.post(
+            f"https://api.github.com/repos/{repo_owner}/{repo_name}/pulls",
+            headers=headers,
+            json=pr_data
+        )
+        if pr_resp.status_code != 201:
+            raise Exception("Failed to create pull request")
+
+        return pr_resp.json().get("html_url")
+
+
+# convenience alias at module level
+async def create_confab_file_in_github(
+    confab_name: str,
+    file_path: str,
+    content: str,
+    repo_owner: str,
+    repo_name: str,
+    access_token: Optional[str] = None
+) -> str:
+    return await confab_manager.commit_confab_file(
+        confab_name, file_path, content, repo_owner, repo_name, access_token
+    )
