@@ -124,6 +124,30 @@ interface DefinitionConflict {
   merged: string;
 }
 
+// V2 Foreman metadata from API response
+interface ForemanV2Metadata {
+  stage: string;
+  stage_status: 'complete' | 'clarify' | 'skip' | 'error' | null;
+  saved_fields: Record<string, unknown> | null;
+  next_question: string | null;
+  next_stage: string | null;
+  clarification_needed: boolean;
+}
+
+interface ForemanMetadata {
+  response: string;
+  confab_id: number;
+  thread_id: number;
+  setup_progress: {
+    completed_steps: number[];
+    current_stage: string;
+    total_steps: number;
+    remaining_steps: number[];
+  } | null;
+  v2_metadata: ForemanV2Metadata | null;
+  is_v2: boolean;
+}
+
 const PURPOSE_TEMPLATE = (name: string, firstUserInput: string) => `# ${name} Purpose
 
 ## Overview
@@ -272,6 +296,11 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version, co
   const [definitionConflict, setDefinitionConflict] = useState<DefinitionConflict | null>(null);
   const [showRegistryTokenBanner, setShowRegistryTokenBanner] = useState(false);
 
+  // V2 Foreman state
+  const [threadId, setThreadId] = useState<number | null>(null);
+  const [foremanMetadata, setForemanMetadata] = useState<ForemanMetadata | null>(null);
+  const [stageSummaries, setStageSummaries] = useState<Record<string, string>>({});
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -279,6 +308,29 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version, co
   useEffect(() => {
     scrollToBottom();
   }, [messages, activeThreadId]);
+
+  // Initialize thread for Foreman chat
+  useEffect(() => {
+    if (!confabId) return;
+    let cancelled = false;
+
+    const initThread = async () => {
+      try {
+        // Create a new thread for this confab configuration session
+        const thread = await apiClient.createThread(`Configure ${confabName}`);
+        if (!cancelled && thread?.id) {
+          setThreadId(thread.id);
+          // Add Foreman as a participant
+          await apiClient.addThreadParticipant(thread.id, 'system', null, 'foreman');
+        }
+      } catch (err) {
+        console.error('Failed to initialize thread:', err);
+      }
+    };
+
+    initThread();
+    return () => { cancelled = true; };
+  }, [confabId, confabName]);
 
   const getDefinitionFileStatus = (file: DefinitionFileState): DefinitionFileStatus => {
     if (!file.visible) return 'hidden';
@@ -608,20 +660,21 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version, co
     setDefinitionConflict(null);
   };
 
-  const handleSend = () => {
-    if (!input.trim()) return;
+  const handleSend = async () => {
+    if (!input.trim() || !threadId) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: input,
       timestamp: new Date(),
+      userName: user?.name || 'You',
     };
 
     if (activeThreadId) {
       // Add to subthread
-      setSubThreads(prev => prev.map(thread => 
-        thread.id === activeThreadId 
+      setSubThreads(prev => prev.map(thread =>
+        thread.id === activeThreadId
           ? { ...thread, messages: [...thread.messages, userMessage] }
           : thread
       ));
@@ -629,39 +682,80 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version, co
       // Add to main conversation
       setMessages((prev) => [...prev, userMessage]);
     }
-    
+
+    const messageContent = input;
     setInput('');
     setIsTyping(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const responses = [
-        "Great! I'm updating the confab configuration with that change. What LLM provider would you prefer for this update? We support OpenAI, Anthropic, Google AI, and more.",
-        "Perfect! I'm configuring those capabilities now. Would you like to adjust the memory settings for this confab?",
-        "Excellent choice! Your confab configuration is being updated. Should I modify any tool or API access?",
-        "Looking good! Let me summarize what we've configured and you can review the changes before saving.",
-      ];
-      
-      const assistantMessage: Message = {
+    try {
+      // Call the actual chat API
+      const response = await apiClient.chat(threadId, messageContent);
+
+      // Extract Foreman's response from agent_responses
+      const foremanResponse = response.agent_responses?.find(
+        (r: { sender_name: string }) => r.sender_name === 'Foreman'
+      );
+
+      if (foremanResponse) {
+        const assistantMessage: Message = {
+          id: foremanResponse.id?.toString() || (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: foremanResponse.content,
+          timestamp: new Date(foremanResponse.created_at || Date.now()),
+        };
+
+        if (activeThreadId) {
+          setSubThreads(prev => prev.map(thread =>
+            thread.id === activeThreadId
+              ? { ...thread, messages: [...thread.messages, assistantMessage] }
+              : thread
+          ));
+        } else {
+          setMessages((prev) => [...prev, assistantMessage]);
+        }
+      }
+
+      // Update state from foreman metadata (V2 flow)
+      if (response.foreman_metadata) {
+        setForemanMetadata(response.foreman_metadata);
+
+        // Update current step based on backend state
+        const setupProgress = response.foreman_metadata.setup_progress;
+        if (setupProgress) {
+          const stageToStep: Record<string, number> = {
+            purpose: 2,
+            participants: 3,
+            memory: 4,
+            tools: 5,
+            guardrails: 6,
+            sample_io: 7,
+            review: 8,
+          };
+          const newStep = stageToStep[setupProgress.current_stage] || currentStep;
+          setCurrentStep(newStep);
+        }
+
+        // Update stage summaries for completed stages
+        const v2 = response.foreman_metadata.v2_metadata;
+        if (v2?.stage_status === 'complete' && v2?.saved_fields) {
+          const stage = v2.stage;
+          const summary = JSON.stringify(v2.saved_fields).slice(0, 100);
+          setStageSummaries(prev => ({ ...prev, [stage]: summary }));
+        }
+      }
+    } catch (err) {
+      console.error('Chat API error:', err);
+      // Add error message
+      const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: responses[messages.filter(m => m.role === 'user').length % responses.length],
+        content: 'Sorry, I encountered an error. Please try again.',
         timestamp: new Date(),
       };
-
-      if (activeThreadId) {
-        setSubThreads(prev => prev.map(thread => 
-          thread.id === activeThreadId 
-            ? { ...thread, messages: [...thread.messages, assistantMessage] }
-            : thread
-        ));
-      } else {
-        setMessages((prev) => [...prev, assistantMessage]);
-      }
-      
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsTyping(false);
-      updateStep(assistantMessage.content);
-    }, 1000);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -761,9 +855,14 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version, co
     }
   };
 
+  // DEPRECATED: V1 keyword-based step detection
+  // V2 uses backend metadata from foreman_metadata.setup_progress
   const updateStep = (messageContent: string) => {
+    // Only use keyword detection as fallback when V2 metadata is not available
+    if (foremanMetadata?.is_v2) return;
+
     const content = messageContent.toLowerCase();
-    
+
     for (let i = AGENT_CREATION_STEPS.length - 1; i >= 0; i--) {
       const step = AGENT_CREATION_STEPS[i];
       if (step.keywords.some(keyword => content.includes(keyword))) {
@@ -771,6 +870,13 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version, co
         return;
       }
     }
+  };
+
+  // V2: Send skip message to Foreman
+  const handleSkipStep = async () => {
+    if (!threadId) return;
+    setInput('skip');
+    await handleSend();
   };
 
   const createSubThread = (parentMessageId: string) => {
@@ -897,37 +1003,63 @@ export function ConfigureConfabWithThreads({ onNavigate, confabName, version, co
                 </Button>
               </div>
             <div className="space-y-2">
-              {AGENT_CREATION_STEPS.map(step => (
-                <button
-                  key={step.id}
-                  onClick={() => setSelectedConfigStep(step.id)}
-                  className={`w-full text-sm p-3 rounded-lg transition-all text-left ${
-                    selectedConfigStep === step.id
-                      ? 'bg-indigo-600 text-white border-2 border-indigo-700'
-                      : step.id === currentStep 
-                      ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300' 
-                      : step.id < currentStep 
-                      ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100' 
-                      : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
+              {AGENT_CREATION_STEPS.map(step => {
+                const stageKey = ['github', 'purpose', 'participants', 'memory', 'tools', 'guardrails', 'sample_io', 'review'][step.id - 1];
+                const stageSummary = stageSummaries[stageKey];
+                const isCompleted = step.id < currentStep;
+                const isCurrent = step.id === currentStep;
+
+                return (
+                  <button
+                    key={step.id}
+                    onClick={() => setSelectedConfigStep(step.id)}
+                    className={`w-full text-sm p-3 rounded-lg transition-all text-left ${
                       selectedConfigStep === step.id
-                        ? 'bg-white text-indigo-600'
-                        : step.id === currentStep 
-                        ? 'bg-indigo-600 text-white' 
-                        : step.id < currentStep 
-                        ? 'bg-green-600 text-white' 
-                        : 'bg-slate-300 text-white'
-                    }`}>
-                      {step.id}
+                        ? 'bg-indigo-600 text-white border-2 border-indigo-700'
+                        : isCurrent
+                        ? 'bg-indigo-100 text-indigo-700 border-2 border-indigo-300'
+                        : isCompleted
+                        ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                        : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
+                        selectedConfigStep === step.id
+                          ? 'bg-white text-indigo-600'
+                          : isCurrent
+                          ? 'bg-indigo-600 text-white'
+                          : isCompleted
+                          ? 'bg-green-600 text-white'
+                          : 'bg-slate-300 text-white'
+                      }`}>
+                        {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : step.id}
+                      </div>
+                      <div className="flex-1">
+                        <span className="block">{step.label}</span>
+                        {isCompleted && stageSummary && (
+                          <span className="text-xs opacity-70 truncate block">{stageSummary}</span>
+                        )}
+                        {isCurrent && foremanMetadata?.is_v2 && (
+                          <span className="text-xs text-indigo-500 block">Current step</span>
+                        )}
+                      </div>
                     </div>
-                    <span>{step.label}</span>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
+            {/* Skip Step Button */}
+            {foremanMetadata?.is_v2 && currentStep > 1 && currentStep < 8 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full mt-2 text-slate-500 hover:text-slate-700"
+                onClick={handleSkipStep}
+              >
+                Skip this step
+              </Button>
+            )}
             </Card>
           </div>
         )}

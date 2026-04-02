@@ -1,19 +1,40 @@
 """
 Foreman Agent - Top-level orchestrator for confabs in 'building' status
 Handles context loading, resume prompts, and proactive conversation guidance.
+
+V2 Architecture (when FOREMAN_V2_ENABLED=true):
+- Deterministic stage machine with explicit transitions
+- Structured LLM extraction at low temperature
+- Direct tool invocation per stage
+- Save-gated stage progression
 """
 
 import logging
 import json
 import re
-from typing import Optional, Dict, Any, List
+import os
+from dataclasses import dataclass
+from typing import Optional, Dict, Any, List, Literal
 from datetime import datetime
 from sqlalchemy.orm import Session
+
+# Feature flag for V2 deterministic interview flow
+FOREMAN_V2_ENABLED = os.getenv("FOREMAN_V2_ENABLED", "false").lower() == "true"
 
 from models import Confab, GitHubAccount
 from context_loader import ContextLoader, ForemanContext
 from resume_generator import ResumePromptGenerator, STAGE_PROMPTS, STEP_DESCRIPTIONS
-from llm_service import ask_llm
+from llm_service import (
+    ask_llm,
+    ask_llm_json,
+    extract_purpose,
+    extract_participants,
+    extract_memory_preference,
+    extract_tools,
+    extract_guardrails,
+    extract_sample_io,
+    extract_review_intent,
+)
 from document_store.service import DocumentService
 
 # Import tool functions at module level (not runtime)
@@ -37,6 +58,54 @@ SETUP_TOOLS = {
     "sample_io": {"fn": sample_io, "requires_db": True},
     "review_and_save": {"fn": review_and_save, "requires_db": True},
     "update_purpose": {"fn": update_purpose, "requires_db": False},  # Different signature
+}
+
+
+# =========================================================================
+# V2 Stage Machine Types and Configuration
+# =========================================================================
+
+@dataclass
+class StageResult:
+    """Result from a V2 stage handler."""
+    status: Literal["complete", "clarify", "skip", "error"]
+    data: Optional[Dict[str, Any]] = None       # Extracted/saved data
+    summary: Optional[str] = None               # What was saved (for response)
+    next_question: Optional[str] = None         # What to ask next
+    error_message: Optional[str] = None         # If status == "error"
+
+
+# Stage questions - the primary question for each stage
+STAGE_QUESTIONS = {
+    "purpose": "What should this agent do? Describe its main job in a sentence or two.",
+    "participants": "Who should have access to this agent? You can add email addresses or skip for now.",
+    "memory": "Should this agent remember previous conversations? (yes, no, or limited)",
+    "tools": "What external tools or APIs does this agent need? (e.g., web search, database, none)",
+    "guardrails": "What safety boundaries should this agent follow? List any rules or restrictions.",
+    "sample_io": "Can you provide an example interaction? (e.g., 'User asks X, agent responds Y')",
+    "review": "Here's your agent configuration. Ready to save and deploy?",
+}
+
+# Clarification prompts when we need more info
+STAGE_CLARIFICATIONS = {
+    "purpose": "I need a bit more detail. What specific task should this agent help with?",
+    "participants": "Could you provide an email address, or say 'skip' to continue?",
+    "memory": "Please specify: should it remember conversations? (yes/no/limited)",
+    "tools": "Which tools specifically? For example: web search, calendar, database, or 'none'.",
+    "guardrails": "What's one important rule this agent should follow?",
+    "sample_io": "Can you give a quick example of what a user might ask and how the agent should respond?",
+    "review": "Would you like to make any changes, or shall I save this configuration?",
+}
+
+# Acknowledgment templates (short, no praise)
+STAGE_ACKNOWLEDGMENTS = {
+    "purpose": "Recorded the purpose.",
+    "participants": "Added participant.",
+    "memory": "Memory settings configured.",
+    "tools": "Tools configured.",
+    "guardrails": "Guardrails saved.",
+    "sample_io": "Example recorded.",
+    "review": "Configuration saved.",
 }
 
 
@@ -151,7 +220,12 @@ class Foreman:
         self.context = await loader.load_full_context(self.confab)
 
         self.initialized = True
-        logger.info(f"Foreman initialized for confab {self.confab_id}")
+        logger.info(
+            f"Foreman initialized for confab {self.confab_id} "
+            f"[v2_enabled={FOREMAN_V2_ENABLED}, "
+            f"stage={self.context.setup_progress.current_stage}, "
+            f"completed_steps={self.context.setup_progress.completed_steps}]"
+        )
         return True
 
     async def generate_resume_prompt(self) -> Dict[str, Any]:
@@ -205,6 +279,18 @@ class Foreman:
         if not self.initialized:
             raise RuntimeError("Foreman not initialized. Call initialize() first.")
 
+        current_stage = self.context.setup_progress.current_stage
+        logger.info(
+            f"[Foreman] Processing message for confab {self.confab_id} "
+            f"[stage={current_stage}, v2={FOREMAN_V2_ENABLED}]"
+        )
+        logger.debug(f"[Foreman] User message: {user_message[:100]}...")
+
+        # V2 path: deterministic stage-based dispatch
+        if FOREMAN_V2_ENABLED:
+            return await self._process_message_v2(user_message)
+
+        # V1 path: LLM-driven flow with tool parsing from prose
         # Build contextual prompt (uses thread history from context)
         prompt = await self._build_contextual_prompt(user_message)
 
@@ -293,9 +379,17 @@ User: {user_message}
 Respond helpfully as the Foreman. Guide the user through building their agent."""
 
     def _parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
-        """Parse tool calls from LLM response (JSON embedded in text)."""
+        """Parse tool calls from LLM response (JSON embedded in text).
+
+        V1 ONLY: This method parses JSON tool calls embedded in prose.
+        In V2, tools are called directly from stage handlers.
+        """
         tool_calls = []
         seen_json_strings = set()  # Avoid duplicate tool calls
+        parse_attempts = 0
+        parse_failures = 0
+
+        logger.debug(f"[Foreman] Scanning response for tool calls ({len(response)} chars)")
 
         # Find all potential starting positions for tool JSON objects
         search_start = 0
@@ -307,6 +401,7 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
             if start == -1:
                 break
 
+            parse_attempts += 1
             try:
                 # Find matching closing brace
                 depth = 0
@@ -335,13 +430,25 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 # Validate it has the expected structure
                 if "tool" in tool_call:
                     tool_calls.append(tool_call)
-                    logger.debug(f"Parsed tool call: {tool_call.get('tool')}")
+                    logger.info(
+                        f"[Foreman] Parsed tool call: {tool_call.get('tool')} "
+                        f"[confab={self.confab_id}]"
+                    )
 
                 search_start = end
             except (json.JSONDecodeError, ValueError) as e:
-                logger.debug(f"Could not parse tool call at position {start}: {e}")
+                parse_failures += 1
+                logger.warning(
+                    f"[Foreman] Tool parse failure at position {start}: {e} "
+                    f"[confab={self.confab_id}, snippet={response[start:start+50]}...]"
+                )
                 search_start = start + 1  # Move past this position and try again
 
+        logger.info(
+            f"[Foreman] Tool parsing complete: {len(tool_calls)} found, "
+            f"{parse_attempts} attempts, {parse_failures} failures "
+            f"[confab={self.confab_id}]"
+        )
         return tool_calls
 
     async def _execute_tools_and_respond(
@@ -350,12 +457,27 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
         original_response: str,
         user_message: str
     ) -> str:
-        """Execute tool calls and generate enriched response."""
+        """Execute tool calls and generate enriched response.
+
+        V1 ONLY: Executes tools discovered via prose parsing.
+        In V2, tools are called directly from stage handlers.
+        """
         results = []
+        success_count = 0
+        failure_count = 0
+
+        logger.info(
+            f"[Foreman] Executing {len(tool_calls)} tool(s) [confab={self.confab_id}]"
+        )
 
         for call in tool_calls:
             tool_name = call.get("tool")
             args = call.get("args", {})
+
+            logger.debug(
+                f"[Foreman] Tool execution attempt: {tool_name} "
+                f"[args={list(args.keys())}, confab={self.confab_id}]"
+            )
 
             if tool_name in SETUP_TOOLS:
                 try:
@@ -373,13 +495,29 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                         result = tool_fn(**args)
 
                     results.append(f"Tool '{tool_name}' executed: {result}")
-                    logger.info(f"Executed tool {tool_name} for confab {self.confab_id}")
+                    success_count += 1
+                    logger.info(
+                        f"[Foreman] Tool success: {tool_name} "
+                        f"[confab={self.confab_id}, result_preview={str(result)[:100]}]"
+                    )
                 except Exception as e:
                     results.append(f"Tool '{tool_name}' failed: {str(e)}")
-                    logger.error(f"Tool {tool_name} error: {e}")
+                    failure_count += 1
+                    logger.error(
+                        f"[Foreman] Tool failure: {tool_name} "
+                        f"[confab={self.confab_id}, error={e}]"
+                    )
             else:
-                logger.warning(f"Unknown tool: {tool_name}")
+                failure_count += 1
+                logger.warning(
+                    f"[Foreman] Unknown tool: {tool_name} [confab={self.confab_id}]"
+                )
                 results.append(f"Tool '{tool_name}' not found")
+
+        logger.info(
+            f"[Foreman] Tool execution complete: {success_count} succeeded, "
+            f"{failure_count} failed [confab={self.confab_id}]"
+        )
 
         # If tools were executed, append results to response
         if results:
@@ -392,7 +530,11 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
         user_message: str,
         assistant_response: str
     ) -> None:
-        """Update setup progress based on conversation content."""
+        """Update setup progress based on conversation content.
+
+        V1 ONLY: Uses phrase-based heuristics to detect stage completion.
+        In V2, stage progression is controlled by explicit save success.
+        """
         # Simple heuristic: detect when a step seems complete
         current_stage = self.context.setup_progress.current_stage
         step_num = None
@@ -415,10 +557,17 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
         ]
 
         response_lower = assistant_response.lower()
-        if any(signal in response_lower for signal in completion_signals):
+        matched_signals = [s for s in completion_signals if s in response_lower]
+
+        if matched_signals:
+            logger.debug(
+                f"[Foreman] Progress signals detected: {matched_signals} "
+                f"[stage={current_stage}, confab={self.confab_id}]"
+            )
             step_num = stage_to_step.get(current_stage)
 
             if step_num and step_num not in self.context.setup_progress.completed_steps:
+                old_stage = current_stage
                 # Update progress
                 self.context.setup_progress.completed_steps.append(step_num)
 
@@ -430,8 +579,20 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                             self.context.setup_progress.current_stage = next_stage
                         break
 
+                logger.info(
+                    f"[Foreman] Stage transition: {old_stage} -> "
+                    f"{self.context.setup_progress.current_stage} "
+                    f"[completed={self.context.setup_progress.completed_steps}, "
+                    f"confab={self.confab_id}]"
+                )
+
                 # Persist to confab config
                 await self._persist_progress()
+        else:
+            logger.debug(
+                f"[Foreman] No progress signals in response "
+                f"[stage={current_stage}, confab={self.confab_id}]"
+            )
 
     async def _persist_progress(self) -> None:
         """Persist setup progress to confab.setup_progress JSON field in database."""
@@ -441,6 +602,590 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 "current_stage": self.context.setup_progress.current_stage,
             }
             self.db.commit()
-            logger.info(f"Persisted progress for confab {self.confab_id}: {self.context.setup_progress.completed_steps}")
+            logger.info(
+                f"[Foreman] Progress persisted [confab={self.confab_id}, "
+                f"stage={self.context.setup_progress.current_stage}, "
+                f"completed={self.context.setup_progress.completed_steps}]"
+            )
         except Exception as e:
-            logger.error(f"Failed to persist progress for confab {self.confab_id}: {e}")
+            logger.error(
+                f"[Foreman] Failed to persist progress "
+                f"[confab={self.confab_id}, error={e}]"
+            )
+
+    # =========================================================================
+    # V2 METHODS - Deterministic Interview Flow
+    # =========================================================================
+
+    # Stage order for V2 deterministic flow
+    STAGE_ORDER = ["purpose", "participants", "memory", "tools", "guardrails", "sample_io", "review"]
+
+    async def _process_message_v2(self, user_message: str) -> Dict[str, Any]:
+        """
+        V2: Deterministic stage-based message processing.
+
+        Instead of letting the LLM drive the entire flow, we dispatch to
+        stage-specific handlers that:
+        1. Extract structured data from user input (low-temp LLM)
+        2. Call tools directly
+        3. Advance stage only on successful save
+        4. Return templated responses
+        """
+        current_stage = self.context.setup_progress.current_stage
+
+        logger.info(
+            f"[Foreman V2] Processing message [stage={current_stage}, "
+            f"confab={self.confab_id}]"
+        )
+
+        # Dispatch to stage-specific handler
+        stage_handlers = {
+            "purpose": self._handle_purpose,
+            "participants": self._handle_participants,
+            "memory": self._handle_memory,
+            "tools": self._handle_tools,
+            "guardrails": self._handle_guardrails,
+            "sample_io": self._handle_sample_io,
+            "review": self._handle_review,
+        }
+
+        handler = stage_handlers.get(current_stage)
+        if not handler:
+            logger.error(f"[Foreman V2] No handler for stage: {current_stage}")
+            return self._build_error_response(
+                f"Unknown stage: {current_stage}",
+                current_stage
+            )
+
+        # Execute stage handler
+        try:
+            result = await handler(user_message)
+        except Exception as e:
+            logger.error(f"[Foreman V2] Handler error for {current_stage}: {e}")
+            result = StageResult(
+                status="error",
+                error_message=f"An error occurred: {str(e)}"
+            )
+
+        # Process result and potentially advance stage
+        response_text = self._render_foreman_reply(result, current_stage)
+
+        # Advance stage if complete
+        if result.status == "complete":
+            await self._complete_stage(current_stage)
+
+        # Build response
+        return {
+            "response": response_text,
+            "confab_id": self.confab_id,
+            "is_resume": False,
+            "setup_progress": {
+                "completed_steps": self.context.setup_progress.completed_steps,
+                "current_stage": self.context.setup_progress.current_stage,
+                "total_steps": self.context.setup_progress.total_steps,
+                "remaining_steps": self.context.setup_progress.remaining_steps
+            },
+            "tool_calls": [],  # V2 doesn't expose tool calls
+            "timestamp": datetime.now().isoformat(),
+            "v2_metadata": {
+                "stage": current_stage,
+                "stage_status": result.status,
+                "saved_fields": result.data,
+                "next_question": result.next_question,
+            }
+        }
+
+    def _next_stage_after(self, stage: str) -> Optional[str]:
+        """Return the next stage after the given stage, or None if at end."""
+        try:
+            idx = self.STAGE_ORDER.index(stage)
+            if idx + 1 < len(self.STAGE_ORDER):
+                return self.STAGE_ORDER[idx + 1]
+        except ValueError:
+            logger.warning(f"[Foreman V2] Unknown stage: {stage}")
+        return None
+
+    def _stage_to_step_num(self, stage: str) -> Optional[int]:
+        """Convert stage name to step number (1-indexed)."""
+        try:
+            return self.STAGE_ORDER.index(stage) + 1
+        except ValueError:
+            return None
+
+    async def _complete_stage(self, stage: str) -> None:
+        """Mark a stage as complete and advance to the next stage."""
+        step_num = self._stage_to_step_num(stage)
+        if step_num and step_num not in self.context.setup_progress.completed_steps:
+            self.context.setup_progress.completed_steps.append(step_num)
+
+        next_stage = self._next_stage_after(stage)
+        if next_stage:
+            self.context.setup_progress.current_stage = next_stage
+
+        logger.info(
+            f"[Foreman V2] Stage complete: {stage} -> {next_stage} "
+            f"[completed={self.context.setup_progress.completed_steps}, "
+            f"confab={self.confab_id}]"
+        )
+
+        await self._persist_progress()
+
+    def _render_foreman_reply(self, result: StageResult, current_stage: str) -> str:
+        """Render a consistent Foreman response from a StageResult."""
+        parts = []
+
+        if result.status == "error":
+            parts.append(result.error_message or "An error occurred.")
+            parts.append(STAGE_QUESTIONS.get(current_stage, "How would you like to proceed?"))
+
+        elif result.status == "clarify":
+            if result.summary:
+                parts.append(result.summary)
+            parts.append(result.next_question or STAGE_CLARIFICATIONS.get(current_stage, "Could you provide more detail?"))
+
+        elif result.status == "skip":
+            parts.append("Skipping this step.")
+            next_stage = self._next_stage_after(current_stage)
+            if next_stage:
+                parts.append(STAGE_QUESTIONS.get(next_stage, ""))
+
+        elif result.status == "complete":
+            # Acknowledgment + next question
+            ack = result.summary or STAGE_ACKNOWLEDGMENTS.get(current_stage, "Saved.")
+            parts.append(ack)
+            next_stage = self._next_stage_after(current_stage)
+            if next_stage:
+                parts.append(STAGE_QUESTIONS.get(next_stage, ""))
+            else:
+                parts.append("All steps complete. Your agent is ready.")
+
+        return " ".join(parts)
+
+    def _build_error_response(self, error_msg: str, stage: str) -> Dict[str, Any]:
+        """Build an error response dict."""
+        return {
+            "response": f"Error: {error_msg}",
+            "confab_id": self.confab_id,
+            "is_resume": False,
+            "setup_progress": {
+                "completed_steps": self.context.setup_progress.completed_steps,
+                "current_stage": self.context.setup_progress.current_stage,
+                "total_steps": self.context.setup_progress.total_steps,
+                "remaining_steps": self.context.setup_progress.remaining_steps
+            },
+            "tool_calls": [],
+            "timestamp": datetime.now().isoformat(),
+            "v2_metadata": {
+                "stage": stage,
+                "stage_status": "error",
+                "saved_fields": None,
+                "next_question": None,
+            }
+        }
+
+    def _detect_skip_intent(self, user_message: str) -> bool:
+        """Detect if user wants to skip the current step."""
+        skip_patterns = ["skip", "next", "pass", "later", "not now", "move on", "none"]
+        msg_lower = user_message.lower().strip()
+        return any(pattern in msg_lower for pattern in skip_patterns)
+
+    # =========================================================================
+    # Stage Handlers
+    # =========================================================================
+
+    async def _handle_purpose(self, user_message: str) -> StageResult:
+        """Handle the purpose definition stage using structured extraction."""
+        if self._detect_skip_intent(user_message):
+            return StageResult(status="skip")
+
+        # Check if message has enough content for a purpose
+        if len(user_message.strip()) < 10:
+            return StageResult(
+                status="clarify",
+                next_question=STAGE_CLARIFICATIONS["purpose"]
+            )
+
+        # Use structured LLM extraction
+        extraction = await extract_purpose(user_message)
+
+        if not extraction.success:
+            logger.warning(f"[Foreman V2] Purpose extraction failed: {extraction.error}")
+            # Fallback to using message directly
+            purpose_text = user_message.strip()
+            suggested_name = None
+        else:
+            data = extraction.data
+            # Check if LLM needs clarification
+            if not data.get("is_clear", True) and data.get("clarification_needed"):
+                return StageResult(
+                    status="clarify",
+                    next_question=data["clarification_needed"]
+                )
+            purpose_text = data.get("purpose_text", user_message.strip())
+            suggested_name = data.get("suggested_name")
+
+        # Save purpose
+        try:
+            define_purpose(
+                db=self.db,
+                confab_id=self.confab_id,
+                purpose_text=purpose_text
+            )
+            logger.info(f"[Foreman V2] Purpose saved [confab={self.confab_id}]")
+
+            # Save suggested name if available
+            name_result = None
+            if suggested_name:
+                try:
+                    set_confab_name(db=self.db, confab_id=self.confab_id, name=suggested_name)
+                    name_result = suggested_name
+                except Exception as e:
+                    logger.warning(f"[Foreman V2] Name save failed: {e}")
+
+            return StageResult(
+                status="complete",
+                data={"purpose": purpose_text, "name": name_result},
+                summary=f"Recorded the purpose: \"{purpose_text[:50]}{'...' if len(purpose_text) > 50 else ''}\""
+            )
+        except Exception as e:
+            logger.error(f"[Foreman V2] Purpose save failed: {e}")
+            return StageResult(
+                status="error",
+                error_message=f"Failed to save purpose: {str(e)}"
+            )
+
+    async def _handle_participants(self, user_message: str) -> StageResult:
+        """Handle the participants stage using structured extraction."""
+        if self._detect_skip_intent(user_message):
+            return StageResult(status="skip")
+
+        # Use structured LLM extraction
+        extraction = await extract_participants(user_message)
+
+        if extraction.success:
+            data = extraction.data
+            if data.get("wants_to_skip"):
+                return StageResult(status="skip")
+            if data.get("clarification_needed") and not data.get("emails"):
+                return StageResult(
+                    status="clarify",
+                    next_question=data["clarification_needed"]
+                )
+            emails = data.get("emails", [])
+        else:
+            # Fallback to regex extraction
+            email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+            emails = re.findall(email_pattern, user_message)
+
+        if not emails:
+            return StageResult(
+                status="clarify",
+                next_question=STAGE_CLARIFICATIONS["participants"]
+            )
+
+        # Add each participant
+        added = []
+        for email in emails:
+            try:
+                add_participant(db=self.db, confab_id=self.confab_id, email=email)
+                added.append(email)
+            except Exception as e:
+                logger.warning(f"[Foreman V2] Failed to add participant {email}: {e}")
+
+        if added:
+            return StageResult(
+                status="complete",
+                data={"participants": added},
+                summary=f"Added {len(added)} participant(s): {', '.join(added)}"
+            )
+        else:
+            return StageResult(
+                status="error",
+                error_message="Could not add participants. Please try again."
+            )
+
+    async def _handle_memory(self, user_message: str) -> StageResult:
+        """Handle the memory configuration stage using structured extraction."""
+        if self._detect_skip_intent(user_message):
+            return StageResult(status="skip")
+
+        # Use structured LLM extraction
+        extraction = await extract_memory_preference(user_message)
+
+        if extraction.success:
+            data = extraction.data
+            if data.get("wants_to_skip"):
+                return StageResult(status="skip")
+            if data.get("clarification_needed") and data.get("enable_memory") is None:
+                return StageResult(
+                    status="clarify",
+                    next_question=data["clarification_needed"]
+                )
+
+            memory_type = data.get("memory_type", "full")
+            enable = data.get("enable_memory", True) if memory_type != "none" else False
+            notes = data.get("notes", f"Memory: {memory_type}")
+        else:
+            # Fallback to keyword matching
+            msg_lower = user_message.lower()
+            if any(w in msg_lower for w in ["yes", "enable", "remember", "retain"]):
+                enable = True
+                notes = "Full conversation memory enabled"
+            elif any(w in msg_lower for w in ["no", "disable", "forget", "don't remember"]):
+                enable = False
+                notes = "Memory disabled"
+            elif any(w in msg_lower for w in ["limited", "some", "partial", "recent"]):
+                enable = True
+                notes = "Limited memory - recent conversations only"
+            else:
+                return StageResult(
+                    status="clarify",
+                    next_question=STAGE_CLARIFICATIONS["memory"]
+                )
+
+        try:
+            configure_memory(
+                db=self.db,
+                confab_id=self.confab_id,
+                memory_notes=notes,
+                enable=enable
+            )
+            return StageResult(
+                status="complete",
+                data={"enable": enable, "notes": notes},
+                summary=f"Memory configured: {notes}"
+            )
+        except Exception as e:
+            logger.error(f"[Foreman V2] Memory config failed: {e}")
+            return StageResult(
+                status="error",
+                error_message=f"Failed to configure memory: {str(e)}"
+            )
+
+    async def _handle_tools(self, user_message: str) -> StageResult:
+        """Handle the tools/APIs stage using structured extraction."""
+        if self._detect_skip_intent(user_message):
+            return StageResult(status="skip")
+
+        # Use structured LLM extraction
+        extraction = await extract_tools(user_message)
+
+        if extraction.success:
+            data = extraction.data
+            if data.get("wants_to_skip"):
+                return StageResult(status="skip")
+            if data.get("no_tools_needed"):
+                return StageResult(
+                    status="complete",
+                    data={"tools": []},
+                    summary="No additional tools configured."
+                )
+            if data.get("clarification_needed") and not data.get("tools"):
+                return StageResult(
+                    status="clarify",
+                    next_question=data["clarification_needed"]
+                )
+            detected_tools = data.get("tools", [])
+        else:
+            # Fallback to keyword matching
+            msg_lower = user_message.lower()
+            if any(w in msg_lower for w in ["none", "no tools", "nothing", "no apis"]):
+                return StageResult(
+                    status="complete",
+                    data={"tools": []},
+                    summary="No additional tools configured."
+                )
+
+            tool_keywords = {
+                "web search": "web_search",
+                "search": "web_search",
+                "database": "database",
+                "db": "database",
+                "calendar": "calendar",
+                "email": "email",
+                "slack": "slack",
+                "api": "custom_api",
+            }
+            detected_tools = []
+            for keyword, tool_name in tool_keywords.items():
+                if keyword in msg_lower:
+                    detected_tools.append(tool_name)
+            if not detected_tools:
+                detected_tools = [user_message.strip()[:50]]
+
+        try:
+            for tool in detected_tools:
+                add_tools_and_apis(
+                    db=self.db,
+                    confab_id=self.confab_id,
+                    tool_name=tool,
+                    api_key=""
+                )
+            return StageResult(
+                status="complete",
+                data={"tools": detected_tools},
+                summary=f"Tools configured: {', '.join(detected_tools)}"
+            )
+        except Exception as e:
+            logger.error(f"[Foreman V2] Tools config failed: {e}")
+            return StageResult(
+                status="error",
+                error_message=f"Failed to configure tools: {str(e)}"
+            )
+
+    async def _handle_guardrails(self, user_message: str) -> StageResult:
+        """Handle the guardrails stage using structured extraction."""
+        if self._detect_skip_intent(user_message):
+            return StageResult(status="skip")
+
+        # Use structured LLM extraction
+        extraction = await extract_guardrails(user_message)
+
+        if extraction.success:
+            data = extraction.data
+            if data.get("wants_to_skip"):
+                return StageResult(status="skip")
+            if data.get("clarification_needed") and data.get("rules_count", 0) == 0:
+                return StageResult(
+                    status="clarify",
+                    next_question=data["clarification_needed"]
+                )
+            guardrails_text = data.get("guardrails_text", user_message.strip())
+        else:
+            if len(user_message.strip()) < 5:
+                return StageResult(
+                    status="clarify",
+                    next_question=STAGE_CLARIFICATIONS["guardrails"]
+                )
+            guardrails_text = user_message.strip()
+
+        try:
+            guardrails(
+                db=self.db,
+                confab_id=self.confab_id,
+                guardrails_text=guardrails_text
+            )
+            return StageResult(
+                status="complete",
+                data={"guardrails": guardrails_text},
+                summary="Guardrails saved."
+            )
+        except Exception as e:
+            logger.error(f"[Foreman V2] Guardrails save failed: {e}")
+            return StageResult(
+                status="error",
+                error_message=f"Failed to save guardrails: {str(e)}"
+            )
+
+    async def _handle_sample_io(self, user_message: str) -> StageResult:
+        """Handle the sample I/O stage using structured extraction."""
+        if self._detect_skip_intent(user_message):
+            return StageResult(status="skip")
+
+        # Use structured LLM extraction
+        extraction = await extract_sample_io(user_message)
+
+        if extraction.success:
+            data = extraction.data
+            if data.get("wants_to_skip"):
+                return StageResult(status="skip")
+            if data.get("clarification_needed") and not (data.get("has_input") or data.get("has_output")):
+                return StageResult(
+                    status="clarify",
+                    next_question=data["clarification_needed"]
+                )
+            sample_text = data.get("sample_text", user_message.strip())
+        else:
+            if len(user_message.strip()) < 10:
+                return StageResult(
+                    status="clarify",
+                    next_question=STAGE_CLARIFICATIONS["sample_io"]
+                )
+            sample_text = user_message.strip()
+
+        try:
+            sample_io(
+                db=self.db,
+                confab_id=self.confab_id,
+                sample_text=sample_text
+            )
+            return StageResult(
+                status="complete",
+                data={"sample": sample_text},
+                summary="Example interaction recorded."
+            )
+        except Exception as e:
+            logger.error(f"[Foreman V2] Sample I/O save failed: {e}")
+            return StageResult(
+                status="error",
+                error_message=f"Failed to save example: {str(e)}"
+            )
+
+    async def _handle_review(self, user_message: str) -> StageResult:
+        """Handle the review and save stage using structured extraction."""
+        # Use structured LLM extraction
+        extraction = await extract_review_intent(user_message)
+
+        if extraction.success:
+            data = extraction.data
+            intent = data.get("intent", "unclear")
+
+            if intent == "confirm":
+                try:
+                    review_and_save(db=self.db, confab_id=self.confab_id)
+                    return StageResult(
+                        status="complete",
+                        data={"saved": True},
+                        summary="Configuration saved. Your agent is ready to deploy."
+                    )
+                except Exception as e:
+                    logger.error(f"[Foreman V2] Review save failed: {e}")
+                    return StageResult(
+                        status="error",
+                        error_message=f"Failed to save configuration: {str(e)}"
+                    )
+
+            elif intent == "edit":
+                edit_target = data.get("edit_target", "any section")
+                return StageResult(
+                    status="clarify",
+                    summary=f"What would you like to change about the {edit_target}?",
+                    next_question="You can update the purpose, participants, memory, tools, guardrails, or examples."
+                )
+
+            else:  # unclear
+                if data.get("clarification_needed"):
+                    return StageResult(
+                        status="clarify",
+                        next_question=data["clarification_needed"]
+                    )
+
+        # Fallback to keyword matching
+        msg_lower = user_message.lower()
+        if any(w in msg_lower for w in ["yes", "save", "confirm", "deploy", "done", "ready", "looks good"]):
+            try:
+                review_and_save(db=self.db, confab_id=self.confab_id)
+                return StageResult(
+                    status="complete",
+                    data={"saved": True},
+                    summary="Configuration saved. Your agent is ready to deploy."
+                )
+            except Exception as e:
+                logger.error(f"[Foreman V2] Review save failed: {e}")
+                return StageResult(
+                    status="error",
+                    error_message=f"Failed to save configuration: {str(e)}"
+                )
+
+        if any(w in msg_lower for w in ["change", "edit", "modify", "update", "go back"]):
+            return StageResult(
+                status="clarify",
+                summary="What would you like to change?",
+                next_question="You can update the purpose, participants, memory, tools, guardrails, or examples."
+            )
+
+        # Default: ask for confirmation
+        return StageResult(
+            status="clarify",
+            next_question=STAGE_CLARIFICATIONS["review"]
+        )

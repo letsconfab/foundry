@@ -1380,6 +1380,7 @@ async def chat(
     thread_messages = db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.created_at).limit(20).all()
 
     agent_responses = []
+    foreman_result = None  # Track Foreman's full result for V2 metadata
 
     for agent in agent_participants:
         # Check if agent should respond
@@ -1407,6 +1408,8 @@ async def chat(
                     await foreman.initialize()
                     result = await foreman.process_message(request.content)
                     response_content = result.get("response", "")
+                    # Capture full result for V2 metadata
+                    foreman_result = result
                 else:
                     response_content = "No confab is currently being built. Please start a new confab to begin."
 
@@ -1462,11 +1465,37 @@ async def chat(
             logger.error(f"Error generating response from agent {agent.id}: {e}")
             continue
 
+    # Build foreman metadata if present
+    foreman_metadata = None
+    if foreman_result:
+        from schemas import ForemanChatResponse, SetupProgressResponse, ForemanV2Metadata
+        setup_progress = foreman_result.get("setup_progress")
+        v2_data = foreman_result.get("v2_metadata")
+
+        foreman_metadata = ForemanChatResponse(
+            response=foreman_result.get("response", ""),
+            confab_id=foreman_result.get("confab_id", 0),
+            thread_id=thread_id,
+            setup_progress=SetupProgressResponse(**setup_progress) if setup_progress else None,
+            tool_calls=foreman_result.get("tool_calls", []),
+            timestamp=datetime.datetime.fromisoformat(foreman_result.get("timestamp", datetime.datetime.now().isoformat())),
+            v2_metadata=ForemanV2Metadata(
+                stage=v2_data.get("stage", ""),
+                stage_status=v2_data.get("stage_status"),
+                saved_fields=v2_data.get("saved_fields"),
+                next_question=v2_data.get("next_question"),
+                next_stage=setup_progress.get("current_stage") if setup_progress else None,
+                clarification_needed=v2_data.get("stage_status") == "clarify" if v2_data else False,
+            ) if v2_data else None,
+            is_v2=v2_data is not None,
+        )
+
     return ChatResponse(
         thread_id=thread_id,
         user_message=MessageResponse.model_validate(user_message),
         agent_responses=agent_responses,
         timestamp=datetime.datetime.now(datetime.timezone.utc),
+        foreman_metadata=foreman_metadata,
     )
 
 
