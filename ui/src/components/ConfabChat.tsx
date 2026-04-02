@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, ThumbsUp, ThumbsDown, ArrowLeft, Bot, User, Users, Save, Loader2 } from 'lucide-react';
+import { Send, ThumbsUp, ThumbsDown, ArrowLeft, Bot, User, Users, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -18,7 +18,7 @@ import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageContent } from './MessageContent';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure' | 'review-chats';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
 interface ConfabChatProps {
   onNavigate: (view: View) => void;
@@ -60,7 +60,6 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
-  const [savingToChats, setSavingToChats] = useState(false);
   /** Thread id from API: either passed in (review) or auto-created on first send. Used to persist every message. */
   const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -170,27 +169,6 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
     }, 1500);
   };
 
-  const handleSaveToMyChats = async () => {
-    if (messages.length === 0) return;
-    setSavingToChats(true);
-    try {
-      const name = `${confabName} – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
-      const thread = await apiClient.createThread(name);
-      const tid = thread?.id;
-      if (tid) {
-        for (const m of messages) {
-          if (m.role === 'assistant' && m.content === `Hello! I'm ${confabName}. How can I help you today?`) continue;
-          await apiClient.addMessage(tid, m.content, m.role);
-        }
-        onNavigate('review-chats');
-      }
-    } catch {
-      // ignore
-    } finally {
-      setSavingToChats(false);
-    }
-  };
-
   const handleFeedback = (messageId: string, feedback: 'up' | 'down') => {
     setMessages((prev) =>
       prev.map((msg) =>
@@ -245,18 +223,6 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
                 <p className="text-sm text-slate-500">Online</p>
               </div>
             </div>
-            {!effectiveThreadId && messages.length > 1 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                disabled={savingToChats}
-                onClick={handleSaveToMyChats}
-              >
-                {savingToChats ? <span className="animate-pulse">Saving…</span> : <Save className="w-4 h-4" />}
-                Save to my chats
-              </Button>
-            )}
           </div>
         </div>
 

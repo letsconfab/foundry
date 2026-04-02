@@ -10,13 +10,10 @@ import { MultiAgentBuilder } from './components/MultiAgentBuilder';
 import { Login } from './components/Login';
 import { Register } from './components/Register';
 import { ConfabChat } from './components/ConfabChat';
-import { ConfigureConfab } from './components/ConfigureConfab';
-import { ConfigureConfabWithThreads } from './components/ConfigureConfabWithThreads';
-import { ReviewChats } from './components/ReviewChats';
 import { GitHubCallback } from './components/GitHubCallback';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat' | 'configure' | 'review-chats';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat';
 
 function AppContent() {
   const { isLoggedIn, isLoading, user } = useAuth();
@@ -77,8 +74,6 @@ function AppContent() {
                 {currentView === 'deploy' && <DeploymentPanel onNavigate={handleNavigate} />}
                 {currentView === 'multi-agent' && <MultiAgentBuilder onNavigate={handleNavigate} />}
                 {currentView === 'confab-chat' && <ConfabChat onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} />}
-                {currentView === 'configure' && <ConfigureConfabWithThreads onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} confabId={selectedConfabId} />}
-                {currentView === 'review-chats' && <ReviewChats onNavigate={handleNavigate} />}
               </main>
             </>
           } />

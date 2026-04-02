@@ -22,7 +22,7 @@ import {
 } from './ui/alert-dialog';
 import { apiClient } from '../api/client.js';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
 interface AgentDashboardProps {
   onNavigate: (view: View, confabName?: string, version?: string, confabId?: number) => void;

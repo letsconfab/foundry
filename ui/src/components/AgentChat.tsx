@@ -11,7 +11,7 @@ import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageContent } from './MessageContent';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'review-chats';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
 interface AgentChatProps {
   onNavigate: (view: View, confabName?: string) => void;
@@ -1221,7 +1221,7 @@ Let's start with the most important part: **What would you like this agent to do
                     <Save className="w-5 h-5" />
                   </Button>
                   {currentThreadId && (
-                    <span className="text-xs text-emerald-600 self-center" title="Conversation saved to Review Chats">
+                    <span className="text-xs text-emerald-600 self-center" title="Conversation saved">
                       Saved
                     </span>
                   )}

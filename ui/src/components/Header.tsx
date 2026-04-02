@@ -3,7 +3,7 @@ import { Button } from './ui/button';
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat' | 'review-chats';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat';
 
 interface HeaderProps {
   currentView: View;
@@ -27,7 +27,6 @@ export function Header({ currentView, onNavigate, user }: HeaderProps) {
   const navItems = isLoggedIn
     ? [
         { id: 'dashboard' as View, label: 'Dashboard', icon: LayoutDashboard },
-        { id: 'review-chats' as View, label: 'Review Chats', icon: MessageSquare },
       ]
     : [];
 
