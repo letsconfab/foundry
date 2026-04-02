@@ -133,8 +133,6 @@ const guardrailsToMarkdown = (name: string, guardrails: Array<{ id: string; rule
   const lines = [`# Guardrails for ${name}`, '', '## Rules', ''];
   guardrails.forEach((g, idx) => {
     lines.push(`${idx + 1}. ${g.rule}`);
-    lines.push(`   - severity: \`${g.severity || 'error'}\``);
-    lines.push(`   - status: \`${g.enabled === false ? 'disabled' : 'enabled'}\``);
   });
   lines.push('');
   return lines.join('\n');

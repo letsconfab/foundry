@@ -344,9 +344,38 @@ Respond with valid JSON only."""
     return await ask_llm_json(prompt, "tools extraction")
 
 
-async def extract_guardrails(user_message: str) -> ExtractionResult:
-    """Extract safety guardrails from user message."""
-    prompt = f"""Analyze this user message about safety guardrails for an AI agent.
+async def extract_guardrails(user_message: str, existing_guardrails: str = None) -> ExtractionResult:
+    """Extract safety guardrails from user message.
+
+    Args:
+        user_message: The user's message about guardrails
+        existing_guardrails: Optional existing guardrails text for update context
+    """
+    if existing_guardrails:
+        # Update mode: user is modifying existing guardrails
+        prompt = f"""The user wants to update existing guardrails for an AI agent.
+
+Current guardrails:
+{existing_guardrails}
+
+User's update request: "{user_message}"
+
+Apply the user's requested changes to the existing guardrails. The user may reference rules by number (e.g., "the second rule", "rule 2") or by content.
+
+Return JSON with:
+{{
+    "guardrails_text": "The COMPLETE updated list of rules as a STRING with numbered rules, one per line",
+    "rules_count": number of rules in the updated list,
+    "wants_to_skip": false,
+    "clarification_needed": null or "A question if the update request is unclear"
+}}
+
+IMPORTANT: Return the FULL updated guardrails list, not just the changed rule.
+
+Respond with valid JSON only."""
+    else:
+        # New guardrails mode
+        prompt = f"""Analyze this user message about safety guardrails for an AI agent.
 
 User message: "{user_message}"
 

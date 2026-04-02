@@ -50,7 +50,8 @@ from auth import create_access_token, verify_token, get_password_hash, verify_pa
 from github_oauth import github_auth_router, get_github_repos, get_github_primary_email
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from llm_service import ask_llm
-from foreman import Foreman
+from foreman import Foreman, FOREMAN_V2_ENABLED
+from foreman_v3 import FOREMAN_V3_ENABLED, ForemanV3
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
 
 # Create database tables
@@ -609,10 +610,13 @@ async def refresh_definition_files(
         db.commit()
         db.refresh(confab)
 
+    # Always re-render guardrails to normalize format (removes legacy severity/status lines)
+    normalized_guardrails_md = _guardrails_to_markdown(confab.name, confab.guardrails) if confab.guardrails else guardrails_md
+
     return DefinitionFilesRefreshResponse(
         confab_id=confab.id,
         purpose=purpose_content,
-        guardrails_markdown=guardrails_md,
+        guardrails_markdown=normalized_guardrails_md,
         remote_branch=source_branch,
         remote_source=source,
         refreshed_at=datetime.datetime.now(datetime.timezone.utc),
@@ -1399,11 +1403,22 @@ async def chat(
                 ).order_by(Confab.created_at.desc()).first()
 
                 if confab:
-                    foreman = Foreman(confab.id, db)
-                    await foreman.initialize()
-                    result = await foreman.process_message(request.content)
+                    # Use V3 (LangGraph) or V2 based on feature flag
+                    if FOREMAN_V3_ENABLED:
+                        logger.info(f"[Chat] Using Foreman V3 (LangGraph) for confab {confab.id}")
+                        foreman = ForemanV3(confab.id, db)
+                        await foreman.initialize()
+                        result = await foreman.process_message(
+                            request.content,
+                            thread_id=thread_id,
+                            thread_history=thread_messages
+                        )
+                    else:
+                        foreman = Foreman(confab.id, db)
+                        await foreman.initialize()
+                        result = await foreman.process_message(request.content)
                     response_content = result.get("response", "")
-                    # Capture full result for V2 metadata
+                    # Capture full result for V2/V3 metadata
                     foreman_result = result
                 else:
                     response_content = "No confab is currently being built. Please start a new confab to begin."
@@ -1467,6 +1482,10 @@ async def chat(
         setup_progress = foreman_result.get("setup_progress")
         v2_data = foreman_result.get("v2_metadata")
 
+        # Determine version flags
+        is_v3 = foreman_result.get("is_v3", False)
+        is_v2 = foreman_result.get("is_v2", v2_data is not None and not is_v3)
+
         foreman_metadata = ForemanChatResponse(
             response=foreman_result.get("response", ""),
             confab_id=foreman_result.get("confab_id", 0),
@@ -1482,7 +1501,8 @@ async def chat(
                 next_stage=setup_progress.get("current_stage") if setup_progress else None,
                 clarification_needed=v2_data.get("stage_status") == "clarify" if v2_data else False,
             ) if v2_data else None,
-            is_v2=v2_data is not None,
+            is_v2=is_v2,
+            is_v3=is_v3,
         )
 
     return ChatResponse(

@@ -21,6 +21,10 @@ from sqlalchemy.orm import Session
 # Feature flag for V2 deterministic interview flow
 FOREMAN_V2_ENABLED = os.getenv("FOREMAN_V2_ENABLED", "false").lower() == "true"
 
+# Feature flag for V3 LangGraph implementation
+# When enabled, new confabs use LangGraph StateGraph with PostgreSQL checkpointing
+FOREMAN_V3_ENABLED = os.getenv("FOREMAN_V3_ENABLED", "false").lower() == "true"
+
 from models import Confab, GitHubAccount
 from context_loader import ContextLoader, ForemanContext
 from resume_generator import ResumePromptGenerator, STAGE_PROMPTS, STEP_DESCRIPTIONS
@@ -1202,8 +1206,11 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
         if self._detect_skip_intent(user_message):
             return StageResult(status="skip")
 
-        # Use structured LLM extraction
-        extraction = await extract_guardrails(user_message)
+        # Get existing guardrails for update context
+        existing_guardrails = self.confab.guardrails if self.confab.guardrails else None
+
+        # Use structured LLM extraction (with context if updating)
+        extraction = await extract_guardrails(user_message, existing_guardrails=existing_guardrails)
 
         if extraction.success:
             data = extraction.data
