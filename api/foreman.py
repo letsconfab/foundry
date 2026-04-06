@@ -79,15 +79,67 @@ class StageResult:
     error_message: Optional[str] = None         # If status == "error"
 
 
-# Stage questions - the primary question for each stage
+# Interview-style questions with examples for each stage
 STAGE_QUESTIONS = {
-    "purpose": "What should this agent do? Describe its main job in a sentence or two.",
-    "participants": "Who should have access to this agent? You can add email addresses or skip for now.",
-    "memory": "Should this agent remember previous conversations? (yes, no, or limited)",
-    "tools": "What external tools or APIs does this agent need? (e.g., web search, database, none)",
-    "guardrails": "What safety boundaries should this agent follow? List any rules or restrictions.",
-    "sample_io": "Can you provide an example interaction? (e.g., 'User asks X, agent responds Y')",
-    "review": "Here's your agent configuration. Ready to save and deploy?",
+    "purpose": """What should this agent do?
+
+Examples:
+- "A customer support bot that handles refund requests and tracks order status"
+- "An internal assistant that answers questions about company policies"
+- "A code reviewer that checks for security issues and suggests fixes"
+
+What's your agent's main job?""",
+
+    "participants": """Who should have access to this agent?
+
+Examples:
+- "My team: alice@company.com, bob@company.com, carol@company.com"
+- "The support department - I'll add their emails"
+- "Just me for now"
+
+Enter email addresses or say 'skip':""",
+
+    "memory": """Should this agent remember previous conversations?
+
+Examples:
+- "Yes, remember everything"
+- "Just this conversation"
+- "No memory needed"
+
+Your preference:""",
+
+    "tools": """What external tools or APIs does this agent need?
+
+Examples:
+- "Web search and our internal database"
+- "Slack and calendar integrations"
+- "None - just conversations"
+
+What tools does it need:""",
+
+    "guardrails": """What rules should this agent follow?
+
+Examples:
+- "Never share customer financial data. Escalate complaints over $500."
+- "Only discuss our products. Don't mention competitors."
+- "Be polite. If unsure, say so rather than guessing."
+
+Your rules:""",
+
+    "sample_io": """Show me an example of how this agent should respond.
+
+Examples:
+- "User: How do I return an item? Agent: I'd be happy to help. Could you provide your order number?"
+- "User: What's our vacation policy? Agent: Full-time employees get 15 days PTO annually."
+
+Your example:""",
+
+    "review": """Ready to save and deploy this agent?
+
+You can say:
+- "Yes, save it"
+- "Change the guardrails to..."
+- "Show me the configuration again\"""",
 }
 
 # Clarification prompts when we need more info
@@ -101,31 +153,25 @@ STAGE_CLARIFICATIONS = {
     "review": "Would you like to make any changes, or shall I save this configuration?",
 }
 
-# Acknowledgment templates (short, no praise)
+# Natural transition acknowledgments
 STAGE_ACKNOWLEDGMENTS = {
-    "purpose": "Recorded the purpose.",
-    "participants": "Added participant.",
-    "memory": "Memory settings configured.",
-    "tools": "Tools configured.",
+    "purpose": "Got it. I've saved that purpose.",
+    "participants": "Noted.",
+    "memory": "Memory is configured.",
+    "tools": "Tools are set up.",
     "guardrails": "Guardrails saved.",
     "sample_io": "Example recorded.",
-    "review": "Configuration saved.",
+    "review": "Your agent is saved and ready to deploy.",
 }
 
 
 # System prompt for the Foreman agent
-FOREMAN_SYSTEM_PROMPT = """You are the Foreman, the lead orchestrator in the Agent Foundry. You guide users through building AI agents (called "confabs").
+FOREMAN_SYSTEM_PROMPT = """You are the Foreman, a friendly guide who helps users build AI agents (called "confabs") through a natural conversation.
 
-IMPORTANT: You must actively lead this conversation. Do not wait passively for the user to drive the process. After each user response, acknowledge what they said, save the relevant information using the appropriate tool, then proactively move to the next step.
+IMPORTANT: Lead the conversation like an interview, not a checklist. Focus on one topic at a time. After each user response, acknowledge what they said, save the information using the appropriate tool, then smoothly transition to the next topic.
 
-## The 7-Step Process
-1. **Define purpose** - What should the agent do? (CURRENT FOCUS if just starting)
-2. **Add participants** - Who can access it?
-3. **Configure memory** - Should it remember conversations?
-4. **Set up tools** - What external capabilities does it need?
-5. **Establish guardrails** - What are its safety boundaries?
-6. **Sample I/O** - Provide example interactions
-7. **Review** - Finalize the configuration
+## Conversation Flow
+Guide users through these topics in order: purpose, participants, memory, tools, guardrails, sample interactions, and final review. Do NOT list all topics upfront - reveal each one naturally as you progress.
 
 ## Available Tools
 CRITICAL: You MUST use these tools to save information. Without calling these tools, nothing is persisted!
@@ -848,7 +894,8 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
             else:
                 parts.append("All steps complete. Your agent is ready.")
 
-        return " ".join(parts)
+        # Use double newlines to preserve formatting in multi-line questions with examples
+        return "\n\n".join(parts)
 
     def _build_error_response(self, error_msg: str, stage: str) -> Dict[str, Any]:
         """Build an error response dict."""

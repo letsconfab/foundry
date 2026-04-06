@@ -41,22 +41,22 @@ When `FOREMAN_V2_ENABLED=true`, the Foreman uses a deterministic stage machine:
 
 See [ForemanV2.md](ForemanV2.md) for full architecture details.
 
-### Initial Greeting
+### Initial Greeting (Interview Style)
 
-When starting a new confab build:
+When starting a new confab build, the Foreman uses an interview-style approach with examples at each step, rather than showing the full process upfront:
 
-> "Welcome to the Agent Foundry. I am the Foreman, and will walk you through the creation of this confab (Collaborative Agent).
+> "Hi, I'm the Foreman. I'll help you build your agent through a quick conversation.
 >
-> I'll guide you through a simple 7-step process to configure your agent:
-> 1. **Define purpose** — What should your agent do?
-> 2. **Add participants** — Who can access it?
-> 3. **Configure memory** — Should it remember conversations?
-> 4. **Set up tools** — What external capabilities does it need?
-> 5. **Establish guardrails** — What are its safety boundaries?
-> 6. **Sample I/O** — Provide example interactions
-> 7. **Review** — Finalize your configuration
+> Let's start with the basics: **What should this agent do?**
 >
-> Let's start with the most important part: **What would you like this agent to do?** Describe its main purpose and objectives."
+> Here are some examples:
+> - "A customer support bot that handles refund requests and tracks order status"
+> - "An internal assistant that answers questions about company policies"
+> - "A code reviewer that checks for security issues and suggests fixes"
+>
+> What's your agent's main job?"
+
+Each subsequent stage also includes relevant examples to guide the user. See `STAGE_QUESTIONS` in `foreman.py` for the full set.
 
 ### The 7 Steps
 
