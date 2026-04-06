@@ -339,6 +339,22 @@ class ApiClient {
     localStorage.removeItem('access_token');
   }
 
+  // Version endpoint (no auth required)
+  async getApiVersion() {
+    const url = `${this.baseURL}/`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return { version: 'unknown' };
+      }
+      const data = await response.json();
+      return { version: data.version || 'unknown' };
+    } catch (error) {
+      console.error('API Client: Failed to fetch API version:', error);
+      return { version: 'unavailable' };
+    }
+  }
+
 }
 
 // Create a singleton instance

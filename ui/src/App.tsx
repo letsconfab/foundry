@@ -2,6 +2,7 @@ import React from 'react';
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Header } from './components/Header';
+import { Footer } from './components/Footer';
 import { HeroSection } from './components/HeroSection';
 import { AgentChat } from './components/AgentChat';
 import { AgentDashboard } from './components/AgentDashboard';
@@ -53,19 +54,19 @@ function AppContent() {
 
   return (
     <Router>
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col">
         <Routes>
           <Route path="/auth/github/callback" element={<GitHubCallback />} />
           <Route path="/*" element={
             <>
-              <Header 
-                currentView={currentView} 
-                onNavigate={handleNavigate} 
+              <Header
+                currentView={currentView}
+                onNavigate={handleNavigate}
                 isLoggedIn={isLoggedIn}
                 user={user}
               />
-              
-              <main>
+
+              <main className="flex-1">
                 {currentView === 'home' && <HeroSection onNavigate={handleNavigate} />}
                 {currentView === 'login' && <Login onNavigate={handleNavigate} />}
                 {currentView === 'register' && <Register onNavigate={handleNavigate} />}
@@ -75,6 +76,8 @@ function AppContent() {
                 {currentView === 'multi-agent' && <MultiAgentBuilder onNavigate={handleNavigate} />}
                 {currentView === 'confab-chat' && <ConfabChat onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} />}
               </main>
+
+              <Footer />
             </>
           } />
         </Routes>
