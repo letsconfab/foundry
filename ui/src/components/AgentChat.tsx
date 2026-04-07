@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback } from './ui/avatar';
 import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageContent } from './MessageContent';
+import { DocumentUploadDialog } from './DocumentUploadDialog';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
@@ -234,6 +235,9 @@ What's your agent's main job?`,
   const [documents, setDocuments] = useState<DocumentListItem[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
+  // Upload dialog state
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [dismissedUploadHint, setDismissedUploadHint] = useState(false);
   /** Thread id for storing this conversation in DB (threads + messages tables). */
   const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
 
@@ -592,6 +596,12 @@ What's your agent's main job?`,
             // Refresh definition files in case Foreman updated purpose/guardrails via tools
             if (confabId) {
               loadConfabDefinitionData(confabId);
+            }
+
+            // Check for UI hints from Foreman (e.g., show upload dialog)
+            if (response.foreman_metadata?.v2_metadata?.ui_hint === 'show_upload_panel'
+                && !dismissedUploadHint) {
+              setUploadDialogOpen(true);
             }
           } else {
             // No agent response yet - this shouldn't happen with Foreman
@@ -1567,6 +1577,29 @@ What's your agent's main job?`,
           </Card>
         </div>
       </div>
+
+      {/* Document Upload Dialog */}
+      {currentConfabId && (
+        <DocumentUploadDialog
+          open={uploadDialogOpen}
+          onOpenChange={(open) => {
+            setUploadDialogOpen(open);
+            if (!open) setDismissedUploadHint(true);
+          }}
+          confabId={currentConfabId}
+          existingDocuments={documents}
+          onUploadComplete={(count) => {
+            // Refresh documents list
+            if (currentConfabId) {
+              apiClient.listDocuments(currentConfabId).then(setDocuments);
+            }
+            // Pre-fill input with confirmation message for user to send
+            if (count > 0) {
+              setInput(`I've uploaded ${count} document${count !== 1 ? 's' : ''}.`);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

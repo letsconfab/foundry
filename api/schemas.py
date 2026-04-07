@@ -394,6 +394,10 @@ class ForemanV2Metadata(BaseModel):
         default=False,
         description="True if the stage needs more input before completing"
     )
+    ui_hint: Optional[str] = Field(
+        default=None,
+        description="UI hint for stage-specific behaviors (e.g., 'show_upload_panel')"
+    )
 
 
 class ForemanChatResponse(BaseModel):

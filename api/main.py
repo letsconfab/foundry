@@ -60,7 +60,7 @@ try:
 except Exception as e:
     print(f"Warning: Could not connect to database: {e}")
 
-app = FastAPI(title="Let's Confab API", version="2.0.4")
+app = FastAPI(title="Let's Confab API", version="2.0.5")
 
 # CORS middleware
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
@@ -1563,6 +1563,7 @@ async def chat(
                 next_question=v2_data.get("next_question"),
                 next_stage=setup_progress.get("current_stage") if setup_progress else None,
                 clarification_needed=v2_data.get("stage_status") == "clarify" if v2_data else False,
+                ui_hint=v2_data.get("ui_hint"),
             ) if v2_data else None,
             is_v2=is_v2,
             is_v3=is_v3,

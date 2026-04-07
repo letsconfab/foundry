@@ -81,6 +81,7 @@ def format_v3_response(state: ForemanState, thread_id: int) -> Dict[str, Any]:
             "updated_stage": state.get("update_target"),
             "saved_fields": stage_result.get("data"),
             "next_question": stage_result.get("next_question"),
+            "ui_hint": stage_result.get("ui_hint"),
         },
 
         # Version flags
