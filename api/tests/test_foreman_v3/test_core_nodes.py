@@ -20,6 +20,11 @@ def make_state(**overrides) -> dict:
     return state
 
 
+def make_config(db=None) -> dict:
+    """Helper to create a mock config for nodes that need it."""
+    return {"configurable": {"db": db}}
+
+
 class TestValidatorNode:
     """Tests for validator_node."""
 
@@ -96,14 +101,16 @@ class TestAdvancerNode:
 
     def test_advances_from_purpose_to_participants(self):
         state = make_state(current_stage="purpose", completed_stages=[])
-        result = advancer_node(state)
+        config = make_config()
+        result = advancer_node(state, config)
 
         assert result["current_stage"] == "participants"
         assert "purpose" in result["completed_stages"]
 
     def test_advances_from_participants_to_memory(self):
         state = make_state(current_stage="participants", completed_stages=["purpose"])
-        result = advancer_node(state)
+        config = make_config()
+        result = advancer_node(state, config)
 
         assert result["current_stage"] == "memory"
         assert "participants" in result["completed_stages"]
@@ -111,9 +118,10 @@ class TestAdvancerNode:
     def test_advances_from_review_to_complete(self):
         state = make_state(
             current_stage="review",
-            completed_stages=["purpose", "participants", "memory", "tools", "guardrails", "sample_io"]
+            completed_stages=["purpose", "participants", "memory", "documents", "tools", "guardrails", "sample_io"]
         )
-        result = advancer_node(state)
+        config = make_config()
+        result = advancer_node(state, config)
 
         assert result["current_stage"] == "complete"
         assert result["is_complete"] is True
@@ -125,7 +133,8 @@ class TestAdvancerNode:
             is_update=True,
             update_target="purpose"
         )
-        result = advancer_node(state)
+        config = make_config()
+        result = advancer_node(state, config)
 
         # Should clear update flags but not advance
         assert result["is_update"] is False
@@ -138,7 +147,8 @@ class TestAdvancerNode:
             current_stage="purpose",
             completed_stages=["purpose"]  # Already completed
         )
-        result = advancer_node(state)
+        config = make_config()
+        result = advancer_node(state, config)
 
         # Should not have duplicate
         assert result["completed_stages"].count("purpose") == 1

@@ -15,6 +15,10 @@ Architecture:
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load .env before reading env vars
+load_dotenv()
 
 # Feature flag for V3 LangGraph implementation
 FOREMAN_V3_ENABLED = os.getenv("FOREMAN_V3_ENABLED", "false").lower() == "true"

@@ -22,40 +22,19 @@ async def get_checkpointer():
 
     Creates tables on first call using LangGraph's built-in setup.
 
+    NOTE: Checkpointing is currently disabled until we resolve state
+    persistence issues. The orchestrator manages state via database
+    (confab.setup_progress) instead.
+
     Returns:
-        Initialized PostgresSaver instance
+        None (checkpointing disabled)
     """
-    global _checkpointer, _checkpointer_initialized
-
-    if _checkpointer is not None:
-        return _checkpointer
-
-    try:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            logger.error("[V3] DATABASE_URL not set, checkpointer unavailable")
-            return None
-
-        logger.info("[V3] Initializing PostgreSQL checkpointer")
-
-        _checkpointer = AsyncPostgresSaver.from_conn_string(db_url)
-
-        # Setup tables if not already done
-        if not _checkpointer_initialized:
-            await _checkpointer.setup()
-            _checkpointer_initialized = True
-            logger.info("[V3] Checkpointer tables created/verified")
-
-        return _checkpointer
-
-    except ImportError as e:
-        logger.error(f"[V3] langgraph-checkpoint-postgres not installed: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"[V3] Failed to initialize checkpointer: {e}")
-        return None
+    # Checkpointing is disabled for now - state is managed via DB
+    # The langgraph-checkpoint-postgres 3.x API uses async context managers
+    # which requires different lifecycle management. For now, we rely on
+    # the database-based state persistence in the advancer node.
+    logger.info("[V3] Checkpointing disabled, using DB-based state persistence")
+    return None
 
 
 def get_thread_config(confab_id: int, thread_id: int) -> Dict[str, Any]:

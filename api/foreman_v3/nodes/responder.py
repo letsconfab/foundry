@@ -76,7 +76,7 @@ def responder_node(state: ForemanState) -> Dict[str, Any]:
     # Determine which stage we're responding about
     responded_stage = update_target if is_update else current_stage
 
-    logger.info(f"[V3] responder_node: status={status}, stage={responded_stage}, is_update={is_update}")
+    logger.info(f"[V3] responder_node: status={status}, stage={responded_stage}, current_stage={current_stage}, is_update={is_update}")
 
     response_text = _build_response(
         status=status,

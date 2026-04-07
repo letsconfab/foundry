@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage
 
-from .state import ForemanState, create_initial_state
+from .state import ForemanState, create_initial_state, STAGE_ORDER
 from .graph import get_foreman_graph
 from .checkpointer import get_checkpointer, get_thread_config
 from .compat import format_v3_response, format_error_response
@@ -139,15 +139,16 @@ class ForemanV3:
         Loads existing progress from confab if available.
         """
         # Get current progress from confab
+        # Force refresh from DB to avoid stale cached data
+        self.db.refresh(self.confab)
         setup_progress = self.confab.setup_progress or {}
         current_stage = setup_progress.get("current_stage", "purpose")
         completed_steps = setup_progress.get("completed_steps", [])
 
         # Convert step numbers to stage names
-        stage_order = ["purpose", "participants", "memory", "tools", "guardrails", "sample_io", "review"]
         completed_stages = [
-            stage_order[step - 1] for step in completed_steps
-            if 1 <= step <= len(stage_order)
+            STAGE_ORDER[step - 1] for step in completed_steps
+            if 1 <= step <= len(STAGE_ORDER)
         ]
 
         # Build collected_info from confab data
@@ -164,7 +165,7 @@ class ForemanV3:
         return {
             "messages": messages,
             "collected_info": collected_info,
-            "current_stage": current_stage if current_stage in stage_order + ["complete"] else "purpose",
+            "current_stage": current_stage if current_stage in STAGE_ORDER + ["complete"] else "purpose",
             "completed_stages": completed_stages,
             "confab_id": self.confab_id,
             "thread_id": self._thread_id,

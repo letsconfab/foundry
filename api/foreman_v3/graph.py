@@ -149,5 +149,13 @@ def get_foreman_graph() -> StateGraph:
     """
     global _foreman_graph
     if _foreman_graph is None:
+        logger.info("[V3] Building fresh Foreman graph")
         _foreman_graph = build_foreman_graph()
     return _foreman_graph
+
+
+def reset_foreman_graph() -> None:
+    """Force rebuild of the graph on next access."""
+    global _foreman_graph
+    _foreman_graph = None
+    logger.info("[V3] Graph singleton reset")

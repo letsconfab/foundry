@@ -40,11 +40,15 @@ STAGE_KEYWORDS = {
 
 def _detect_skip_intent(message: str) -> bool:
     """Check if user wants to skip the current stage."""
-    lower = message.lower().strip()
+    # Normalize: lowercase, strip whitespace and trailing punctuation
+    lower = message.lower().strip().rstrip('.,!?;:')
     skip_phrases = [
         "skip", "skip this", "skip it", "next", "move on",
         "don't need", "not needed", "no thanks", "n/a", "na",
-        "none", "nothing", "pass"
+        "none", "nothing", "pass",
+        # Participants-specific skip phrases
+        "only me", "just me", "me only", "just myself",
+        "no one else", "nobody else", "no others", "private",
     ]
     return any(phrase == lower or lower.startswith(phrase + " ") for phrase in skip_phrases)
 
@@ -140,8 +144,10 @@ def route_to_extractor(state: ForemanState) -> str:
     """
     # Check if skip was detected in router
     stage_result = state.get("stage_result")
+    logger.info(f"[V3] route_to_extractor: stage_result={stage_result}, current_stage={state.get('current_stage')}")
     if stage_result and stage_result.get("status") == "skip":
         # Skip detected, go directly to validator
+        logger.info("[V3] route_to_extractor: Routing to validator_skip")
         return "validator_skip"
 
     # Check for update routing

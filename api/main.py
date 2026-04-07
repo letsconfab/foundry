@@ -60,7 +60,7 @@ try:
 except Exception as e:
     print(f"Warning: Could not connect to database: {e}")
 
-app = FastAPI(title="Let's Confab API", version="2.0.0")
+app = FastAPI(title="Let's Confab API", version="2.0.1")
 
 # CORS middleware
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
