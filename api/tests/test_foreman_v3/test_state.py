@@ -19,8 +19,8 @@ from foreman_v3.state import (
 class TestStageOrder:
     """Tests for STAGE_ORDER constant."""
 
-    def test_stage_order_has_seven_stages(self):
-        assert len(STAGE_ORDER) == 7
+    def test_stage_order_has_eight_stages(self):
+        assert len(STAGE_ORDER) == 8
 
     def test_stage_order_starts_with_purpose(self):
         assert STAGE_ORDER[0] == "purpose"
@@ -29,7 +29,7 @@ class TestStageOrder:
         assert STAGE_ORDER[-1] == "review"
 
     def test_stage_order_contains_all_stages(self):
-        expected = ["purpose", "participants", "memory", "tools", "guardrails", "sample_io", "review"]
+        expected = ["purpose", "participants", "memory", "documents", "tools", "guardrails", "sample_io", "review"]
         assert STAGE_ORDER == expected
 
 
@@ -79,6 +79,8 @@ class TestCreateInitialState:
         assert "name" in info
         assert "participants" in info
         assert "memory_type" in info
+        assert "documents" in info
+        assert "documents_skipped" in info
         assert "tools" in info
         assert "guardrails" in info
         assert "sample_io" in info
@@ -90,6 +92,8 @@ class TestCreateInitialState:
         assert info["name"] is None
         assert info["participants"] == []
         assert info["memory_type"] is None
+        assert info["documents"] == []
+        assert info["documents_skipped"] is False
         assert info["tools"] == []
         assert info["guardrails"] is None
         assert info["sample_io"] is None
@@ -107,17 +111,20 @@ class TestGetStageIndex:
     def test_memory_is_index_3(self):
         assert get_stage_index("memory") == 3
 
-    def test_tools_is_index_4(self):
-        assert get_stage_index("tools") == 4
+    def test_documents_is_index_4(self):
+        assert get_stage_index("documents") == 4
 
-    def test_guardrails_is_index_5(self):
-        assert get_stage_index("guardrails") == 5
+    def test_tools_is_index_5(self):
+        assert get_stage_index("tools") == 5
 
-    def test_sample_io_is_index_6(self):
-        assert get_stage_index("sample_io") == 6
+    def test_guardrails_is_index_6(self):
+        assert get_stage_index("guardrails") == 6
 
-    def test_review_is_index_7(self):
-        assert get_stage_index("review") == 7
+    def test_sample_io_is_index_7(self):
+        assert get_stage_index("sample_io") == 7
+
+    def test_review_is_index_8(self):
+        assert get_stage_index("review") == 8
 
     def test_invalid_stage_returns_0(self):
         assert get_stage_index("invalid") == 0
@@ -135,8 +142,11 @@ class TestGetNextStage:
     def test_participants_next_is_memory(self):
         assert get_next_stage("participants") == "memory"
 
-    def test_memory_next_is_tools(self):
-        assert get_next_stage("memory") == "tools"
+    def test_memory_next_is_documents(self):
+        assert get_next_stage("memory") == "documents"
+
+    def test_documents_next_is_tools(self):
+        assert get_next_stage("documents") == "tools"
 
     def test_tools_next_is_guardrails(self):
         assert get_next_stage("tools") == "guardrails"
@@ -166,6 +176,8 @@ class TestInformationSchema:
             "name": None,
             "participants": [],
             "memory_type": None,
+            "documents": [],
+            "documents_skipped": False,
             "tools": [],
             "guardrails": None,
             "sample_io": None,
@@ -178,6 +190,8 @@ class TestInformationSchema:
             "name": "SupportBot",
             "participants": ["user@example.com"],
             "memory_type": "yes",
+            "documents": [{"id": 1, "filename": "guide.pdf"}],
+            "documents_skipped": False,
             "tools": ["web_search"],
             "guardrails": "1. Be polite\n2. No profanity",
             "sample_io": "User: Hello\nAgent: Hi!",
@@ -186,6 +200,7 @@ class TestInformationSchema:
         assert info["name"] == "SupportBot"
         assert len(info["participants"]) == 1
         assert info["memory_type"] == "yes"
+        assert len(info["documents"]) == 1
         assert len(info["tools"]) == 1
 
 

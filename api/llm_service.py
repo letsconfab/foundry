@@ -344,6 +344,42 @@ Respond with valid JSON only."""
     return await ask_llm_json(prompt, "tools extraction")
 
 
+async def extract_documents_intent(user_message: str) -> ExtractionResult:
+    """Extract document upload intent from user message.
+
+    Handles three scenarios:
+    1. User wants to skip uploading documents
+    2. User has uploaded documents (confirm completion)
+    3. User wants to upload but hasn't yet (clarify)
+    """
+    prompt = f"""Analyze this user message about uploading documents for an AI agent.
+
+User message: "{user_message}"
+
+The user is being asked if they want to upload reference documents (PDFs, text files, etc.)
+for the agent to use as knowledge.
+
+Determine the user's intent and return JSON with these fields:
+{{
+    "wants_to_skip": true/false (user says skip, no, none, not now, later, etc.),
+    "has_uploads": true/false (user confirms they've uploaded documents or says "I've uploaded X"),
+    "wants_to_upload": true/false (user wants to upload but hasn't yet),
+    "document_count": number or null (if they mention a count),
+    "clarification_needed": null or "A question if unclear"
+}}
+
+Examples:
+- "skip" -> wants_to_skip: true
+- "no documents" -> wants_to_skip: true
+- "I've uploaded the PDF" -> has_uploads: true
+- "yes, I'll upload some files" -> wants_to_upload: true
+- "here are my docs" -> has_uploads: true
+
+Respond with valid JSON only."""
+
+    return await ask_llm_json(prompt, "documents intent extraction")
+
+
 async def extract_guardrails(user_message: str, existing_guardrails: str = None) -> ExtractionResult:
     """Extract safety guardrails from user message.
 

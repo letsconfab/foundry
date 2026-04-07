@@ -9,7 +9,7 @@ from langgraph.graph.message import add_messages
 
 
 # Stage order constant (shared with V2)
-STAGE_ORDER = ["purpose", "participants", "memory", "tools", "guardrails", "sample_io", "review"]
+STAGE_ORDER = ["purpose", "participants", "memory", "documents", "tools", "guardrails", "sample_io", "review"]
 
 
 class InformationSchema(TypedDict):
@@ -28,6 +28,10 @@ class InformationSchema(TypedDict):
 
     # Memory stage
     memory_type: Optional[Literal["yes", "no", "limited"]]
+
+    # Documents stage
+    documents: List[Dict[str, Any]]  # Uploaded document metadata
+    documents_skipped: bool
 
     # Tools stage
     tools: List[str]  # Tool/API names
@@ -67,7 +71,7 @@ class ForemanState(TypedDict):
 
     # Current position in the interview
     current_stage: Literal[
-        "purpose", "participants", "memory", "tools",
+        "purpose", "participants", "memory", "documents", "tools",
         "guardrails", "sample_io", "review", "complete"
     ]
     completed_stages: List[str]
@@ -108,6 +112,8 @@ def create_initial_state(confab_id: int, thread_id: Optional[int] = None) -> For
             "name": None,
             "participants": [],
             "memory_type": None,
+            "documents": [],
+            "documents_skipped": False,
             "tools": [],
             "guardrails": None,
             "sample_io": None,

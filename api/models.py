@@ -1,4 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, JSON, Float
+import uuid
+
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, JSON, Float, LargeBinary
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -260,3 +263,97 @@ class DocumentChunk(Base):
 
     # Relationships
     document = relationship("ConfabDocument", back_populates="chunks")
+
+
+# =============================================================================
+# Document Store V2 Models (with versioning, compression, encryption)
+# =============================================================================
+
+
+class ConfabDocumentV2(Base):
+    """
+    Document metadata with versioning support (V2).
+
+    Replaces ConfabDocument with proper version tracking.
+    Content is stored in DocumentVersion records.
+    """
+    __tablename__ = "confab_documents_v2"
+
+    id = Column(Integer, primary_key=True, index=True)
+    confab_id = Column(Integer, ForeignKey("confabs.id", ondelete="CASCADE"), nullable=False)
+
+    # Identity
+    document_uuid = Column(UUID(as_uuid=True), default=uuid.uuid4, nullable=False)
+    filename = Column(String(255), nullable=False)  # Sanitized filename
+    original_content_type = Column(String(100), nullable=False)
+
+    # Source tracking
+    source = Column(String(50), nullable=False, default="upload")  # upload, url, api
+    source_url = Column(String(2000), nullable=True)
+
+    # Status
+    status = Column(String(20), nullable=False, default="active")  # active, archived
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    confab = relationship("Confab", backref="documents_v2")
+    versions = relationship(
+        "DocumentVersion",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="DocumentVersion.version_number.desc()"
+    )
+
+    # Unique constraint on confab_id + document_uuid
+    __table_args__ = (
+        {"extend_existing": True},
+    )
+
+
+class DocumentVersion(Base):
+    """
+    Immutable document version with compressed (and optionally encrypted) content.
+
+    Each version is append-only - content is never modified after creation.
+    """
+    __tablename__ = "document_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("confab_documents_v2.id", ondelete="CASCADE"), nullable=False)
+
+    # Version info
+    version_number = Column(Integer, nullable=False)
+
+    # Content storage (compressed, optionally encrypted)
+    content_blob = Column(LargeBinary, nullable=False)  # zstd compressed (+ encrypted in Phase 2)
+    content_hash = Column(String(64), nullable=False)  # SHA-256 of original content
+    original_size = Column(Integer, nullable=False)  # Size before compression
+    compressed_size = Column(Integer, nullable=False)  # Size after compression
+
+    # Encryption metadata (Phase 2 - nullable for now)
+    encryption_key_id = Column(String(64), nullable=True)  # Reference to key
+    encryption_iv = Column(LargeBinary, nullable=True)  # AES-GCM IV (12 bytes)
+    encryption_tag = Column(LargeBinary, nullable=True)  # AES-GCM auth tag (16 bytes)
+
+    # Extracted text (for display/search)
+    extracted_text = Column(Text, nullable=True)
+    text_extraction_status = Column(String(20), default="pending")  # pending, completed, failed
+
+    # Metadata
+    metadata_json = Column(JSON, nullable=True)  # page_count, author, etc.
+
+    # Timestamps and audit
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Relationships
+    document = relationship("ConfabDocumentV2", back_populates="versions")
+    creator = relationship("User", foreign_keys=[created_by])
+
+    # Unique constraint on document_id + version_number
+    __table_args__ = (
+        {"extend_existing": True},
+    )

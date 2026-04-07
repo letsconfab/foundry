@@ -16,6 +16,7 @@ from llm_service import (
     extract_purpose,
     extract_participants,
     extract_memory_preference,
+    extract_documents_intent,
     extract_tools,
     extract_guardrails,
     extract_sample_io,
@@ -217,6 +218,75 @@ async def extract_tools_node(state: ForemanState) -> Dict[str, Any]:
         "stage_result": {
             "status": "clarify",
             "next_question": "Which tools specifically? For example: web search, calendar, database, or 'none'.",
+        }
+    }
+
+
+async def extract_documents_node(state: ForemanState) -> Dict[str, Any]:
+    """
+    Extract document upload intent from user message.
+
+    Handles:
+    - Skip intent ("no documents", "skip", "none")
+    - Upload confirmation ("I've uploaded X", "here are my docs")
+    - Upload intent ("yes, I'll upload some files")
+    """
+    last_msg = get_last_user_message(state["messages"])
+
+    logger.info(f"[V3] extract_documents_node: input='{last_msg[:50]}...'")
+
+    result = await extract_documents_intent(last_msg)
+
+    if result.success and result.data:
+        data = result.data
+
+        if data.get("wants_to_skip", False):
+            return {
+                "stage_result": {
+                    "status": "skip",
+                    "data": {"documents": [], "documents_skipped": True},
+                    "summary": "Documents skipped",
+                }
+            }
+
+        if data.get("has_uploads", False):
+            # User confirms they've uploaded documents
+            # The actual documents are already in the database via the API
+            doc_count = data.get("document_count")
+            summary = f"{doc_count} document(s) uploaded" if doc_count else "Documents uploaded"
+            return {
+                "stage_result": {
+                    "status": "complete",
+                    "data": {"documents": [], "documents_skipped": False},  # Actual docs fetched via API
+                    "summary": summary,
+                }
+            }
+
+        if data.get("wants_to_upload", False):
+            # User wants to upload but hasn't yet - prompt them
+            return {
+                "stage_result": {
+                    "status": "clarify",
+                    "next_question": "Please upload your documents using the upload panel, then let me know when you're done.",
+                    "ui_hint": "show_upload_panel",
+                }
+            }
+
+        if data.get("clarification_needed"):
+            return {
+                "stage_result": {
+                    "status": "clarify",
+                    "next_question": data["clarification_needed"],
+                    "ui_hint": "show_upload_panel",
+                }
+            }
+
+    # Default: ask about documents
+    return {
+        "stage_result": {
+            "status": "clarify",
+            "next_question": "Would you like to upload any reference documents? You can upload PDFs, text files, or say 'skip' to continue without documents.",
+            "ui_hint": "show_upload_panel",
         }
     }
 

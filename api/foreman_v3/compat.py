@@ -63,7 +63,7 @@ def format_v3_response(state: ForemanState, thread_id: int) -> Dict[str, Any]:
         "setup_progress": {
             "completed_steps": completed_steps,
             "current_stage": current_stage,
-            "total_steps": 7,
+            "total_steps": len(STAGE_ORDER),
             "remaining_steps": remaining_steps,
         },
 
@@ -150,8 +150,8 @@ def format_error_response(
         "setup_progress": {
             "completed_steps": [],
             "current_stage": current_stage,
-            "total_steps": 7,
-            "remaining_steps": list(range(1, 8)),
+            "total_steps": len(STAGE_ORDER),
+            "remaining_steps": list(range(1, len(STAGE_ORDER) + 1)),
         },
         "tool_calls": [],
         "timestamp": datetime.now().isoformat(),

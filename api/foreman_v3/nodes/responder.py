@@ -20,6 +20,7 @@ STAGE_QUESTIONS = {
     "purpose": "What should this agent do? Describe its main job in a sentence or two.",
     "participants": "Who should have access to this agent? You can add email addresses or skip for now.",
     "memory": "Should this agent remember previous conversations? (yes, no, or limited)",
+    "documents": "Would you like to upload any reference documents? (PDFs, text files, etc.) You can upload them now or skip for later.",
     "tools": "What external tools or APIs does this agent need? (e.g., web search, database, none)",
     "guardrails": "What safety boundaries should this agent follow? List any rules or restrictions.",
     "sample_io": "Can you provide an example interaction? (e.g., 'User asks X, agent responds Y')",
@@ -31,6 +32,7 @@ STAGE_CLARIFICATIONS = {
     "purpose": "I need a bit more detail. What specific task should this agent help with?",
     "participants": "Could you provide an email address, or say 'skip' to continue?",
     "memory": "Please specify: should it remember conversations? (yes/no/limited)",
+    "documents": "Please upload your documents using the upload panel, then let me know when you're done. Or say 'skip' to continue.",
     "tools": "Which tools specifically? For example: web search, calendar, database, or 'none'.",
     "guardrails": "What's one important rule this agent should follow?",
     "sample_io": "Can you give a quick example of what a user might ask and how the agent should respond?",
@@ -42,10 +44,16 @@ STAGE_ACKNOWLEDGMENTS = {
     "purpose": "Recorded the purpose.",
     "participants": "Added participant.",
     "memory": "Memory settings configured.",
+    "documents": "Documents noted.",
     "tools": "Tools configured.",
     "guardrails": "Guardrails saved.",
     "sample_io": "Example recorded.",
     "review": "Configuration saved.",
+}
+
+# UI hints for stages that need special frontend treatment
+STAGE_UI_HINTS = {
+    "documents": "show_upload_panel",
 }
 
 
@@ -210,6 +218,14 @@ def _build_config_summary(state: ForemanState) -> str:
             "limited": "Limited memory - recent conversations only",
         }.get(memory_type, memory_type)
         lines.append(f"**Memory:** {memory_label}\n\n")
+
+    # Documents
+    documents = collected.get("documents", [])
+    documents_skipped = collected.get("documents_skipped", False)
+    if documents:
+        lines.append(f"**Documents:** {len(documents)} document(s) uploaded\n\n")
+    elif documents_skipped:
+        lines.append("**Documents:** Skipped\n\n")
 
     # Tools
     tools = collected.get("tools", [])

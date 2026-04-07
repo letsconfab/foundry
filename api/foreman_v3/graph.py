@@ -19,6 +19,7 @@ from .nodes import (
     extract_purpose_node,
     extract_participants_node,
     extract_memory_node,
+    extract_documents_node,
     extract_tools_node,
     extract_guardrails_node,
     extract_sample_io_node,
@@ -59,6 +60,7 @@ def build_foreman_graph() -> StateGraph:
     builder.add_node("purpose", extract_purpose_node)
     builder.add_node("participants", extract_participants_node)
     builder.add_node("memory", extract_memory_node)
+    builder.add_node("documents", extract_documents_node)
     builder.add_node("tools", extract_tools_node)
     builder.add_node("guardrails", extract_guardrails_node)
     builder.add_node("sample_io", extract_sample_io_node)
@@ -82,6 +84,7 @@ def build_foreman_graph() -> StateGraph:
             "purpose": "purpose",
             "participants": "participants",
             "memory": "memory",
+            "documents": "documents",
             "tools": "tools",
             "guardrails": "guardrails",
             "sample_io": "sample_io",

@@ -41,14 +41,14 @@ class TestGetRemainingSteps:
     """Tests for _get_remaining_steps helper."""
 
     def test_no_completed_returns_all(self):
-        assert _get_remaining_steps([]) == [1, 2, 3, 4, 5, 6, 7]
+        assert _get_remaining_steps([]) == [1, 2, 3, 4, 5, 6, 7, 8]
 
     def test_all_completed_returns_empty(self):
-        all_stages = ["purpose", "participants", "memory", "tools", "guardrails", "sample_io", "review"]
+        all_stages = ["purpose", "participants", "memory", "documents", "tools", "guardrails", "sample_io", "review"]
         assert _get_remaining_steps(all_stages) == []
 
     def test_partial_completion(self):
-        assert _get_remaining_steps(["purpose", "participants"]) == [3, 4, 5, 6, 7]
+        assert _get_remaining_steps(["purpose", "participants"]) == [3, 4, 5, 6, 7, 8]
 
 
 class TestFormatV3Response:
@@ -100,8 +100,8 @@ class TestFormatV3Response:
         assert "setup_progress" in result
         assert result["setup_progress"]["current_stage"] == "participants"
         assert result["setup_progress"]["completed_steps"] == [1]
-        assert result["setup_progress"]["total_steps"] == 7
-        assert result["setup_progress"]["remaining_steps"] == [2, 3, 4, 5, 6, 7]
+        assert result["setup_progress"]["total_steps"] == 8
+        assert result["setup_progress"]["remaining_steps"] == [2, 3, 4, 5, 6, 7, 8]
 
     def test_includes_tool_calls_field(self):
         state = self._make_state()
