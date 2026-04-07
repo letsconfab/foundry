@@ -42,16 +42,16 @@ interface UploadedFile {
   id?: number;
   status: 'pending' | 'uploading' | 'indexed' | 'duplicate' | 'failed';
   error?: string;
-  chunkCount?: number;
   file?: File;
 }
 
 interface DocumentListItem {
   id: number;
+  document_uuid?: string;
   filename: string;
   content_type: string;
-  chunk_count: number;
   status: string;
+  version_count?: number;
   created_at?: string;
 }
 
@@ -686,12 +686,13 @@ What's your agent's main job?`,
       try {
         response = await apiClient.uploadDocument(currentConfabId, file);
         setDocumentError(null);
+        // V2 response: { document: { id, filename, status, ... }, message }
+        const uploadedDoc = response.document;
         setUploadedFiles(prev =>
           prev.map(f => f.tempId === tempId ? {
             ...f,
-            id: response.status === 'duplicate' ? undefined : response.document_id,
-            status: response.status,
-            chunkCount: response.chunk_count,
+            id: uploadedDoc?.id,
+            status: uploadedDoc?.status === 'active' ? 'indexed' : 'failed',
             file: undefined,
           } : f)
         );
@@ -1302,7 +1303,7 @@ What's your agent's main job?`,
                               )}
                               {file.status === 'indexed' && (
                                 <Badge className="text-xs bg-green-100 text-green-700">
-                                  Indexed ({file.chunkCount} chunks)
+                                  Uploaded
                                 </Badge>
                               )}
                               {file.status === 'duplicate' && (
@@ -1326,43 +1327,6 @@ What's your agent's main job?`,
                   </div>
                 )}
 
-                {/* Loading Documents */}
-                {documentsLoading && (
-                  <div className="mt-3 flex items-center gap-2 text-slate-500">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm">Loading documents...</span>
-                  </div>
-                )}
-
-                {/* Existing Documents from Server */}
-                {documents.length > 0 && (
-                  <div className="mt-4">
-                    <h4 className="text-sm font-medium text-slate-700 mb-2">
-                      Uploaded Documents ({documents.length})
-                    </h4>
-                    <div className="space-y-2">
-                      {documents.map((doc) => (
-                        <div key={doc.id} className="flex items-center justify-between p-2 bg-white border border-slate-200 rounded-lg">
-                          <div className="flex items-center gap-2">
-                            <FileText className="w-4 h-4 text-slate-600" />
-                            <div>
-                              <p className="text-sm text-slate-700">{doc.filename}</p>
-                              <p className="text-xs text-slate-500">
-                                {doc.content_type} | {doc.chunk_count} chunks
-                              </p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleDeleteDocument(doc.id)}
-                            className="text-slate-400 hover:text-red-600 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           </Card>
@@ -1513,6 +1477,50 @@ What's your agent's main job?`,
                 </p>
               )}
             </div>
+          </Card>
+
+          {/* Documents Card */}
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <FileText className="w-4 h-4 text-slate-700" />
+              <h3 className="text-slate-900 text-sm font-medium">Documents</h3>
+              <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                {documents.length}
+              </span>
+            </div>
+
+            {documentsLoading && (
+              <div className="flex items-center gap-2 text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Loading...</span>
+              </div>
+            )}
+
+            {documents.length > 0 ? (
+              <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                {documents.map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-slate-700 truncate">{doc.filename}</p>
+                        <p className="text-xs text-slate-500">{doc.content_type}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteDocument(doc.id)}
+                      className="text-slate-400 hover:text-red-600 transition-colors ml-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              !documentsLoading && (
+                <p className="text-sm text-slate-500">No documents uploaded yet.</p>
+              )
+            )}
           </Card>
 
           {/* Participants Card */}

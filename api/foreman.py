@@ -39,7 +39,7 @@ from llm_service import (
     extract_sample_io,
     extract_review_intent,
 )
-from document_store.service import DocumentService
+from document_store_v2.service import DocumentServiceV2
 
 # Import tool functions at module level (not runtime)
 from agent_tools import (
@@ -221,10 +221,10 @@ When the user describes what their agent should do:
 4. Clear transition to the next step with a specific question
 
 ## Document Uploads
-When the user uploads documents, they are automatically chunked and indexed into the confab's knowledge base (ChromaDB vector store). You should:
-- Acknowledge when documents are uploaded and indexed
-- Mention the document name and chunk count when relevant
-- Explain that these documents will be available to the confab for RAG retrieval once it's deployed
+When the user uploads documents, they are stored in the confab's document store. You should:
+- Acknowledge when documents are uploaded
+- Mention the document name when relevant
+- Explain that these documents will be available to the confab once it's deployed
 
 {documents_context}
 
@@ -377,15 +377,15 @@ class Foreman:
     async def _get_documents_context(self) -> str:
         """Get formatted context about uploaded documents for this confab."""
         try:
-            doc_service = DocumentService(self.db)
-            documents = await doc_service.list_documents(self.confab_id)
+            doc_service = DocumentServiceV2(self.db)
+            response = await doc_service.list_documents(self.confab_id)
 
-            if not documents:
+            if not response.documents:
                 return "No documents have been uploaded to this confab yet."
 
-            doc_lines = [f"**Uploaded Documents ({len(documents)}):**"]
-            for doc in documents:
-                doc_lines.append(f"- {doc['filename']} ({doc['content_type']}, {doc['chunk_count']} chunks, status: {doc['status']})")
+            doc_lines = [f"**Uploaded Documents ({response.total}):**"]
+            for doc in response.documents:
+                doc_lines.append(f"- {doc.filename} ({doc.content_type}, {doc.version_count} version(s), status: {doc.status})")
 
             return "\n".join(doc_lines)
         except Exception as e:

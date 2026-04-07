@@ -277,32 +277,32 @@ class ApiClient {
     });
   }
 
-  // === Document Store endpoints ===
+  // === Document Store endpoints (V2 - Versioned) ===
 
   async uploadDocument(confabId, file, metadata = null) {
-    const url = `${this.baseURL}/confabs/${confabId}/documents`;
-    const formData = new FormData();
-    formData.append('file', file);
-    if (metadata) {
-      formData.append('metadata', JSON.stringify(metadata));
+    // Convert file to base64 for V2 API
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+      binary += String.fromCharCode(uint8Array[i]);
     }
+    const base64 = btoa(binary);
 
-    const token = localStorage.getItem('access_token');
-    const response = await fetch(url, {
+    return this.request(`/confabs/${confabId}/documents`, {
       method: 'POST',
-      body: formData,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: JSON.stringify({
+        filename: file.name,
+        content_base64: base64,
+        content_type: file.type || 'application/octet-stream',
+        metadata: metadata,
+      }),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || `Upload failed: ${response.status}`);
-    }
-    return response.json();
   }
 
   async listDocuments(confabId) {
-    return this.request(`/confabs/${confabId}/documents`);
+    const response = await this.request(`/confabs/${confabId}/documents`);
+    return response.documents; // V2 returns { documents: [...], total: N }
   }
 
   async getDocument(confabId, documentId) {
@@ -313,17 +313,6 @@ class ApiClient {
     return this.request(`/confabs/${confabId}/documents/${documentId}`, {
       method: 'DELETE',
     });
-  }
-
-  async searchDocuments(confabId, query, topK = 5, filterType = null) {
-    return this.request(`/confabs/${confabId}/documents/search`, {
-      method: 'POST',
-      body: JSON.stringify({ query, top_k: topK, filter_type: filterType }),
-    });
-  }
-
-  async getDocumentStats(confabId) {
-    return this.request(`/confabs/${confabId}/documents/stats`);
   }
 
   // REMOVED: chatWithLangGraphAgent - use chat() instead

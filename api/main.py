@@ -25,7 +25,7 @@ import re
 logger = logging.getLogger(__name__)
 
 from database import get_db, engine, Base
-from models import User, Confab, ConfabLearning, GitHubAccount, Thread, ThreadParticipant, Message, ConfabDocument, DocumentChunk
+from models import User, Confab, ConfabLearning, GitHubAccount, Thread, ThreadParticipant, Message
 from schemas import (
     # User
     UserCreate, UserLogin, UserResponse, UserListItem,
@@ -60,7 +60,7 @@ try:
 except Exception as e:
     print(f"Warning: Could not connect to database: {e}")
 
-app = FastAPI(title="Let's Confab API", version="2.0.2")
+app = FastAPI(title="Let's Confab API", version="2.0.4")
 
 # CORS middleware
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
@@ -850,15 +850,7 @@ async def delete_confab(
                 # Continue trying other paths
 
     # Delete related records before deleting confab
-    # 1. Delete document chunks (child of documents)
-    doc_ids = [d.id for d in db.query(ConfabDocument).filter(ConfabDocument.confab_id == confab_id).all()]
-    if doc_ids:
-        db.query(DocumentChunk).filter(DocumentChunk.document_id.in_(doc_ids)).delete(synchronize_session=False)
-
-    # 2. Delete documents
-    db.query(ConfabDocument).filter(ConfabDocument.confab_id == confab_id).delete(synchronize_session=False)
-
-    # 3. Delete learnings
+    # Delete learnings
     db.query(ConfabLearning).filter(ConfabLearning.confab_id == confab_id).delete(synchronize_session=False)
 
     db.delete(confab)
@@ -969,183 +961,6 @@ async def delete_learning(
 # Document Store Routes
 # =============================================================================
 
-from document_store import (
-    DocumentService,
-    DocumentUploadRequest,
-    DocumentResponse,
-    DocumentListItem,
-    DocumentUploadResponse,
-    DocumentSearchRequest,
-    DocumentSearchResponse,
-    ContextRequest,
-    ContextResponse,
-    DocumentStoreStats,
-)
-from fastapi import UploadFile, File, Form
-
-
-@app.post("/confabs/{confab_id}/documents", response_model=DocumentUploadResponse)
-async def upload_document(
-    confab_id: int,
-    file: UploadFile = File(...),
-    metadata: Optional[str] = Form(None),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Upload and index a document for RAG retrieval."""
-    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-
-    # Read file content
-    content = await file.read()
-
-    # Parse metadata if provided
-    import json
-    meta = json.loads(metadata) if metadata else None
-
-    # Determine content type
-    content_type = file.content_type or "text/plain"
-    if file.filename.endswith(".md"):
-        content_type = "text/markdown"
-    elif file.filename.endswith(".pdf"):
-        content_type = "application/pdf"
-
-    # For text files, decode content
-    if content_type in ["text/plain", "text/markdown"]:
-        content = content.decode("utf-8")
-
-    service = DocumentService(db)
-    result = await service.upload_document(
-        confab_id=confab_id,
-        content=content,
-        filename=file.filename,
-        content_type=content_type,
-        metadata=meta
-    )
-
-    if result.status == "failed":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.error_message)
-
-    return DocumentUploadResponse(
-        document_id=result.document_id,
-        filename=result.filename,
-        chunk_count=result.chunk_count,
-        status=result.status,
-        error_message=result.error_message
-    )
-
-
-@app.get("/confabs/{confab_id}/documents", response_model=List[DocumentListItem])
-async def list_documents(
-    confab_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """List all documents in a confab's document store."""
-    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-
-    service = DocumentService(db)
-    docs = await service.list_documents(confab_id)
-    return [DocumentListItem(**doc) for doc in docs]
-
-
-@app.get("/confabs/{confab_id}/documents/stats", response_model=DocumentStoreStats)
-async def get_document_stats(
-    confab_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get document store statistics."""
-    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-
-    service = DocumentService(db)
-    stats = await service.get_stats(confab_id)
-    return DocumentStoreStats(**stats)
-
-
-@app.get("/confabs/{confab_id}/documents/{document_id}", response_model=DocumentResponse)
-async def get_document(
-    confab_id: int,
-    document_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get a specific document's details."""
-    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-
-    service = DocumentService(db)
-    doc = await service.get_document(confab_id, document_id)
-    if not doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-    return DocumentResponse(**doc)
-
-
-@app.delete("/confabs/{confab_id}/documents/{document_id}")
-async def delete_document(
-    confab_id: int,
-    document_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Delete a document from the document store."""
-    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-
-    service = DocumentService(db)
-    success = await service.delete_document(confab_id, document_id)
-    if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-    return {"message": "Document deleted"}
-
-
-@app.post("/confabs/{confab_id}/documents/search", response_model=DocumentSearchResponse)
-async def search_documents(
-    confab_id: int,
-    body: DocumentSearchRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Semantic search across a confab's documents."""
-    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
-    if not confab:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
-
-    service = DocumentService(db)
-    results = await service.search(confab_id, body.query, body.top_k, body.filter_type)
-
-    return DocumentSearchResponse(
-        results=[
-            {
-                "chunk_id": r.chunk_id,
-                "document_id": r.document_id,
-                "filename": r.filename,
-                "content": r.content,
-                "score": r.score,
-                "chunk_index": r.chunk_index,
-                "source_type": r.source_type,
-                "metadata": r.metadata
-            }
-            for r in results
-        ],
-        query=body.query,
-        total_results=len(results)
-    )
-
-
-# =============================================================================
-# Document Store V2 Routes (Versioned)
-# =============================================================================
-
 from document_store_v2 import DocumentServiceV2, get_accepted_formats
 from document_store_v2.schemas import (
     DocumentUploadRequest as DocumentUploadRequestV2,
@@ -1159,7 +974,7 @@ from document_store_v2.schemas import (
 )
 
 
-@app.post("/confabs/{confab_id}/documents", response_model=DocumentUploadResponseV2, tags=["documents-v2"])
+@app.post("/confabs/{confab_id}/documents", response_model=DocumentUploadResponseV2, tags=["documents"])
 async def upload_document_v2(
     confab_id: int,
     body: DocumentUploadRequestV2,
@@ -1189,7 +1004,7 @@ async def upload_document_v2(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@app.get("/confabs/{confab_id}/documents", response_model=DocumentListResponse, tags=["documents-v2"])
+@app.get("/confabs/{confab_id}/documents", response_model=DocumentListResponse, tags=["documents"])
 async def list_documents_v2(
     confab_id: int,
     current_user: User = Depends(get_current_user),
@@ -1205,7 +1020,7 @@ async def list_documents_v2(
     return await service.list_documents(confab_id)
 
 
-@app.get("/confabs/{confab_id}/documents/{document_id}", response_model=DocumentResponseV2, tags=["documents-v2"])
+@app.get("/confabs/{confab_id}/documents/{document_id}", response_model=DocumentResponseV2, tags=["documents"])
 async def get_document_v2(
     confab_id: int,
     document_id: int,
@@ -1225,7 +1040,7 @@ async def get_document_v2(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@app.delete("/confabs/{confab_id}/documents/{document_id}", tags=["documents-v2"])
+@app.delete("/confabs/{confab_id}/documents/{document_id}", tags=["documents"])
 async def archive_document_v2(
     confab_id: int,
     document_id: int,
@@ -1246,7 +1061,7 @@ async def archive_document_v2(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@app.get("/confabs/{confab_id}/documents/{document_id}/versions", response_model=VersionListResponse, tags=["documents-v2"])
+@app.get("/confabs/{confab_id}/documents/{document_id}/versions", response_model=VersionListResponse, tags=["documents"])
 async def list_document_versions(
     confab_id: int,
     document_id: int,
@@ -1266,7 +1081,7 @@ async def list_document_versions(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@app.get("/confabs/{confab_id}/documents/{document_id}/versions/latest", response_model=DocumentContentResponse, tags=["documents-v2"])
+@app.get("/confabs/{confab_id}/documents/{document_id}/versions/latest", response_model=DocumentContentResponse, tags=["documents"])
 async def get_latest_document_version(
     confab_id: int,
     document_id: int,
@@ -1286,7 +1101,7 @@ async def get_latest_document_version(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@app.get("/confabs/{confab_id}/documents/{document_id}/versions/{version_number}", response_model=DocumentContentResponse, tags=["documents-v2"])
+@app.get("/confabs/{confab_id}/documents/{document_id}/versions/{version_number}", response_model=DocumentContentResponse, tags=["documents"])
 async def get_document_version_content(
     confab_id: int,
     document_id: int,
@@ -1307,7 +1122,7 @@ async def get_document_version_content(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@app.post("/confabs/{confab_id}/documents/{document_id}/versions", response_model=VersionListResponse, tags=["documents-v2"])
+@app.post("/confabs/{confab_id}/documents/{document_id}/versions", response_model=VersionListResponse, tags=["documents"])
 async def create_document_version(
     confab_id: int,
     document_id: int,
@@ -1337,7 +1152,7 @@ async def create_document_version(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@app.get("/documents/accepted-formats", response_model=DocumentStageHint, tags=["documents-v2"])
+@app.get("/documents/accepted-formats", response_model=DocumentStageHint, tags=["documents"])
 async def get_accepted_document_formats():
     """Get accepted document formats and upload hints (for Foreman UI)."""
     return DocumentStageHint(

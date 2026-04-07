@@ -186,7 +186,7 @@ cython_debug/
 logs/
 *.log
 
-# Local data (ChromaDB, uploads)
+# Local data (uploads)
 data/
 
 # OS
