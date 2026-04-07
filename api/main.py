@@ -25,7 +25,7 @@ import re
 logger = logging.getLogger(__name__)
 
 from database import get_db, engine, Base
-from models import User, Confab, ConfabLearning, GitHubAccount, Thread, ThreadParticipant, Message
+from models import User, Confab, ConfabLearning, GitHubAccount, Thread, ThreadParticipant, Message, ConfabDocument, DocumentChunk
 from schemas import (
     # User
     UserCreate, UserLogin, UserResponse, UserListItem,
@@ -60,7 +60,7 @@ try:
 except Exception as e:
     print(f"Warning: Could not connect to database: {e}")
 
-app = FastAPI(title="Let's Confab API", version="2.0.1")
+app = FastAPI(title="Let's Confab API", version="2.0.2")
 
 # CORS middleware
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
@@ -106,7 +106,7 @@ async def get_current_user(
 
 @app.get("/")
 async def root():
-    return {"message": "Let's Confab API", "version": "2.0.0"}
+    return {"message": "Let's Confab API", "version": app.version}
 
 
 def _slugify(value: str) -> str:
@@ -193,17 +193,36 @@ def _resolve_or_set_confab_folder(
     confab: Confab,
     current_user: User,
     github_account: Optional[GitHubAccount],
-    db: Session
+    db: Session,
+    is_registry: bool = False
 ) -> str:
-    """Assign immutable confab folder path once and reuse forever."""
+    """Assign immutable confab folder path once and reuse forever.
+
+    Registry (email users): confabs/<name>-u<user_id>-c<confab_id>
+    GitHub OAuth users: <name>-c<confab_id>
+    """
     if confab.github_path:
+        # For registry, ensure confabs/ prefix even on existing paths
+        if is_registry and not confab.github_path.startswith("confabs/"):
+            return f"confabs/{confab.github_path}"
         return confab.github_path
 
     confab_slug = _slugify(confab.name)
-    confab.github_path = f"{confab_slug}-c{confab.id}"
+
+    # Registry users get user ID in path for uniqueness across users
+    if is_registry:
+        base_path = f"{confab_slug}-u{current_user.id}-c{confab.id}"
+    else:
+        base_path = f"{confab_slug}-c{confab.id}"
+
+    confab.github_path = base_path  # Store without prefix (portable across repos)
     db.commit()
     db.refresh(confab)
-    return confab.github_path
+
+    # Return with prefix for registry
+    if is_registry:
+        return f"confabs/{base_path}"
+    return base_path
 
 
 def _resolve_github_target(
@@ -530,8 +549,19 @@ async def refresh_definition_files(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
+    # Refresh only works if confab has been committed before (has a github_path)
+    if not confab.github_path:
+        return DefinitionFilesRefreshResponse(
+            confab_id=confab.id,
+            purpose=confab.purpose,
+            guardrails_markdown=_guardrails_to_markdown(confab.name, confab.guardrails) if confab.guardrails else None,
+            remote_branch=None,
+            remote_source="none",
+            refreshed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+
     try:
-        github_service, github_account, _ = _resolve_github_target(current_user, confab, db)
+        github_service, github_account, is_registry = _resolve_github_target(current_user, confab, db)
     except HTTPException as e:
         # GitHub not configured - return current DB state without remote sync
         return DefinitionFilesRefreshResponse(
@@ -543,7 +573,10 @@ async def refresh_definition_files(
             refreshed_at=datetime.datetime.now(datetime.timezone.utc),
         )
 
-    confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db)
+    # Use existing path (with registry prefix if needed)
+    confab_folder = confab.github_path
+    if is_registry and not confab_folder.startswith("confabs/"):
+        confab_folder = f"confabs/{confab_folder}"
     file_prefix = confab_folder
 
     purpose_path = f"{file_prefix}/PURPOSE.md"
@@ -653,8 +686,8 @@ async def accept_and_commit_definition_files(
     github_error_message = None
 
     try:
-        github_service, github_account, _ = _resolve_github_target(current_user, confab, db)
-        confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db)
+        github_service, github_account, is_registry = _resolve_github_target(current_user, confab, db)
+        confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db, is_registry)
 
         # Ensure repo exists before attempting operations (auto-creates "confabs" if needed)
         repo_ok, repo_error = await github_service.ensure_repo_exists()
@@ -815,6 +848,18 @@ async def delete_confab(
             except Exception as e:
                 logger.warning(f"Failed to delete GitHub folder {folder_path} for confab {confab_id}: {e}")
                 # Continue trying other paths
+
+    # Delete related records before deleting confab
+    # 1. Delete document chunks (child of documents)
+    doc_ids = [d.id for d in db.query(ConfabDocument).filter(ConfabDocument.confab_id == confab_id).all()]
+    if doc_ids:
+        db.query(DocumentChunk).filter(DocumentChunk.document_id.in_(doc_ids)).delete(synchronize_session=False)
+
+    # 2. Delete documents
+    db.query(ConfabDocument).filter(ConfabDocument.confab_id == confab_id).delete(synchronize_session=False)
+
+    # 3. Delete learnings
+    db.query(ConfabLearning).filter(ConfabLearning.confab_id == confab_id).delete(synchronize_session=False)
 
     db.delete(confab)
     db.commit()
@@ -1756,13 +1801,13 @@ async def sync_to_github(
 
     for confab in confabs:
         try:
-            github_service, github_account, _ = _resolve_github_target(current_user, confab, db)
+            github_service, github_account, is_registry = _resolve_github_target(current_user, confab, db)
 
             # Generate OASF export files
             files = generate_all_export_files(confab, db)
 
             # Determine immutable confab folder path
-            confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db)
+            confab_folder = _resolve_or_set_confab_folder(confab, current_user, github_account, db, is_registry)
             file_prefix = confab_folder
 
             # Commit directly to the default branch (main)
