@@ -35,7 +35,8 @@
 ### Foreman Agent (System Orchestrator)
 
 - **System agent type** — The Foreman is a built-in system agent (`participant_type='system'`, `system_agent_name='foreman'`) that orchestrates confab creation.
-- **7-step guided process** — Leads users through: Define Purpose, Add Participants, Configure Memory, Set Up Tools, Establish Guardrails, Sample I/O, and Review.
+- **7-step guided process (V2)** — Leads users through: Define Purpose, Add Participants, Configure Memory, Set Up Tools, Establish Guardrails, Sample I/O, and Review.
+- **8-step guided process (V3)** — Behind `FOREMAN_V3_ENABLED` flag. Adds a Documents stage between Memory and Tools. Uses LangGraph StateGraph architecture. See `ForemanV3.md`.
 - **Directive conversation style** — Actively guides the conversation rather than passively waiting; ends each response with a clear question for the next step.
 - **Progress tracking** — Tracks completed steps in `confab.setup_progress` JSON field, allowing sessions to resume from where they left off.
 - **Tool integration** — Uses internal tools (`define_purpose`, `add_participant`, `configure_memory`, etc.) to save configuration incrementally.
@@ -93,17 +94,29 @@
 - **Responsive design** — Mobile-first with breakpoints and a mobile detection hook.
 - **Toast notifications** — Via Sonner.
 
-### Document Store (RAG)
+### Document Store (V2)
 
-- **Document upload** — Upload text, markdown, and PDF files to a confab's knowledge base via REST API.
-- **Automatic chunking** — Documents are split into semantic chunks using LangChain's RecursiveCharacterTextSplitter.
-- **Embedding generation** — Supports multiple embedding providers: Sentence Transformers (local, default), Ollama, OpenAI.
-- **Vector storage** — Per-confab ChromaDB collections for isolated semantic search.
-- **Semantic search** — Natural language queries return relevant document chunks ranked by similarity.
-- **RAG context assembly** — `get_context_for_query` tool formats relevant chunks for LLM prompts.
-- **Learning indexing** — Approved ConfabLearning records are automatically indexed for RAG retrieval.
-- **MCP tool integration** — 8 document tools available to Foreman and deployed confabs.
-- **Deduplication** — Content-hash based duplicate detection prevents redundant uploads.
+- **Versioned document storage** — PostgreSQL-native storage with append-only version history. Replaces V1 (ChromaDB/embeddings).
+- **Document upload** — Upload documents via JSON API with base64-encoded content. Supports PDF, text, markdown, office documents, structured data (JSON/YAML/TOML), and images.
+- **Compression** — All content compressed with zstd before storage; decompressed on retrieval.
+- **Magic-byte validation** — MIME types verified via `python-magic` (not file extension). Max file size: 50 MB.
+- **Filename sanitization** — Path traversal prevention, unsafe character removal, unicode normalization.
+- **Version management** — Create new versions of existing documents; list, retrieve, and compare versions.
+- **Soft delete** — Documents are archived (not permanently deleted), preserving version history.
+- **Content hashing** — SHA-256 hash per version for deduplication checks.
+
+### Document Upload UI
+
+- **DocumentUploadDialog** — React component with drag-and-drop file upload, triggered by `ui_hint: "show_upload_panel"` from Foreman during the documents stage.
+- **File validation** — Client-side size limit (10 MB displayed) and type filtering (PDF, TXT, MD).
+- **Upload progress** — Per-file status indicators (uploading, uploaded, error).
+- **Pre-filled confirmation** — After upload, a confirmation message is pre-filled in the chat input.
+
+### Registry Commit (Email/Password Users)
+
+- **Server-side GitHub commits** — Email/password users (without GitHub OAuth) can commit confab files to the `letsconfab/registry` repository using a server-side `REGISTRY_GITHUB_TOKEN`.
+- **Immutable path assignment** — `_resolve_or_set_confab_folder()` assigns a unique path per confab (`{slug}-u{userId}-c{confabId}`) stored in `confab.github_path`.
+- **Fallback logic** — OAuth users commit to their selected repo; email/password users fall back to the registry repo.
 
 ---
 
@@ -129,5 +142,4 @@
 - Confab publishing and marketplace/sharing.
 - Real-time collaboration on confab editing.
 - Analytics and monitoring for deployed agents.
-- Document upload UI (API-only currently; frontend upload component not yet built).
 - Webhook and external API integration runtime.

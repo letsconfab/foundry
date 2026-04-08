@@ -1,9 +1,10 @@
 # Foreman V2 — Deterministic Interview Orchestrator
 
 ## Status
-- **Phase**: 0 (Baseline and Feature Flag)
+- **Phase**: V2 is the current production default.
 - **Feature Flag**: `FOREMAN_V2_ENABLED`
-- **Target**: Deterministic, interview-style setup flow
+- **Successor**: V3 (LangGraph StateGraph) is available behind `FOREMAN_V3_ENABLED` and will eventually replace V2. See [ForemanV3.md](ForemanV3.md).
+- V3 adds a documents stage (8 steps vs V2's 7) and uses a graph-based architecture.
 
 ---
 

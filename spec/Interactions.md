@@ -51,14 +51,16 @@
 4. UI navigates to `AgentChat` wizard.
 5. Foreman sends initial greeting:
    > "Welcome to the Agent Foundry. I am the Foreman, and will walk you through the creation of this confab (Collaborative Agent)."
-6. User converses with Foreman through 7 steps:
+6. User converses with Foreman through 7 steps (V2) or 8 steps (V3, adds Documents):
    - **Define Purpose** — Foreman asks what the agent should do
    - **Add Participants** — Who can access it
    - **Configure Memory** — Should it remember conversations
+   - **Upload Documents** (V3 only) — Reference documents for the agent's knowledge base
    - **Set Up Tools** — External capabilities
    - **Establish Guardrails** — Safety boundaries
    - **Sample I/O** — Example interactions
    - **Review** — Finalize configuration
+   When `FOREMAN_V3_ENABLED=true`, uses LangGraph-based orchestration (see `ForemanV3.md`).
 7. Foreman uses tools (`define_purpose`, `guardrails`, etc.) to save configuration incrementally to the confab record.
 8. Progress is tracked in `confab.setup_progress` JSON field.
 9. On completion, Foreman sets confab status to `draft` (ready for deployment).
@@ -86,6 +88,16 @@
 7. If the response signals step completion, progress is updated in `confab.setup_progress`.
 8. Response is saved to the thread and returned to the frontend.
 9. UI displays the Foreman's response with HardHat icon and amber gradient.
+
+### 5c. Uploading Documents During Confab Building (V3)
+
+1. During the documents stage, Foreman sends a response with `ui_hint: "show_upload_panel"` in `v2_metadata`.
+2. Frontend detects the hint and opens the `DocumentUploadDialog` modal (drag-and-drop UI).
+3. User selects or drags files (PDF, TXT, MD, etc.).
+4. Each file is uploaded via `POST /confabs/{id}/documents` with base64-encoded content.
+5. Files are validated (magic bytes, size limit), compressed (zstd), and stored with version 1.
+6. Upload status is shown per file (uploading, uploaded, error).
+7. User says "done" or "skip" to continue to the next stage.
 
 ### 6. Updating a Confab
 
@@ -157,6 +169,20 @@
 | GET | `/confabs/{confab_id}/export` | Export as OASF files | Yes |
 | POST | `/confabs/test-repo` | Test GitHub repository initialization | Yes |
 
+### Document Store Endpoints (V2)
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| POST | `/confabs/{confab_id}/documents` | Upload document (base64 JSON) | Yes |
+| GET | `/confabs/{confab_id}/documents` | List active documents | Yes |
+| GET | `/confabs/{confab_id}/documents/{doc_id}` | Get document metadata | Yes |
+| DELETE | `/confabs/{confab_id}/documents/{doc_id}` | Archive (soft delete) | Yes |
+| GET | `/confabs/{confab_id}/documents/{doc_id}/versions` | List versions | Yes |
+| GET | `/confabs/{confab_id}/documents/{doc_id}/versions/latest` | Get latest version content | Yes |
+| GET | `/confabs/{confab_id}/documents/{doc_id}/versions/{num}` | Get specific version content | Yes |
+| POST | `/confabs/{confab_id}/documents/{doc_id}/versions` | Create new version | Yes |
+| GET | `/documents/accepted-formats` | Get accepted file formats | No |
+
 ### Thread Endpoints
 
 | Method | Path | Description | Auth Required |
@@ -224,7 +250,7 @@ The backend communicates with GitHub's REST API v3 for:
 
 - Connection via SQLAlchemy engine using `DATABASE_URL`.
 - Default: `postgresql://postgres:password@localhost:7432/confab_foundry_db`.
-- Tables: `users`, `github_accounts`, `confabs`, `confab_learnings`, `threads`, `thread_participants`, `messages`.
+- Tables: `users`, `github_accounts`, `confabs`, `confab_learnings`, `confab_documents_v2`, `document_versions`, `threads`, `thread_participants`, `messages`.
 
 ### Frontend → Backend (Internal)
 
