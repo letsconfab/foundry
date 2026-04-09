@@ -79,10 +79,10 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Add explicit conversation mode field (not just participant presence)
 - [x] Document participant semantics
 
-### Phase 9 — Prepare external chat/collaboration provider seam `[ ]`
-- [ ] Define interfaces: `ConversationStore`, `MessagePublisher`, `ParticipantDirectory`
-- [ ] Current Postgres model = default implementation
-- [ ] No external provider integration yet — just the seam
+### Phase 9 — Prepare external chat/collaboration provider seam `[x]`
+- [x] Define interfaces: `ConversationStore`, `MessagePublisher`, `ParticipantDirectory`
+- [x] Current Postgres model = default implementation
+- [x] No external provider integration yet — just the seam
 
 ### Phase 10 — Testing and migration hardening `[ ]`
 - [ ] Tests for starting/resuming foreman conversations
