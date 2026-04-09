@@ -47,14 +47,14 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Remove legacy V1 production path from `main.py`
 - [x] Simplify feature flags
 
-### Phase 4 — Split main.py into routers `[ ]`
-- [ ] Create `api/routes/auth_routes.py`
-- [ ] Create `api/routes/confab_routes.py`
-- [ ] Create `api/routes/conversation_routes.py`
-- [ ] Create `api/routes/github_sync_routes.py`
-- [ ] Create `api/routes/learning_routes.py`
-- [ ] Create `api/routes/document_routes.py`
-- [ ] Slim `main.py` to app creation, middleware, router registration, startup wiring
+### Phase 4 — Split main.py into routers `[x]`
+- [x] Create `api/routes/auth_routes.py`
+- [x] Create `api/routes/confab_routes.py`
+- [x] Create `api/routes/conversation_routes.py`
+- [x] Create `api/routes/github_sync_routes.py`
+- [x] Create `api/routes/learning_routes.py`
+- [x] Create `api/routes/document_routes.py`
+- [x] Slim `main.py` to app creation, middleware, router registration, startup wiring
 
 ### Phase 5 — Introduce high-level conversation endpoints `[ ]`
 - [ ] `POST /conversations/foreman/start`
