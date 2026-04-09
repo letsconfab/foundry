@@ -106,7 +106,7 @@ class ConversationService:
         name_part = confab.name if confab else "New Confab"
         thread_name = f"Build: {name_part} – {datetime.datetime.now().strftime('%b %d %H:%M')}"
 
-        thread = Thread(name=thread_name, owner_user_id=user_id)
+        thread = Thread(name=thread_name, owner_user_id=user_id, conversation_mode=FOREMAN_BUILD)
         self.db.add(thread)
         self.db.commit()
         self.db.refresh(thread)
@@ -184,38 +184,17 @@ class ConversationService:
 
     def infer_conversation_mode(self, thread_id: int) -> str:
         """
-        Determine conversation mode from thread participants.
+        Determine conversation mode for a thread.
 
-        Rules:
-        1. If foreman system agent is present AND the linked confab is building → foreman_build
-        2. If a published confab participant is present → confab_runtime
-        3. Default → confab_runtime
+        Uses explicit conversation_mode field if set, otherwise
+        falls back to inference from participants.
         """
-        participants = (
-            self.db.query(ThreadParticipant)
-            .filter(ThreadParticipant.thread_id == thread_id, ThreadParticipant.is_active == True)
-            .all()
-        )
+        from services.participants import get_conversation_mode, infer_mode_from_participants
 
-        has_foreman = False
-        confab_ids = []
-
-        for p in participants:
-            if p.participant_type == "system" and p.system_agent_name == "foreman":
-                has_foreman = True
-            elif p.participant_type == "confab" and p.participant_id:
-                confab_ids.append(p.participant_id)
-
-        if has_foreman and confab_ids:
-            # Check if the confab is in building status
-            confab = self.db.query(Confab).filter(Confab.id == confab_ids[0]).first()
-            if confab and confab.status == "building":
-                return FOREMAN_BUILD
-
-        if confab_ids:
-            return CONFAB_RUNTIME
-
-        return CONFAB_RUNTIME
+        thread = self.db.query(Thread).filter(Thread.id == thread_id).first()
+        if thread:
+            return get_conversation_mode(self.db, thread)
+        return infer_mode_from_participants(self.db, thread_id)
 
     # ------------------------------------------------------------------
     # Start / Resume
@@ -348,7 +327,7 @@ class ConversationService:
 
         # Create thread
         thread_name = f"Chat: {confab.name} – {datetime.datetime.now().strftime('%b %d %H:%M')}"
-        thread = Thread(name=thread_name, owner_user_id=user.id)
+        thread = Thread(name=thread_name, owner_user_id=user.id, conversation_mode=CONFAB_RUNTIME)
         self.db.add(thread)
         self.db.commit()
         self.db.refresh(thread)

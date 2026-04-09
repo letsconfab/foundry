@@ -137,6 +137,7 @@ class Thread(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(500), nullable=False)  # was thread_name
     owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # denormalized for quick lookup
+    conversation_mode = Column(String(30), nullable=True)  # "foreman_build" | "confab_runtime" | "multi_agent_workspace"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
