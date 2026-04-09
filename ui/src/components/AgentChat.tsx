@@ -309,51 +309,34 @@ What's your agent's main job?`,
 
       setIsLoadingExisting(true);
       try {
-        // Load existing confab
+        // Use high-level resume endpoint — handles thread lookup, message loading
+        const conversation = await apiClient.resumeForemanConversation(existingConfabId);
+        setCurrentConfabId(conversation.confab_id);
+        setCurrentThreadId(conversation.thread_id);
+        if (conversation.current_stage) {
+          // Stage info available from server
+          console.log('Resumed at stage:', conversation.current_stage);
+        }
+
+        // Load confab name from server
         const confab = await apiClient.getConfab(existingConfabId);
-        setCurrentConfabId(confab.id);
         if (confab.name) {
           setConfabName(confab.name);
         }
 
-        // Find the thread for THIS specific confab (must have both Foreman AND this confab as participants)
-        const threads = await apiClient.getThreads();
-        for (const thread of threads) {
-          try {
-            const participants = await apiClient.getThreadParticipants(thread.id);
-            const hasForeman = participants.some(
-              (p: any) => p.participant_type === 'system' && p.system_agent_name === 'foreman'
-            );
-            const hasThisConfab = participants.some(
-              (p: any) => p.participant_type === 'confab' && p.participant_id === existingConfabId
-            );
-
-            if (hasForeman && hasThisConfab) {
-              // Found the correct thread for this confab - load messages
-              setCurrentThreadId(thread.id);
-              const threadMessages = await apiClient.getThreadMessages(thread.id);
-
-              if (threadMessages && threadMessages.length > 0) {
-                // Convert to Message format
-                const loadedMessages: Message[] = threadMessages.map((msg: any) => ({
-                  id: String(msg.id),
-                  role: msg.role as 'user' | 'assistant',
-                  content: msg.content,
-                  timestamp: new Date(msg.created_at),
-                  senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
-                }));
-                setMessages(loadedMessages);
-              }
-              break; // Found the thread, stop searching
-            }
-          } catch (participantError) {
-            // Thread might not have participants, continue searching
-            console.debug('Error checking thread participants:', participantError);
-          }
+        // Convert server messages to local Message format
+        if (conversation.messages && conversation.messages.length > 0) {
+          const loadedMessages: Message[] = conversation.messages.map((msg: any) => ({
+            id: String(msg.id),
+            role: msg.role as 'user' | 'assistant',
+            content: msg.content,
+            timestamp: new Date(msg.created_at),
+            senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
+          }));
+          setMessages(loadedMessages);
         }
       } catch (error) {
-        console.error('Failed to load existing confab:', error);
-        // Reset to fresh state if resume fails
+        console.error('Failed to resume conversation:', error);
         setCurrentConfabId(null);
         setCurrentThreadId(null);
       } finally {
@@ -505,75 +488,31 @@ What's your agent's main job?`,
     setInput('');
     setIsTyping(true);
 
-    // Create confab on first message if not exists
-    // Track the confab ID locally to avoid race condition with state update
+    // Bootstrap conversation on first message using high-level API
     let confabId = currentConfabId;
-    if (confabId == null) {
-      try {
-        const confab = await apiClient.createConfab({
-          generate_placeholder: true,
-          status: 'building'
-        });
-        console.log('Created new confab:', confab);
-        confabId = confab.id;
-        setCurrentConfabId(confab.id);
-      } catch (error) {
-        console.error('Failed to create confab:', error);
-      }
-    }
-
-    // === [CLAUDE: Initialize or use existing thread for conversation storage] ===
     let tid = currentThreadId;
     if (tid == null) {
       try {
-        const name = `Create Confab – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
-        const thread = await apiClient.createThread(name);
-        tid = thread?.id ?? null;
-        if (tid != null) setCurrentThreadId(tid);
-
-        // Add Foreman as participant FIRST (critical for chat to work)
-        if (tid != null) {
-          try {
-            await apiClient.addThreadParticipant(tid, 'system', null, 'foreman', 'participant');
-            console.log('[CLAUDE: IMPLEMENTATION] Foreman added as thread participant');
-          } catch (participantError) {
-            console.error('[CLAUDE: IMPLEMENTATION] Error adding thread participant:', participantError);
-          }
-        }
-
-        // Add confab as participant (links this thread to the specific confab for Continue Building)
-        if (tid != null && confabId != null) {
-          try {
-            await apiClient.addThreadParticipant(tid, 'confab', confabId, null, 'participant');
-            console.log('[CLAUDE: IMPLEMENTATION] Confab added as thread participant');
-          } catch (participantError) {
-            console.error('[CLAUDE: IMPLEMENTATION] Error adding confab participant:', participantError);
-          }
-        }
-
-        // Save welcome message with proper Foreman attribution (non-critical)
-        if (tid != null && messages[0]?.role === 'assistant') {
-          try {
-            await apiClient.addMessage(tid, messages[0].content, 'assistant', 'system', 'Foreman');
-          } catch (welcomeError) {
-            console.error('Failed to save welcome message:', welcomeError);
-          }
-        }
-      } catch {
+        const conversation = await apiClient.startForemanConversation();
+        tid = conversation.thread_id;
+        confabId = conversation.confab_id;
+        setCurrentThreadId(tid);
+        setCurrentConfabId(confabId);
+        console.log('Started foreman conversation:', { tid, confabId });
+      } catch (error) {
+        console.error('Failed to start conversation:', error);
         tid = null;
       }
     }
 
-    // === [CLAUDE: Send message via unified chat endpoint] ===
-    // The chat endpoint handles message storage and agent responses
+    // Send message via high-level conversation endpoint
     try {
       let assistantContent = '';
       let response: any = null;
 
       if (tid != null) {
         try {
-          // Use the unified chat endpoint - it handles everything
-          response = await apiClient.chat(tid, content);
+          response = await apiClient.sendConversationMessage(tid, content);
 
           // The response contains user_message and agent_responses
           if (response.agent_responses && response.agent_responses.length > 0) {

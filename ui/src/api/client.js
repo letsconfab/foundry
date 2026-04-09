@@ -315,6 +315,49 @@ class ApiClient {
     });
   }
 
+  // === High-level Conversation API (Phase 6) ===
+
+  /**
+   * Start a new foreman build conversation.
+   * Creates confab, thread, participants, and welcome message in one call.
+   */
+  async startForemanConversation() {
+    return this.request('/conversations/foreman/start', { method: 'POST' });
+  }
+
+  /**
+   * Resume an existing foreman build conversation.
+   * @param {number} confabId
+   */
+  async resumeForemanConversation(confabId) {
+    return this.request(`/conversations/foreman/${confabId}/resume`, { method: 'POST' });
+  }
+
+  /**
+   * Start a runtime conversation with a published confab.
+   * @param {number} confabId
+   */
+  async startRuntimeConversation(confabId) {
+    return this.request(`/conversations/runtime/${confabId}/start`, { method: 'POST' });
+  }
+
+  /**
+   * Send a message using the high-level conversation endpoint.
+   * Routes to the correct orchestrator automatically.
+   * @param {number} threadId
+   * @param {string} content
+   * @param {object} options - { addressedTo, inReplyTo }
+   */
+  async sendConversationMessage(threadId, content, options = {}) {
+    const body = { content };
+    if (options.addressedTo) body.addressed_to = options.addressedTo;
+    if (options.inReplyTo) body.in_reply_to = options.inReplyTo;
+    return this.request(`/conversations/${threadId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
   // REMOVED: chatWithLangGraphAgent - use chat() instead
   // REMOVED: getAgentStatus - endpoint no longer exists
   // REMOVED: llmHealthCheck - endpoint no longer exists
