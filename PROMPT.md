@@ -41,11 +41,11 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Implement: persist messages, route to orchestrator, return unified ChatResponse
 - [x] Add helpers: `create_thread_for_confab_build`, `attach_foreman_participant`, `attach_confab_participant`, `persist_message`, `infer_conversation_mode`
 
-### Phase 3 — Make foreman_v3 canonical `[ ]`
-- [ ] Promote `api/foreman_v3/` as the only production Foreman runtime
-- [ ] Convert `api/foreman.py` to thin compatibility shim or deprecated wrapper
-- [ ] Remove legacy V1 production path from `main.py`
-- [ ] Simplify feature flags
+### Phase 3 — Make foreman_v3 canonical `[x]`
+- [x] Promote `api/foreman_v3/` as the only production Foreman runtime
+- [x] Convert `api/foreman.py` to thin compatibility shim or deprecated wrapper
+- [x] Remove legacy V1 production path from `main.py`
+- [x] Simplify feature flags
 
 ### Phase 4 — Split main.py into routers `[ ]`
 - [ ] Create `api/routes/auth_routes.py`
