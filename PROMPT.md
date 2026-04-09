@@ -74,10 +74,10 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Ensure `setup_progress` writes go through a single mapping function
 - [x] Ensure resume flows use this mapping consistently
 
-### Phase 8 — Clarify participant semantics and routing `[ ]`
-- [ ] Add helper utilities for membership, addressing, routing, permissions
-- [ ] Add explicit conversation mode field (not just participant presence)
-- [ ] Document participant semantics
+### Phase 8 — Clarify participant semantics and routing `[x]`
+- [x] Add helper utilities for membership, addressing, routing, permissions
+- [x] Add explicit conversation mode field (not just participant presence)
+- [x] Document participant semantics
 
 ### Phase 9 — Prepare external chat/collaboration provider seam `[ ]`
 - [ ] Define interfaces: `ConversationStore`, `MessagePublisher`, `ParticipantDirectory`
