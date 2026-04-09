@@ -33,13 +33,13 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Define conversation modes: `foreman_build`, `confab_runtime`, reserve `multi_agent_workspace`
 - [x] Document source-of-truth policy (LangGraph checkpoint = execution state, `confab.setup_progress` = UI summary snapshot)
 
-### Phase 2 — Introduce ConversationService on the backend `[ ]`
-- [ ] Create `api/services/__init__.py` and `api/services/conversation_service.py`
-- [ ] Implement: start foreman conversation (create confab, thread, participants, seed message)
-- [ ] Implement: resume foreman conversation
-- [ ] Implement: start runtime conversation for published confab
-- [ ] Implement: persist messages, route to orchestrator, return unified ChatResponse
-- [ ] Add helpers: `create_thread_for_confab_build`, `attach_foreman_participant`, `attach_confab_participant`, `persist_message`, `infer_conversation_mode`
+### Phase 2 — Introduce ConversationService on the backend `[x]`
+- [x] Create `api/services/__init__.py` and `api/services/conversation_service.py`
+- [x] Implement: start foreman conversation (create confab, thread, participants, seed message)
+- [x] Implement: resume foreman conversation
+- [x] Implement: start runtime conversation for published confab
+- [x] Implement: persist messages, route to orchestrator, return unified ChatResponse
+- [x] Add helpers: `create_thread_for_confab_build`, `attach_foreman_participant`, `attach_confab_participant`, `persist_message`, `infer_conversation_mode`
 
 ### Phase 3 — Make foreman_v3 canonical `[ ]`
 - [ ] Promote `api/foreman_v3/` as the only production Foreman runtime
