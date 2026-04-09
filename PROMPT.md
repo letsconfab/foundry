@@ -27,11 +27,11 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 
 ## Phase Tracker
 
-### Phase 1 — Freeze architecture and define contracts `[ ]`
-- [ ] Create `spec/ConversationArchitecture.md` with conversation modes, ownership boundaries, request/response contracts
-- [ ] Define interfaces: `ConversationService`, `ConversationRouter`, `ConversationBootstrapper`, `AgentOrchestrator`
-- [ ] Define conversation modes: `foreman_build`, `confab_runtime`, reserve `multi_agent_workspace`
-- [ ] Document source-of-truth policy (LangGraph checkpoint = execution state, `confab.setup_progress` = UI summary snapshot)
+### Phase 1 — Freeze architecture and define contracts `[x]`
+- [x] Create `spec/ConversationArchitecture.md` with conversation modes, ownership boundaries, request/response contracts
+- [x] Define interfaces: `ConversationService`, `ConversationRouter`, `ConversationBootstrapper`, `AgentOrchestrator`
+- [x] Define conversation modes: `foreman_build`, `confab_runtime`, reserve `multi_agent_workspace`
+- [x] Document source-of-truth policy (LangGraph checkpoint = execution state, `confab.setup_progress` = UI summary snapshot)
 
 ### Phase 2 — Introduce ConversationService on the backend `[ ]`
 - [ ] Create `api/services/__init__.py` and `api/services/conversation_service.py`
