@@ -11,30 +11,35 @@ from langchain_core.messages import HumanMessage, AIMessage
 from foreman_v3.compat import (
     format_v3_response,
     format_error_response,
-    _stages_to_steps,
-    _get_remaining_steps,
 )
-from foreman_v3.state import create_initial_state
+from foreman_v3.progress_sync import stages_to_steps
+from foreman_v3.state import create_initial_state, STAGE_ORDER
+
+
+def _get_remaining_steps(completed_stages):
+    """Test helper: compute remaining step numbers from completed stage names."""
+    completed = set(stages_to_steps(completed_stages))
+    return [i for i in range(1, len(STAGE_ORDER) + 1) if i not in completed]
 
 
 class TestStagesToSteps:
-    """Tests for _stages_to_steps helper."""
+    """Tests for stages_to_steps helper."""
 
     def test_empty_list_returns_empty(self):
-        assert _stages_to_steps([]) == []
+        assert stages_to_steps([]) == []
 
     def test_converts_purpose_to_1(self):
-        assert _stages_to_steps(["purpose"]) == [1]
+        assert stages_to_steps(["purpose"]) == [1]
 
     def test_converts_multiple_stages(self):
-        assert _stages_to_steps(["purpose", "participants", "memory"]) == [1, 2, 3]
+        assert stages_to_steps(["purpose", "participants", "memory"]) == [1, 2, 3]
 
     def test_returns_sorted_list(self):
         # Even if stages are out of order
-        assert _stages_to_steps(["memory", "purpose"]) == [1, 3]
+        assert stages_to_steps(["memory", "purpose"]) == [1, 3]
 
     def test_ignores_invalid_stages(self):
-        assert _stages_to_steps(["purpose", "invalid", "memory"]) == [1, 3]
+        assert stages_to_steps(["purpose", "invalid", "memory"]) == [1, 3]
 
 
 class TestGetRemainingSteps:

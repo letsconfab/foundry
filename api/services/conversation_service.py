@@ -22,6 +22,7 @@ from schemas import (
     ForemanChatResponse,
     ForemanV2Metadata,
 )
+from foreman_v3.progress_sync import to_setup_progress_response
 
 logger = logging.getLogger(__name__)
 
@@ -272,19 +273,8 @@ class ConversationService:
             .all()
         )
 
-        setup_progress = None
-        current_stage = None
-        if confab.setup_progress:
-            sp = confab.setup_progress
-            setup_progress = SetupProgressResponse(
-                completed_steps=sp.get("completed_steps", []),
-                current_stage=sp.get("current_stage", "purpose"),
-                total_steps=8,
-                remaining_steps=sp.get("remaining_steps", list(range(1, 9))),
-            )
-            current_stage = sp.get("current_stage", "purpose")
-        else:
-            current_stage = "purpose"
+        setup_progress = to_setup_progress_response(confab.setup_progress)
+        current_stage = (confab.setup_progress or {}).get("current_stage", "purpose")
 
         return ConversationStartResult(
             thread_id=thread.id,
@@ -333,18 +323,8 @@ class ConversationService:
             .all()
         )
 
-        # Build setup progress
-        setup_progress = None
-        current_stage = None
-        if confab.setup_progress:
-            sp = confab.setup_progress
-            setup_progress = SetupProgressResponse(
-                completed_steps=sp.get("completed_steps", []),
-                current_stage=sp.get("current_stage", "purpose"),
-                total_steps=8,
-                remaining_steps=sp.get("remaining_steps", list(range(1, 9))),
-            )
-            current_stage = sp.get("current_stage", "purpose")
+        setup_progress = to_setup_progress_response(confab.setup_progress)
+        current_stage = (confab.setup_progress or {}).get("current_stage", "purpose")
 
         return ConversationStartResult(
             thread_id=thread.id,

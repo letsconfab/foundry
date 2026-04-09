@@ -15,6 +15,7 @@ from .graph import get_foreman_graph
 from .checkpointer import get_checkpointer, get_thread_config
 from .compat import format_v3_response, format_error_response
 from .adapters import orm_to_langgraph
+from .progress_sync import progress_to_graph_fields
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -136,23 +137,22 @@ class ForemanV3:
         """
         Build initial state for graph invocation.
 
-        Loads existing progress from confab if available.
+        Loads existing progress from confab via progress_sync.
         """
-        # Get current progress from confab
         # Force refresh from DB to avoid stale cached data
         self.db.refresh(self.confab)
         setup_progress = self.confab.setup_progress or {}
-        current_stage = setup_progress.get("current_stage", "purpose")
-        completed_steps = setup_progress.get("completed_steps", [])
 
-        # Convert step numbers to stage names
-        completed_stages = [
-            STAGE_ORDER[step - 1] for step in completed_steps
-            if 1 <= step <= len(STAGE_ORDER)
-        ]
+        # Use centralized mapping for stage/step/collected_info conversion
+        graph_fields = progress_to_graph_fields(setup_progress)
+        current_stage = graph_fields["current_stage"]
+        completed_stages = graph_fields["completed_stages"]
+        collected_info = graph_fields["collected_info"]
 
-        # Build collected_info from confab data
-        collected_info = self._extract_collected_info(setup_progress)
+        # Overlay confab ORM fields that aren't in setup_progress
+        collected_info["purpose"] = self.confab.purpose
+        collected_info["name"] = self.confab.name
+        collected_info["guardrails"] = self._extract_guardrails()
 
         # Convert thread history to LangGraph messages
         messages = []
@@ -176,39 +176,8 @@ class ForemanV3:
             "last_error": None,
         }
 
-    def _extract_collected_info(self, setup_progress: dict) -> dict:
-        """Extract collected info from confab's setup_progress."""
-        return {
-            "purpose": self.confab.purpose,
-            "name": self.confab.name,
-            "participants": setup_progress.get("participants", []),
-            "memory_type": self._normalize_memory_type(setup_progress.get("memory_notes")),
-            "tools": self._extract_tools(setup_progress),
-            "guardrails": self._extract_guardrails(),
-            "sample_io": setup_progress.get("sample_io"),
-        }
-
-    def _normalize_memory_type(self, memory_notes: Optional[str]) -> Optional[str]:
-        """Convert memory notes to memory type."""
-        if not memory_notes:
-            return None
-        lower = memory_notes.lower()
-        if "disabled" in lower or "no memory" in lower:
-            return "no"
-        if "limited" in lower:
-            return "limited"
-        if "enabled" in lower or "full" in lower:
-            return "yes"
-        return None
-
-    def _extract_tools(self, setup_progress: dict) -> list:
-        """Extract tool names from setup_progress."""
-        integrations = setup_progress.get("integrations", {})
-        apis = integrations.get("apis", [])
-        return [api.get("name", "") for api in apis if api.get("name")]
-
     def _extract_guardrails(self) -> Optional[str]:
-        """Extract guardrails as markdown text."""
+        """Extract guardrails as markdown text from confab ORM field."""
         if not self.confab.guardrails:
             return None
         rules = self.confab.guardrails

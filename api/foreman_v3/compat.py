@@ -11,6 +11,7 @@ from typing import Dict, Any, List
 from langchain_core.messages import AIMessage
 
 from .state import ForemanState, STAGE_ORDER
+from .progress_sync import stages_to_steps
 
 
 def format_v3_response(state: ForemanState, thread_id: int) -> Dict[str, Any]:
@@ -42,10 +43,10 @@ def format_v3_response(state: ForemanState, thread_id: int) -> Dict[str, Any]:
 
     # Build completed_steps as 1-indexed integers
     completed_stages = state.get("completed_stages", [])
-    completed_steps = _stages_to_steps(completed_stages)
+    completed_steps = stages_to_steps(completed_stages)
 
     # Build remaining_steps
-    remaining_steps = _get_remaining_steps(completed_stages)
+    remaining_steps = [i for i in range(1, len(STAGE_ORDER) + 1) if i not in completed_steps]
 
     # Current stage (may be "complete" after interview finishes)
     current_stage = state.get("current_stage", "purpose")
@@ -89,40 +90,6 @@ def format_v3_response(state: ForemanState, thread_id: int) -> Dict[str, Any]:
         "is_v3": True,
         "is_langgraph": True,
     }
-
-
-def _stages_to_steps(completed_stages: List[str]) -> List[int]:
-    """
-    Convert stage names to 1-indexed step numbers.
-
-    Args:
-        completed_stages: List of stage names
-
-    Returns:
-        List of step numbers (1-7)
-    """
-    steps = []
-    for stage in completed_stages:
-        if stage in STAGE_ORDER:
-            steps.append(STAGE_ORDER.index(stage) + 1)
-    return sorted(steps)
-
-
-def _get_remaining_steps(completed_stages: List[str]) -> List[int]:
-    """
-    Get remaining step numbers.
-
-    Args:
-        completed_stages: List of completed stage names
-
-    Returns:
-        List of remaining step numbers (1-7)
-    """
-    remaining = []
-    for i, stage in enumerate(STAGE_ORDER):
-        if stage not in completed_stages:
-            remaining.append(i + 1)
-    return remaining
 
 
 def format_error_response(
