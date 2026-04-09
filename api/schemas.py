@@ -484,5 +484,28 @@ class DefinitionFilesCommitResponse(BaseModel):
     message: Optional[str] = None
 
 
+# =============================================================================
+# Conversation Service Schemas (high-level endpoints)
+# =============================================================================
+
+class ConversationStartResponse(BaseModel):
+    """Response from starting or resuming a conversation."""
+    thread_id: int
+    confab_id: Optional[int] = None
+    conversation_mode: str  # foreman_build | confab_runtime
+    messages: List[MessageResponse] = Field(default_factory=list)
+    participants: List[ParticipantResponse] = Field(default_factory=list)
+    setup_progress: Optional[SetupProgressResponse] = None
+    current_stage: Optional[str] = None
+
+
+class ConversationMessageRequest(BaseModel):
+    """Request to send a message in a conversation."""
+    content: str
+    addressed_to: Optional[List[AddressedTo]] = None
+    in_reply_to: Optional[int] = None
+
+
 # Forward reference update
 ThreadWithParticipants.model_rebuild()
+ConversationStartResponse.model_rebuild()

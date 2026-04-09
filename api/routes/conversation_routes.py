@@ -12,11 +12,13 @@ from schemas import (
     ParticipantAdd, ParticipantResponse,
     MessageCreate, MessageResponse, ChatRequest, ChatResponse,
     SetupProgressResponse, ForemanChatResponse, ForemanV2Metadata,
+    ConversationStartResponse, ConversationMessageRequest,
 )
 from deps import get_current_user
 from llm_service import ask_llm
 from foreman import Foreman
 from foreman_v3 import FOREMAN_V3_ENABLED, ForemanV3
+from services.conversation_service import ConversationService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["conversations"])
@@ -394,3 +396,120 @@ async def chat(
         timestamp=datetime.datetime.now(datetime.timezone.utc),
         foreman_metadata=foreman_metadata,
     )
+
+
+# =============================================================================
+# High-Level Conversation Endpoints (Phase 5)
+# =============================================================================
+# These endpoints call ConversationService and encapsulate thread bootstrap.
+# The legacy /threads/* endpoints above remain for backward compatibility.
+# =============================================================================
+
+
+@router.post("/conversations/foreman/start", response_model=ConversationStartResponse)
+async def start_foreman_conversation(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Start a new foreman build conversation.
+
+    Creates a confab, thread, participants, and seeds the welcome message
+    in a single call. Returns everything the UI needs to render the chat.
+    """
+    service = ConversationService(db)
+    try:
+        result = await service.start_foreman_conversation(current_user)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return ConversationStartResponse(
+        thread_id=result.thread_id,
+        confab_id=result.confab_id,
+        conversation_mode=result.conversation_mode,
+        messages=result.messages,
+        participants=result.participants,
+        setup_progress=result.setup_progress,
+        current_stage=result.current_stage,
+    )
+
+
+@router.post("/conversations/foreman/{confab_id}/resume", response_model=ConversationStartResponse)
+async def resume_foreman_conversation(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Resume an existing foreman build conversation.
+
+    Finds the thread for this confab, loads message history, and returns
+    current stage/progress.
+    """
+    service = ConversationService(db)
+    try:
+        result = await service.resume_foreman_conversation(current_user, confab_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    return ConversationStartResponse(
+        thread_id=result.thread_id,
+        confab_id=result.confab_id,
+        conversation_mode=result.conversation_mode,
+        messages=result.messages,
+        participants=result.participants,
+        setup_progress=result.setup_progress,
+        current_stage=result.current_stage,
+    )
+
+
+@router.post("/conversations/runtime/{confab_id}/start", response_model=ConversationStartResponse)
+async def start_runtime_conversation(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Start a chat with a published confab.
+
+    Creates a thread, attaches the confab, seeds a welcome message.
+    """
+    service = ConversationService(db)
+    try:
+        result = await service.start_runtime_conversation(current_user, confab_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    return ConversationStartResponse(
+        thread_id=result.thread_id,
+        confab_id=result.confab_id,
+        conversation_mode=result.conversation_mode,
+        messages=result.messages,
+        participants=result.participants,
+    )
+
+
+@router.post("/conversations/{thread_id}/messages", response_model=ChatResponse)
+async def send_conversation_message(
+    thread_id: int,
+    request: ConversationMessageRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Send a message in a conversation (high-level).
+
+    Routes to the correct orchestrator based on conversation mode.
+    This is the preferred endpoint for new UI code.
+    """
+    service = ConversationService(db)
+    try:
+        return await service.send_message(
+            user=current_user,
+            thread_id=thread_id,
+            content=request.content,
+            addressed_to=[a.model_dump() for a in request.addressed_to] if request.addressed_to else None,
+            in_reply_to=request.in_reply_to,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
