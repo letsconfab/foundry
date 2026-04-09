@@ -23,18 +23,18 @@ export function Footer() {
   }, []);
 
   return (
-    <footer className="bg-white/80 backdrop-blur-md border-t border-slate-200 py-4 mt-auto">
+    <footer className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-slate-200 dark:border-slate-700 py-4 mt-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center text-sm text-slate-600 mb-2">
+        <div className="text-center text-sm text-slate-600 dark:text-slate-400 mb-2">
           Frontend Version: {frontendVersion} | API Version: {apiVersion}
         </div>
-        <div className="text-center text-xs text-slate-500">
+        <div className="text-center text-xs text-slate-500 dark:text-slate-500">
           Designed, Built and Maintained with Love by the{' '}
           <a
             href="https://github.com/orgs/letsconfab/people"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-violet-600 hover:text-violet-700 hover:underline"
+            className="text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300 hover:underline"
           >
             letsconfab team
           </a>

@@ -2,6 +2,7 @@ import { MessageSquare, LayoutDashboard, Cloud, Network, Menu, X, Github, LogOut
 import { Button } from './ui/button';
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { ThemeToggle } from './ThemeToggle';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat';
 
@@ -36,7 +37,7 @@ export function Header({ currentView, onNavigate, user }: HeaderProps) {
   };
 
   return (
-    <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50">
+    <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
@@ -47,7 +48,7 @@ export function Header({ currentView, onNavigate, user }: HeaderProps) {
             <div className="w-8 h-8 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center">
               <MessageSquare className="w-5 h-5 text-white" />
             </div>
-            <span className="text-slate-900">Let's Confab</span>
+            <span className="text-slate-900 dark:text-white">Let's Confab</span>
           </button>
 
           {/* Desktop Navigation */}
@@ -79,7 +80,8 @@ export function Header({ currentView, onNavigate, user }: HeaderProps) {
                     <Github className="w-5 h-5" />
                   </Button>
                 )}
-                <div className="text-sm text-slate-600 mr-2">
+                <ThemeToggle />
+                <div className="text-sm text-slate-600 dark:text-slate-300 mr-2">
                   {user?.name}
                 </div>
                 <Button
@@ -93,6 +95,7 @@ export function Header({ currentView, onNavigate, user }: HeaderProps) {
               </>
             ) : (
               <>
+                <ThemeToggle />
                 <Button
                   variant="ghost"
                   size="icon"
@@ -124,7 +127,7 @@ export function Header({ currentView, onNavigate, user }: HeaderProps) {
 
         {/* Mobile Navigation */}
         {mobileMenuOpen && (
-          <nav className="md:hidden py-4 border-t border-slate-200">
+          <nav className="md:hidden py-4 border-t border-slate-200 dark:border-slate-700">
             <div className="flex flex-col gap-2">
               {isLoggedIn ? (
                 <>
