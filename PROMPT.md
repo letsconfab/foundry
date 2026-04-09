@@ -56,12 +56,12 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Create `api/routes/document_routes.py`
 - [x] Slim `main.py` to app creation, middleware, router registration, startup wiring
 
-### Phase 5 — Introduce high-level conversation endpoints `[ ]`
-- [ ] `POST /conversations/foreman/start`
-- [ ] `POST /conversations/foreman/{confab_id}/resume`
-- [ ] `POST /conversations/runtime/{confab_id}/start`
-- [ ] `POST /conversations/{thread_id}/messages`
-- [ ] Keep legacy `/threads/*` endpoints for backward compatibility
+### Phase 5 — Introduce high-level conversation endpoints `[x]`
+- [x] `POST /conversations/foreman/start`
+- [x] `POST /conversations/foreman/{confab_id}/resume`
+- [x] `POST /conversations/runtime/{confab_id}/start`
+- [x] `POST /conversations/{thread_id}/messages`
+- [x] Keep legacy `/threads/*` endpoints for backward compatibility
 
 ### Phase 6 — Refactor frontend to use high-level conversation APIs `[ ]`
 - [ ] Add conversation methods to `ui/src/api/client.js`
