@@ -63,11 +63,11 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] `POST /conversations/{thread_id}/messages`
 - [x] Keep legacy `/threads/*` endpoints for backward compatibility
 
-### Phase 6 — Refactor frontend to use high-level conversation APIs `[ ]`
-- [ ] Add conversation methods to `ui/src/api/client.js`
-- [ ] Refactor `AgentChat.tsx` — remove manual thread/participant/message creation
-- [ ] Refactor `ConfabChat.tsx` — use `startRuntimeConversation`
-- [ ] Keep raw thread/message APIs for review/admin tooling only
+### Phase 6 — Refactor frontend to use high-level conversation APIs `[x]`
+- [x] Add conversation methods to `ui/src/api/client.js`
+- [x] Refactor `AgentChat.tsx` — remove manual thread/participant/message creation
+- [x] Refactor `ConfabChat.tsx` — use `startRuntimeConversation`
+- [x] Keep raw thread/message APIs for review/admin tooling only
 
 ### Phase 7 — Normalize progress/state synchronization `[ ]`
 - [ ] Add adapter to sync LangGraph graph state to `confab.setup_progress`
