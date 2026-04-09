@@ -175,7 +175,7 @@ class ApiClient {
 
   // REMOVED: testRepoInitialization - endpoint no longer exists
 
-  // Threads & messages (review chats) — tables: users, threads, messages
+  // === Low-level Thread/Message APIs (for review/admin tooling) ===
   async getThreads() {
     return this.request('/threads');
   }
@@ -206,18 +206,8 @@ class ApiClient {
     });
   }
 
-  // === [CLAUDE: Unified chat endpoint - replaces all previous LLM/agent endpoints] ===
-
-  /**
-   * Send a chat message to a thread.
-   * This is the unified chat endpoint that handles all messaging.
-   * @param {number} threadId - The thread ID
-   * @param {string} content - The message content
-   * @param {Array<{type: string, id?: number, name?: string}>} addressedTo - Optional array of recipients
-   * @param {number} inReplyTo - Optional message ID this is replying to
-   */
+  // Legacy unified chat — prefer sendConversationMessage for new code
   async chat(threadId, content, addressedTo = null, inReplyTo = null) {
-    console.log('API Client: Sending chat message to thread:', threadId);
     const body = { content };
     if (addressedTo) body.addressed_to = addressedTo;
     if (inReplyTo) body.in_reply_to = inReplyTo;
@@ -227,7 +217,7 @@ class ApiClient {
     });
   }
 
-  // === [CLAUDE: Thread participant endpoints] ===
+  // === Low-level Participant APIs (for review/admin tooling) ===
 
   async getThreadParticipants(threadId) {
     return this.request(`/threads/${threadId}/participants`);
