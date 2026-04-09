@@ -84,12 +84,12 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Current Postgres model = default implementation
 - [x] No external provider integration yet — just the seam
 
-### Phase 10 — Testing and migration hardening `[ ]`
-- [ ] Tests for starting/resuming foreman conversations
-- [ ] Tests for runtime confab conversations
-- [ ] Tests for participant bootstrap correctness
-- [ ] Tests for setup_progress synchronization
-- [ ] Tests for backward compatibility with current chat payload shape
+### Phase 10 — Testing and migration hardening `[x]`
+- [x] Tests for starting/resuming foreman conversations
+- [x] Tests for runtime confab conversations
+- [x] Tests for participant bootstrap correctness
+- [x] Tests for setup_progress synchronization
+- [x] Tests for backward compatibility with current chat payload shape
 
 ### Phase 11 — UI/UX Polish and Dark Mode `[ ]`
 - [ ] Add dark mode support: configure Tailwind `darkMode: 'class'`, add theme toggle component
