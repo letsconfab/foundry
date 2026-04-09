@@ -1,6 +1,9 @@
 """
-Foreman Agent - Top-level orchestrator for confabs in 'building' status
-Handles context loading, resume prompts, and proactive conversation guidance.
+Foreman Agent (LEGACY) — V1/V2 orchestrator for confabs in 'building' status.
+
+DEPRECATED: This module is retained as a compatibility shim for emergency rollback.
+The canonical production implementation is foreman_v3/ (LangGraph StateGraph).
+Set FOREMAN_V3_ENABLED=false to fall back to this code.
 
 V2 Architecture (when FOREMAN_V2_ENABLED=true):
 - Deterministic stage machine with explicit transitions
@@ -21,9 +24,9 @@ from sqlalchemy.orm import Session
 # Feature flag for V2 deterministic interview flow
 FOREMAN_V2_ENABLED = os.getenv("FOREMAN_V2_ENABLED", "false").lower() == "true"
 
-# Feature flag for V3 LangGraph implementation
-# When enabled, new confabs use LangGraph StateGraph with PostgreSQL checkpointing
-FOREMAN_V3_ENABLED = os.getenv("FOREMAN_V3_ENABLED", "false").lower() == "true"
+# Feature flag for V3 LangGraph implementation (now default: true)
+# This copy is kept for imports that reference foreman.FOREMAN_V3_ENABLED
+FOREMAN_V3_ENABLED = os.getenv("FOREMAN_V3_ENABLED", "true").lower() == "true"
 
 from models import Confab, GitHubAccount
 from context_loader import ContextLoader, ForemanContext

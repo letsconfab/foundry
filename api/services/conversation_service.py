@@ -527,7 +527,7 @@ class ConversationService:
             .all()
         )
 
-        # Dispatch to V3 or V2
+        # V3 (LangGraph) is canonical; legacy Foreman only via explicit flag
         if FOREMAN_V3_ENABLED:
             logger.info(f"[ConversationService] Using Foreman V3 for confab {confab.id}")
             foreman = ForemanV3(confab.id, self.db)
@@ -536,6 +536,7 @@ class ConversationService:
                 content, thread_id=thread_id, thread_history=thread_messages
             )
         else:
+            logger.warning(f"[ConversationService] Falling back to legacy Foreman for confab {confab.id}")
             foreman = Foreman(confab.id, self.db)
             await foreman.initialize()
             result = await foreman.process_message(content)

@@ -50,8 +50,8 @@ from auth import create_access_token, verify_token, get_password_hash, verify_pa
 from github_oauth import github_auth_router, get_github_repos, get_github_primary_email
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from llm_service import ask_llm
-from foreman import Foreman, FOREMAN_V2_ENABLED
-from foreman_v3 import FOREMAN_V3_ENABLED, ForemanV3
+from foreman import Foreman  # Legacy — kept for emergency rollback
+from foreman_v3 import FOREMAN_V3_ENABLED, ForemanV3  # Canonical orchestrator
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
 
 # Create database tables
@@ -1466,7 +1466,7 @@ async def chat(
                 ).order_by(Confab.created_at.desc()).first()
 
                 if confab:
-                    # Use V3 (LangGraph) or V2 based on feature flag
+                    # V3 (LangGraph) is canonical; legacy V2 only via explicit flag
                     if FOREMAN_V3_ENABLED:
                         logger.info(f"[Chat] Using Foreman V3 (LangGraph) for confab {confab.id}")
                         foreman = ForemanV3(confab.id, db)
@@ -1477,6 +1477,7 @@ async def chat(
                             thread_history=thread_messages
                         )
                     else:
+                        logger.warning(f"[Chat] Falling back to legacy Foreman for confab {confab.id}")
                         foreman = Foreman(confab.id, db)
                         await foreman.initialize()
                         result = await foreman.process_message(request.content)

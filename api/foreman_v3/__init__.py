@@ -20,8 +20,9 @@ from dotenv import load_dotenv
 # Load .env before reading env vars
 load_dotenv()
 
-# Feature flag for V3 LangGraph implementation
-FOREMAN_V3_ENABLED = os.getenv("FOREMAN_V3_ENABLED", "false").lower() == "true"
+# V3 is now the canonical Foreman implementation (default: true).
+# Set FOREMAN_V3_ENABLED=false only for emergency rollback to legacy foreman.py.
+FOREMAN_V3_ENABLED = os.getenv("FOREMAN_V3_ENABLED", "true").lower() == "true"
 
 from .state import ForemanState, InformationSchema
 from .graph import build_foreman_graph
