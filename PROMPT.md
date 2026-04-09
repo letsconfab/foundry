@@ -69,10 +69,10 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Refactor `ConfabChat.tsx` — use `startRuntimeConversation`
 - [x] Keep raw thread/message APIs for review/admin tooling only
 
-### Phase 7 — Normalize progress/state synchronization `[ ]`
-- [ ] Add adapter to sync LangGraph graph state to `confab.setup_progress`
-- [ ] Ensure `setup_progress` writes go through a single mapping function
-- [ ] Ensure resume flows use this mapping consistently
+### Phase 7 — Normalize progress/state synchronization `[x]`
+- [x] Add adapter to sync LangGraph graph state to `confab.setup_progress`
+- [x] Ensure `setup_progress` writes go through a single mapping function
+- [x] Ensure resume flows use this mapping consistently
 
 ### Phase 8 — Clarify participant semantics and routing `[ ]`
 - [ ] Add helper utilities for membership, addressing, routing, permissions
