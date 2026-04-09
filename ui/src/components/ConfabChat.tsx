@@ -24,6 +24,8 @@ interface ConfabChatProps {
   onNavigate: (view: View) => void;
   confabName: string;
   version: string;
+  /** Confab ID for starting a runtime conversation */
+  confabId?: number;
   /** When set, load messages from this thread and persist new messages to DB */
   threadId?: number | null;
 }
@@ -45,7 +47,7 @@ interface Participant {
   isCurrentUser?: boolean;
 }
 
-export function ConfabChat({ onNavigate, confabName, version, threadId: threadIdProp }: ConfabChatProps) {
+export function ConfabChat({ onNavigate, confabName, version, confabId, threadId: threadIdProp }: ConfabChatProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -134,39 +136,60 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
     setInput('');
     setIsTyping(true);
 
+    // Bootstrap runtime conversation on first message using high-level API
     let tid = effectiveThreadId;
-    if (tid == null) {
+    if (tid == null && confabId != null) {
       try {
-        const name = `${confabName} – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
-        const thread = await apiClient.createThread(name);
-        tid = thread?.id ?? null;
-        if (tid != null) setCurrentThreadId(tid);
-        if (tid != null && messages[0]?.role === 'assistant') {
-          await apiClient.addMessage(tid, messages[0].content, 'assistant');
-        }
-      } catch {
+        const conversation = await apiClient.startRuntimeConversation(confabId);
+        tid = conversation.thread_id;
+        setCurrentThreadId(tid);
+        console.log('Started runtime conversation:', { tid, confabId });
+      } catch (error) {
+        console.error('Failed to start runtime conversation:', error);
         tid = null;
       }
     }
-    if (tid != null) {
-      apiClient.addMessage(tid, content, 'user').catch(() => {});
-    }
 
-    const assistantContent = `I understand you're asking about "${content}". Let me help you with that. This is a demo response to show how the chat interface works with feedback buttons.`;
-    setTimeout(() => {
-      const assistantMessage: Message = {
+    // Send message via high-level conversation endpoint
+    try {
+      if (tid != null) {
+        const response = await apiClient.sendConversationMessage(tid, content);
+
+        if (response.agent_responses && response.agent_responses.length > 0) {
+          const agentReply = response.agent_responses[0];
+          const assistantMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: agentReply.content,
+            timestamp: new Date(),
+            feedback: null,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        }
+      } else {
+        // Fallback when no confabId or thread — show placeholder
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: `I understand you're asking about "${content}". This confab doesn't have a runtime conversation configured yet.`,
+          timestamp: new Date(),
+          feedback: null,
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: assistantContent,
+        content: 'Sorry, something went wrong. Please try again.',
         timestamp: new Date(),
         feedback: null,
       };
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsTyping(false);
-      if (tid != null) {
-        apiClient.addMessage(tid, assistantContent, 'assistant').catch(() => {});
-      }
-    }, 1500);
+    }
   };
 
   const handleFeedback = (messageId: string, feedback: 'up' | 'down') => {

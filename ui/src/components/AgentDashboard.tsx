@@ -209,7 +209,7 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                     variant="outline"
                     size="sm"
                     className="flex-1 gap-2"
-                    onClick={() => onNavigate('confab-chat', confab.name, confab.version)}
+                    onClick={() => onNavigate('confab-chat', confab.name, confab.version, confab.id)}
                   >
                     <MessageSquare className="w-3 h-3" />
                     Chat

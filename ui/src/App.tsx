@@ -74,7 +74,7 @@ function AppContent() {
                 {currentView === 'dashboard' && <AgentDashboard onNavigate={handleNavigate} />}
                 {currentView === 'deploy' && <DeploymentPanel onNavigate={handleNavigate} />}
                 {currentView === 'multi-agent' && <MultiAgentBuilder onNavigate={handleNavigate} />}
-                {currentView === 'confab-chat' && <ConfabChat onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} />}
+                {currentView === 'confab-chat' && <ConfabChat onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} confabId={selectedConfabId} />}
               </main>
 
               <Footer />
