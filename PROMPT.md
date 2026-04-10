@@ -71,6 +71,7 @@ Add narrower or broader tests where appropriate. If you change behavior and ther
 - [x] `AgentChat.tsx` already has suggestion chips, upload affordances, and UI-hint handling, but these are not organized as stage-aware CTA controls
 - [x] Resumed foreman conversations currently load raw message history only, so interview guidance is weaker after resume than during a live turn
 - [x] The document upload flow only surfaced a document count, making it hard to confirm what was already attached or manage existing knowledge without leaving the dialog
+- [x] The auth screens relied too heavily on submit-time errors, included dead-end controls, and did not guide users clearly on whether to use email auth or GitHub auth
 
 ### Phase 2 — Reshape the Foreman Chat Interaction Model `[ ]`
 - [x] Separate “answer to previous turn” from “prompt for next step” in the Foreman chat experience
@@ -91,7 +92,7 @@ Add narrower or broader tests where appropriate. If you change behavior and ther
 
 ### Phase 5 — Broader UI/UX Improvement Sweep `[ ]`
 - [x] Fix additional UX issues found across the application
-- [ ] Improve consistency of spacing, hierarchy, controls, empty states, and interaction feedback
+- [x] Improve consistency of spacing, hierarchy, controls, empty states, and interaction feedback
 - [ ] Improve accessibility and responsiveness where obvious issues exist
 - [ ] Refine components that feel visually or behaviorally inconsistent with the rest of the product
 

@@ -18,6 +18,8 @@ export function Login({ onNavigate }: LoginProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const { login, githubLogin } = useAuth();
+  const hasStartedTyping = email.length > 0 || password.length > 0;
+  const isMissingCredentials = hasStartedTyping && (!email.trim() || !password.trim());
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +58,10 @@ export function Login({ onNavigate }: LoginProps) {
         </div>
 
         <Card className="p-6 sm:p-8">
+          <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
+            Use your email and password if you created an account directly. If you joined with GitHub, use the GitHub button below.
+          </div>
+
           {error && (
             <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-md flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-500" />
@@ -72,9 +78,11 @@ export function Login({ onNavigate }: LoginProps) {
                   id="email"
                   type="email"
                   placeholder="you@example.com"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="pl-10"
+                  aria-invalid={isMissingCredentials && !email.trim()}
                   required
                   disabled={isLoading}
                 />
@@ -82,34 +90,35 @@ export function Login({ onNavigate }: LoginProps) {
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
-                <button
-                  type="button"
-                  className="text-sm text-indigo-600 hover:text-indigo-500"
-                  disabled={isLoading}
-                >
-                  Forgot password?
-                </button>
-              </div>
+              <Label htmlFor="password">Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <Input
                   id="password"
                   type="password"
                   placeholder="Enter your password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-10"
+                  aria-invalid={isMissingCredentials && !password.trim()}
                   required
                   disabled={isLoading}
                 />
               </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Password reset is not available in-product yet. If you normally sign in with GitHub, use that option instead.
+              </p>
             </div>
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'Signing in...' : 'Sign in'}
             </Button>
+            {isMissingCredentials && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Enter both your email and password before signing in.
+              </p>
+            )}
           </form>
 
           <div className="mt-6">
