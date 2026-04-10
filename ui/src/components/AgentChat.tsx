@@ -227,6 +227,34 @@ const FOREMAN_STAGE_HINTS: Record<string, string> = {
   review: "Use this step to make final edits before saving.",
 };
 
+const FOREMAN_WELCOME_INTRO = `Hi, I'm the Foreman. I'll help you build your agent through a quick conversation.
+
+I'll guide this interview one step at a time.`;
+
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function splitForemanMessage(content: string, prompt?: string) {
+  const trimmed = (content || '').trim();
+  const normalizedPrompt = normalizeWhitespace(prompt || '');
+  if (!trimmed || !normalizedPrompt) {
+    return { ack: trimmed, prompt: '' };
+  }
+
+  const normalizedContent = normalizeWhitespace(trimmed);
+  if (!normalizedContent.endsWith(normalizedPrompt)) {
+    return { ack: trimmed, prompt: '' };
+  }
+
+  const promptIndex = normalizedContent.lastIndexOf(normalizedPrompt);
+  const normalizedAck = normalizedContent.slice(0, promptIndex).trim();
+  return {
+    ack: normalizedAck || trimmed,
+    prompt: normalizedPrompt,
+  };
+}
+
 
 export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   const { user } = useAuth();
@@ -234,16 +262,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
     {
       id: '1',
       role: 'assistant',
-      content: `Hi, I'm the Foreman. I'll help you build your agent through a quick conversation.
-
-Let's start with the basics: **What should this agent do?**
-
-Here are some examples:
-- "A customer support bot that handles refund requests and tracks order status"
-- "An internal assistant that answers questions about company policies"
-- "A code reviewer that checks for security issues and suggests fixes"
-
-What's your agent's main job?`,
+      content: FOREMAN_WELCOME_INTRO,
       timestamp: new Date(),
       senderName: 'Foreman',
     },
@@ -346,6 +365,7 @@ What's your agent's main job?`,
           console.log('Resumed at stage:', conversation.current_stage);
           setForemanStage(conversation.current_stage);
           setForemanPrompt(FOREMAN_STAGE_PROMPTS[conversation.current_stage] || '');
+          setForemanUiHint(conversation.current_stage === 'documents' ? 'show_upload_panel' : null);
         }
 
         // Load confab name from server
@@ -356,13 +376,33 @@ What's your agent's main job?`,
 
         // Convert server messages to local Message format
         if (conversation.messages && conversation.messages.length > 0) {
-          const loadedMessages: Message[] = conversation.messages.map((msg: any) => ({
-            id: String(msg.id),
-            role: msg.role as 'user' | 'assistant',
-            content: msg.content,
-            timestamp: new Date(msg.created_at),
-            senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
-          }));
+          const currentPrompt = FOREMAN_STAGE_PROMPTS[conversation.current_stage || ''] || '';
+          const lastAssistantIndex = [...conversation.messages]
+            .map((msg: any, index: number) => ({ msg, index }))
+            .filter(({ msg }: any) => msg.role === 'assistant' && (msg.sender_name || 'Foreman') === 'Foreman')
+            .map(({ index }: any) => index)
+            .pop();
+
+          const loadedMessages: Message[] = conversation.messages.map((msg: any, index: number) => {
+            const isForemanAssistant = msg.role === 'assistant' && (msg.sender_name || 'Foreman') === 'Foreman';
+            const isLatestForemanMessage = index === lastAssistantIndex;
+            const split = isForemanAssistant && isLatestForemanMessage
+              ? splitForemanMessage(msg.content, currentPrompt)
+              : { ack: msg.content, prompt: '' };
+
+            return {
+              id: String(msg.id),
+              role: msg.role as 'user' | 'assistant',
+              content: split.ack,
+              timestamp: new Date(msg.created_at),
+              senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
+              interviewPrompt: isForemanAssistant && isLatestForemanMessage ? split.prompt : '',
+              foremanStage: isForemanAssistant && isLatestForemanMessage ? (conversation.current_stage || '') : '',
+              uiHint: isForemanAssistant && isLatestForemanMessage && conversation.current_stage === 'documents'
+                ? 'show_upload_panel'
+                : '',
+            };
+          });
           setMessages(loadedMessages);
         }
       } catch (error) {
@@ -645,6 +685,8 @@ What's your agent's main job?`,
   const setSuggestedReply = (value: string) => {
     setInput(value);
   };
+
+  const shouldShowUploadCta = foremanStage === 'documents' || foremanUiHint === 'show_upload_panel';
 
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -1260,7 +1302,7 @@ What's your agent's main job?`,
                         className="text-xs"
                         onClick={() => setSuggestedReply(suggestion)}
                       >
-                        Use Example
+                        Example {index + 1}
                       </Button>
                     ))}
                     {foremanStage === 'participants' && (
@@ -1275,7 +1317,7 @@ What's your agent's main job?`,
                         <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('limited')}>Limited</Button>
                       </>
                     )}
-                    {(foremanStage === 'documents' || foremanUiHint === 'show_upload_panel') && (
+                    {shouldShowUploadCta && (
                       <>
                         <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setUploadDialogOpen(true)}>
                           Open Upload Panel
@@ -1290,6 +1332,23 @@ What's your agent's main job?`,
                         <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('none')}>No Tools</Button>
                         <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('web search')}>Web Search</Button>
                       </>
+                    )}
+                    {foremanStage === 'guardrails' && (
+                      <>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('Do not fabricate facts.')}>Add Safety Rule</Button>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('Ask for clarification when the request is ambiguous.')}>Add Clarification Rule</Button>
+                      </>
+                    )}
+                    {foremanStage === 'sample_io' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => setSuggestedReply('User asks for a refund status update. Agent verifies the order ID, summarizes the status, and explains the next step.')}
+                      >
+                        Insert Example
+                      </Button>
                     )}
                   </div>
                 </div>

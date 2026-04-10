@@ -9,10 +9,10 @@ The main objective is **UI/UX improvement across the product**, with all parts o
 ## Priority Issues
 
 ### Foreman Chat Interview Flow
-- [ ] Split foreman responses so the response to the previous turn is distinct from the call to action for the next step.
-- [ ] Preserve the feeling that the Foreman is actively leading the interview.
-- [ ] Add hints, affordances, and/or active CTA controls in the chat window to make progress easier.
-- [ ] Evaluate whether step-specific actions such as file upload, suggestion chips, skip affordances, or guided input controls should appear inline in the Foreman flow.
+- [x] Split foreman responses so the response to the previous turn is distinct from the call to action for the next step.
+- [x] Preserve the feeling that the Foreman is actively leading the interview.
+- [x] Add hints, affordances, and/or active CTA controls in the chat window to make progress easier.
+- [x] Evaluate whether step-specific actions such as file upload, suggestion chips, skip affordances, or guided input controls should appear inline in the Foreman flow.
 
 ### Broader UI/UX Improvement
 - [ ] Audit the rest of the application for inconsistent UX, weak affordances, confusing state transitions, visual regressions, accessibility issues, and interaction friction.
@@ -66,21 +66,21 @@ Add narrower or broader tests where appropriate. If you change behavior and ther
 - [x] Identify supporting backend/frontend contracts that will need to change
 
 #### Discovered Issues
-- [ ] Foreman V3 currently concatenates acknowledgement and next-stage CTA into one assistant message in `api/foreman_v3/nodes/responder.py`
-- [ ] `ForemanV2Metadata` already carries enough structure to support a split interaction, but the UI is not using it to render the interview as a guided sequence
-- [ ] `AgentChat.tsx` already has suggestion chips, upload affordances, and UI-hint handling, but these are not organized as stage-aware CTA controls
-- [ ] Resumed foreman conversations currently load raw message history only, so interview guidance is weaker after resume than during a live turn
+- [x] Foreman V3 currently concatenates acknowledgement and next-stage CTA into one assistant message in `api/foreman_v3/nodes/responder.py`
+- [x] `ForemanV2Metadata` already carries enough structure to support a split interaction, but the UI is not using it to render the interview as a guided sequence
+- [x] `AgentChat.tsx` already has suggestion chips, upload affordances, and UI-hint handling, but these are not organized as stage-aware CTA controls
+- [x] Resumed foreman conversations currently load raw message history only, so interview guidance is weaker after resume than during a live turn
 
 ### Phase 2 — Reshape the Foreman Chat Interaction Model `[ ]`
-- [ ] Separate “answer to previous turn” from “prompt for next step” in the Foreman chat experience
-- [ ] Preserve or improve progression clarity so the interview still feels guided and deliberate
+- [x] Separate “answer to previous turn” from “prompt for next step” in the Foreman chat experience
+- [x] Preserve or improve progression clarity so the interview still feels guided and deliberate
 - [ ] Decide whether this should be represented as multiple messages, structured metadata, or richer UI composition
 - [ ] Keep backward compatibility where practical, or add compatibility shims if response shape changes
 
 ### Phase 3 — Add Guided CTAs and Input Affordances `[ ]`
-- [ ] Add step-aware hints in the Foreman chat UI
-- [ ] Add active CTA controls where they materially reduce friction
-- [ ] Support optional guided actions such as skip, examples, structured suggestions, or file upload where appropriate
+- [x] Add step-aware hints in the Foreman chat UI
+- [x] Add active CTA controls where they materially reduce friction
+- [x] Support optional guided actions such as skip, examples, structured suggestions, or file upload where appropriate
 - [ ] Ensure these controls feel native to the interview rather than bolted on
 
 ### Phase 4 — Strengthen Supporting Backend and Tests `[ ]`
