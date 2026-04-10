@@ -91,20 +91,20 @@ You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evol
 - [x] Tests for setup_progress synchronization
 - [x] Tests for backward compatibility with current chat payload shape
 
-### Phase 11 — UI/UX Polish and Dark Mode `[ ]`
-- [ ] Add dark mode support: configure Tailwind `darkMode: 'class'`, add theme toggle component
-- [ ] Create a `ThemeProvider` context with localStorage persistence
-- [ ] Audit all page components for dark mode compatibility (backgrounds, text, borders, shadows)
-- [ ] Polish `AgentChat.tsx` — improve message bubbles, loading states, scroll behavior, input UX
-- [ ] Polish `ConfabChat.tsx` — consistent styling with AgentChat
-- [ ] Polish `AgentDashboard.tsx` — card layouts, empty states, responsive grid
-- [ ] Polish `Header.tsx` — add theme toggle, improve nav responsiveness
-- [ ] Polish `Footer.tsx` — dark mode compatible
-- [ ] Polish `DocumentUploadDialog.tsx` — drag-and-drop visual feedback, progress indicators
-- [ ] Polish `Login.tsx` and `Register.tsx` — form validation UX, consistent styling
-- [ ] Polish `HeroSection.tsx` — responsive layout, dark mode hero
-- [ ] Add subtle animations/transitions (page transitions, hover effects, loading skeletons)
-- [ ] Ensure all Radix UI primitive components (`ui/src/components/ui/`) have proper dark: variants
+### Phase 11 — UI/UX Polish and Dark Mode `[x]`
+- [x] Add dark mode support: configure Tailwind `darkMode: 'class'`, add theme toggle component
+- [x] Create a `ThemeProvider` context with localStorage persistence
+- [x] Audit all page components for dark mode compatibility (backgrounds, text, borders, shadows)
+- [x] Polish `AgentChat.tsx` — improve message bubbles, loading states, scroll behavior, input UX
+- [x] Polish `ConfabChat.tsx` — consistent styling with AgentChat
+- [x] Polish `AgentDashboard.tsx` — card layouts, empty states, responsive grid
+- [x] Polish `Header.tsx` — add theme toggle, improve nav responsiveness
+- [x] Polish `Footer.tsx` — dark mode compatible
+- [x] Polish `DocumentUploadDialog.tsx` — drag-and-drop visual feedback, progress indicators
+- [x] Polish `Login.tsx` and `Register.tsx` — form validation UX, consistent styling
+- [x] Polish `HeroSection.tsx` — responsive layout, dark mode hero
+- [x] Add subtle animations/transitions (page transitions, hover effects, loading skeletons)
+- [x] Ensure all Radix UI primitive components (`ui/src/components/ui/`) have proper dark: variants
 
 ## Completion
 
