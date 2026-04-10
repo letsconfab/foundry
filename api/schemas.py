@@ -363,7 +363,7 @@ class SetupProgressResponse(BaseModel):
     """Setup progress for confab building flow."""
     completed_steps: List[int] = Field(default_factory=list)
     current_stage: str = "purpose"
-    total_steps: int = 7
+    total_steps: int = 8
     remaining_steps: List[int] = Field(default_factory=list)
 
 

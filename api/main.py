@@ -37,7 +37,7 @@ except Exception as e:
 # App
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Let's Confab API", version="2.0.5")
+app = FastAPI(title="Let's Confab API", version="2.0.6")
 
 # CORS
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
