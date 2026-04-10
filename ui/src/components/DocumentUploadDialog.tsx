@@ -210,7 +210,7 @@ export function DocumentUploadDialog({
             <FileText className="h-5 w-5" />
             Upload Documents
             {totalExisting > 0 && (
-              <span className="text-sm font-normal text-slate-500">
+              <span className="text-sm font-normal text-slate-500 dark:text-slate-400">
                 ({totalExisting} already uploaded)
               </span>
             )}
@@ -226,8 +226,8 @@ export function DocumentUploadDialog({
             'border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors',
             uploadState === 'uploading' && 'opacity-50 cursor-not-allowed',
             isDragging
-              ? 'border-indigo-500 bg-indigo-50'
-              : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'
+              ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
+              : 'border-slate-300 dark:border-slate-600 hover:border-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
           )}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -244,11 +244,11 @@ export function DocumentUploadDialog({
 
           {uploadState === 'ready' && (
             <>
-              <Upload className="h-10 w-10 mx-auto mb-3 text-slate-400" />
-              <p className="text-sm text-slate-600 mb-1">
+              <Upload className="h-10 w-10 mx-auto mb-3 text-slate-400 dark:text-slate-500" />
+              <p className="text-sm text-slate-600 dark:text-slate-300 mb-1">
                 Drop a file here or click to browse
               </p>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-400 dark:text-slate-500">
                 PDF, TXT, or MD up to 10MB
               </p>
             </>
@@ -257,10 +257,10 @@ export function DocumentUploadDialog({
           {uploadState === 'uploading' && currentFile && (
             <>
               <Loader2 className="h-10 w-10 mx-auto mb-3 text-indigo-500 animate-spin" />
-              <p className="text-sm text-slate-600 mb-1">
+              <p className="text-sm text-slate-600 dark:text-slate-300 mb-1">
                 Uploading {currentFile.name}...
               </p>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-400 dark:text-slate-500">
                 {formatFileSize(currentFile.size)}
               </p>
             </>
@@ -272,7 +272,7 @@ export function DocumentUploadDialog({
               <p className="text-sm text-green-600 mb-1">
                 {currentFile.name} uploaded!
               </p>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-400 dark:text-slate-500">
                 Drop another file or click Done
               </p>
             </>
@@ -301,21 +301,21 @@ export function DocumentUploadDialog({
         {/* Session uploads list */}
         {uploadedInSession.length > 0 && (
           <div className="mt-4">
-            <p className="text-sm font-medium text-slate-700 mb-2">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
               Uploaded this session
             </p>
             <div className="space-y-2 max-h-32 overflow-y-auto">
               {uploadedInSession.map((file) => (
                 <div
                   key={file.tempId}
-                  className="flex items-center justify-between p-2 bg-slate-50 rounded-md"
+                  className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800/50 rounded-md"
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <FileText className="h-4 w-4 text-slate-400 flex-shrink-0" />
-                    <span className="text-sm text-slate-700 truncate">
+                    <span className="text-sm text-slate-700 dark:text-slate-300 truncate">
                       {file.name}
                     </span>
-                    <span className="text-xs text-slate-400 flex-shrink-0">
+                    <span className="text-xs text-slate-400 dark:text-slate-500 flex-shrink-0">
                       {formatFileSize(file.size)}
                     </span>
                   </div>

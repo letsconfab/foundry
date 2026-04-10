@@ -113,8 +113,8 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
         <div>
-          <h2 className="text-slate-900 mb-1">Confab Dashboard</h2>
-          <p className="text-slate-600">Manage and monitor your AI confabs</p>
+          <h2 className="text-slate-900 dark:text-white mb-1">Confab Dashboard</h2>
+          <p className="text-slate-600 dark:text-slate-400">Manage and monitor your AI confabs</p>
         </div>
         <Button onClick={() => onNavigate('create')} className="gap-2">
           <Plus className="w-4 h-4" />
@@ -125,13 +125,13 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
       {loading ? (
         <div className="text-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className="text-slate-600">Loading confabs...</p>
+          <p className="text-slate-600 dark:text-slate-400">Loading confabs...</p>
         </div>
       ) : confabs.length === 0 ? (
         <div className="text-center py-12">
           <Bot className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-          <h3 className="text-slate-900 mb-2">No confabs yet</h3>
-          <p className="text-slate-600 mb-4">Create your first confab to get started</p>
+          <h3 className="text-slate-900 dark:text-white mb-2">No confabs yet</h3>
+          <p className="text-slate-600 dark:text-slate-400 mb-4">Create your first confab to get started</p>
           <Button onClick={() => onNavigate('create')} className="gap-2">
             <Plus className="w-4 h-4" />
             Create Confab
@@ -175,18 +175,18 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                 </DropdownMenu>
               </div>
 
-              <h3 className="text-slate-900 mb-2">{confab.name}</h3>
+              <h3 className="text-slate-900 dark:text-white mb-2">{confab.name}</h3>
               <Badge className={`${getStatusColor(confab.status)} mb-2`}>
                 {getStatusLabel(confab.status)}
               </Badge>
-              <p className="text-slate-600 text-sm mb-4">{confab.description || 'No description'}</p>
+              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">{confab.description || 'No description'}</p>
 
               <div className="space-y-2 mb-4">
-                <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-200">
-                  <span className="text-xs text-slate-500">
+                <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
                     {confab.updated_at ? new Date(confab.updated_at).toLocaleDateString() : 'Just now'}
                   </span>
-                  <span className="text-xs text-slate-500">v{confab.version}</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">v{confab.version}</span>
                 </div>
               </div>
 

@@ -1019,12 +1019,12 @@ What's your agent's main job?`,
                         if (e.key === 'Enter') saveConfabName();
                         if (e.key === 'Escape') setIsEditingName(false);
                       }}
-                      className="text-slate-900 font-medium border border-slate-300 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="text-slate-900 dark:text-white font-medium border border-slate-300 dark:border-slate-600 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-800"
                       autoFocus
                     />
                     <button
                       onClick={saveConfabName}
-                      className="p-1 hover:bg-slate-100 rounded"
+                      className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
                       title="Save name"
                     >
                       <Check className="w-4 h-4 text-green-600" />
@@ -1032,11 +1032,11 @@ What's your agent's main job?`,
                   </div>
                 ) : (
                   <>
-                    <h2 className="text-slate-900">{confabName}</h2>
+                    <h2 className="text-slate-900 dark:text-white">{confabName}</h2>
                     {currentConfabId && (
                       <button
                         onClick={startEditingName}
-                        className="p-1 hover:bg-slate-100 rounded"
+                        className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
                         title="Edit name"
                       >
                         <Pencil className="w-3.5 h-3.5 text-slate-400" />
@@ -1045,7 +1045,7 @@ What's your agent's main job?`,
                   </>
                 )}
               </div>
-              <p className="text-slate-600 text-sm">
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
                 {existingConfabId ? 'Resume your conversation to continue building' : 'Chat with AI to build your confab'}
               </p>
             </div>
@@ -1067,7 +1067,7 @@ What's your agent's main job?`,
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
                     <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-3" />
-                    <p className="text-slate-600">Loading your conversation...</p>
+                    <p className="text-slate-600 dark:text-slate-400">Loading your conversation...</p>
                   </div>
                 </div>
               ) : (
@@ -1094,13 +1094,13 @@ What's your agent's main job?`,
                         className={`max-w-[80%] rounded-lg px-4 py-3 ${
                           message.role === 'user'
                             ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-100 text-slate-900'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-200'
                         }`}
                       >
                         <MessageContent content={message.content} variant={message.role} />
                         <p
                           className={`text-xs mt-1 ${
-                            message.role === 'user' ? 'text-indigo-200' : 'text-slate-500'
+                            message.role === 'user' ? 'text-indigo-200' : 'text-slate-500 dark:text-slate-400'
                           }`}
                         >
                           {message.timestamp.toLocaleTimeString([], {
@@ -1116,7 +1116,7 @@ What's your agent's main job?`,
                               <User className="w-4 h-4 text-slate-600" />
                             </AvatarFallback>
                           </Avatar>
-                          <span className="text-xs text-slate-600">{user?.name ?? 'You'}</span>
+                          <span className="text-xs text-slate-600 dark:text-slate-400">{user?.name ?? 'You'}</span>
                         </div>
                       )}
                     </div>
@@ -1129,9 +1129,9 @@ What's your agent's main job?`,
                           <HardHat className="w-4 h-4 text-white" />
                         </AvatarFallback>
                       </Avatar>
-                      <div className="bg-slate-100 rounded-lg px-4 py-3 flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin text-slate-600" />
-                        <span className="text-slate-600">Foreman is thinking...</span>
+                      <div className="bg-slate-100 dark:bg-slate-800 rounded-lg px-4 py-3 flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-slate-600 dark:text-slate-400" />
+                        <span className="text-slate-600 dark:text-slate-400">Foreman is thinking...</span>
                       </div>
                     </div>
                   )}
@@ -1142,7 +1142,7 @@ What's your agent's main job?`,
             </div>
 
             {/* Input Area */}
-            <div className="border-t border-slate-200 p-4">
+            <div className="border-t border-slate-200 dark:border-slate-700 p-4">
               <div className="flex gap-2">
                 <Textarea
                   value={input}
@@ -1175,20 +1175,20 @@ What's your agent's main job?`,
                   )}
                 </div>
               </div>
-              <p className="text-xs text-slate-500 mt-2">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                 Press Enter to send, Shift+Enter for new line
               </p>
               
               {/* Prompt Suggestions */}
               {messages.length === 1 && (
                 <div className="mt-4">
-                  <p className="text-xs text-slate-600 mb-2">Try these examples:</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Try these examples:</p>
                   <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
                     {PROMPT_SUGGESTIONS.map((suggestion, index) => (
                       <button
                         key={index}
                         onClick={() => handleSuggestionClick(suggestion)}
-                        className="flex-shrink-0 text-left p-3 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 transition-colors text-sm text-slate-700 hover:text-indigo-700 min-w-[280px]"
+                        className="flex-shrink-0 text-left p-3 rounded-lg border border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-indigo-50 dark:hover:bg-slate-800 transition-colors text-sm text-slate-700 dark:text-slate-300 hover:text-indigo-700 dark:hover:text-indigo-400 min-w-[280px]"
                       >
                         {suggestion}
                       </button>
@@ -1201,9 +1201,9 @@ What's your agent's main job?`,
               <div className="mt-4">
                 {/* Error Alert */}
                 {documentError && (
-                  <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
-                    <p className="text-sm text-red-700">{documentError}</p>
-                    <button onClick={() => setDocumentError(null)} className="text-red-400 hover:text-red-600">
+                  <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg flex items-center justify-between">
+                    <p className="text-sm text-red-700 dark:text-red-400">{documentError}</p>
+                    <button onClick={() => setDocumentError(null)} className="text-red-400 hover:text-red-600 dark:hover:text-red-300">
                       <X className="w-4 h-4" />
                     </button>
                   </div>
@@ -1221,12 +1221,12 @@ What's your agent's main job?`,
                   />
                   <label
                     htmlFor="file-upload"
-                    className={`inline-flex items-center gap-2 px-3 py-2 text-sm cursor-pointer rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 transition-colors ${!currentConfabId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`inline-flex items-center gap-2 px-3 py-2 text-sm cursor-pointer rounded-lg border border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-indigo-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-indigo-700 dark:hover:text-indigo-400 transition-colors ${!currentConfabId ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     <Paperclip className="w-4 h-4" />
                     Upload Document
                   </label>
-                  <span className="text-xs text-slate-500">PDF, TXT, MD</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">PDF, TXT, MD</span>
                 </div>
 
                 {!currentConfabId && (
@@ -1237,11 +1237,11 @@ What's your agent's main job?`,
                 {uploadedFiles.length > 0 && (
                   <div className="mt-3 space-y-2">
                     {uploadedFiles.map((file, index) => (
-                      <div key={file.tempId} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                      <div key={file.tempId} className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
                         <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <File className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                          <File className="w-4 h-4 text-slate-600 dark:text-slate-400 flex-shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm text-slate-700 truncate">{file.name}</p>
+                            <p className="text-sm text-slate-700 dark:text-slate-300 truncate">{file.name}</p>
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-slate-500">({(file.size / 1024).toFixed(1)} KB)</span>
                               {file.status === 'uploading' && (
@@ -1287,8 +1287,8 @@ What's your agent's main job?`,
           <Card className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
-                <GitBranch className="w-4 h-4 text-slate-700" />
-                <h3 className="text-slate-900 text-sm font-medium">Definition Files</h3>
+                <GitBranch className="w-4 h-4 text-slate-700 dark:text-slate-300" />
+                <h3 className="text-slate-900 dark:text-white text-sm font-medium">Definition Files</h3>
               </div>
               <div className="flex gap-2">
                 <Button
@@ -1314,34 +1314,34 @@ What's your agent's main job?`,
             </div>
 
             {remoteBranchHint && (
-              <p className="text-xs text-slate-500 mb-2">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
                 Branch: <span className="font-mono">{remoteBranchHint}</span>
               </p>
             )}
 
             {definitionError && (
-              <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <div className="mb-2 rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-3 py-2 text-xs text-red-700 dark:text-red-400">
                 {definitionError}
               </div>
             )}
 
             {definitionCommitInfo && (
-              <div className="mb-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+              <div className="mb-2 rounded-md border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 px-3 py-2 text-xs text-green-700 dark:text-green-400">
                 {definitionCommitInfo}
               </div>
             )}
 
             {showRegistryTokenBanner && !user?.github_connected && (
-              <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <div className="mb-2 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-xs text-amber-900 dark:text-amber-400">
                 Email-login sync requires server configuration. Ask an admin to set `REGISTRY_GITHUB_TOKEN` for writes to `letsconfab/registry`.
               </div>
             )}
 
             {definitionConflict && (
-              <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <div className="mb-3 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 p-3">
                 <div className="flex items-center gap-2 mb-2">
                   <AlertTriangle className="w-4 h-4 text-amber-700" />
-                  <p className="text-xs text-amber-900">
+                  <p className="text-xs text-amber-900 dark:text-amber-400">
                     Remote changes conflict with local edits in {definitionConflict.fileKey === 'purpose' ? 'PURPOSE.md' : 'GUARDRAILS.md'}.
                   </p>
                 </div>
@@ -1375,11 +1375,11 @@ What's your agent's main job?`,
                 const status = getDefinitionFileStatus(file);
                 if (!file.visible) return null;
                 return (
-                  <div key={key} className="rounded-lg border border-slate-200 p-2">
+                  <div key={key} className="rounded-lg border border-slate-200 dark:border-slate-700 p-2">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <FileText className="w-3 h-3 text-slate-600" />
-                        <span className="text-xs text-slate-900 font-medium">{file.fileName}</span>
+                        <FileText className="w-3 h-3 text-slate-600 dark:text-slate-400" />
+                        <span className="text-xs text-slate-900 dark:text-white font-medium">{file.fileName}</span>
                         <Badge className={`text-[10px] px-1.5 py-0 ${statusBadgeClass(status)}`}>{status}</Badge>
                       </div>
                       <div className="flex items-center gap-1">
@@ -1409,11 +1409,11 @@ What's your agent's main job?`,
                         onChange={(e) => handleDefinitionContentChange(key, e.target.value)}
                       />
                     ) : (
-                      <div className="max-h-[150px] overflow-auto rounded border border-slate-100 bg-white p-2 prose prose-slate prose-sm max-w-none">
+                      <div className="max-h-[150px] overflow-auto rounded border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800/50 p-2 prose prose-slate dark:prose-invert prose-sm max-w-none">
                         {file.content.trim() ? (
                           <ReactMarkdown>{file.content}</ReactMarkdown>
                         ) : (
-                          <p className="text-xs text-slate-500">No content yet.</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No content yet.</p>
                         )}
                       </div>
                     )}
@@ -1421,7 +1421,7 @@ What's your agent's main job?`,
                 );
               })}
               {!definitionFiles.purpose.visible && !definitionFiles.guardrails.visible && (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   Files will appear as the confab conversation generates drafts.
                 </p>
               )}
@@ -1431,15 +1431,15 @@ What's your agent's main job?`,
           {/* Documents Card */}
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-3">
-              <FileText className="w-4 h-4 text-slate-700" />
-              <h3 className="text-slate-900 text-sm font-medium">Documents</h3>
-              <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+              <FileText className="w-4 h-4 text-slate-700 dark:text-slate-300" />
+              <h3 className="text-slate-900 dark:text-white text-sm font-medium">Documents</h3>
+              <span className="text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full">
                 {documents.length}
               </span>
             </div>
 
             {documentsLoading && (
-              <div className="flex items-center gap-2 text-slate-500">
+              <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span className="text-sm">Loading...</span>
               </div>
@@ -1448,12 +1448,12 @@ What's your agent's main job?`,
             {documents.length > 0 ? (
               <div className="space-y-2 max-h-[200px] overflow-y-auto">
                 {documents.map((doc) => (
-                  <div key={doc.id} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                  <div key={doc.id} className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
                     <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                      <FileText className="w-4 h-4 text-slate-600 dark:text-slate-400 flex-shrink-0" />
                       <div className="min-w-0">
-                        <p className="text-sm text-slate-700 truncate">{doc.filename}</p>
-                        <p className="text-xs text-slate-500">{doc.content_type}</p>
+                        <p className="text-sm text-slate-700 dark:text-slate-300 truncate">{doc.filename}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{doc.content_type}</p>
                       </div>
                     </div>
                     <button
@@ -1467,7 +1467,7 @@ What's your agent's main job?`,
               </div>
             ) : (
               !documentsLoading && (
-                <p className="text-sm text-slate-500">No documents uploaded yet.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">No documents uploaded yet.</p>
               )
             )}
           </Card>
@@ -1475,8 +1475,8 @@ What's your agent's main job?`,
           {/* Participants Card */}
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-4">
-              <Users className="w-5 h-5 text-slate-900" />
-              <h3 className="text-slate-900">Participants</h3>
+              <Users className="w-5 h-5 text-slate-900 dark:text-white" />
+              <h3 className="text-slate-900 dark:text-white">Participants</h3>
             </div>
             <div className="space-y-3">
               {participants.map((participant) => (
@@ -1484,8 +1484,8 @@ What's your agent's main job?`,
                   key={participant.id}
                   className={`flex items-center gap-3 p-3 rounded-lg ${
                     participant.type === 'system'
-                      ? 'bg-amber-50 ring-1 ring-amber-200'
-                      : 'bg-indigo-50 ring-1 ring-indigo-200'
+                      ? 'bg-amber-50 dark:bg-amber-900/30 ring-1 ring-amber-200 dark:ring-amber-700'
+                      : 'bg-indigo-50 dark:bg-indigo-900/30 ring-1 ring-indigo-200 dark:ring-indigo-700'
                   }`}
                 >
                   <Avatar className="w-9 h-9">
@@ -1502,15 +1502,15 @@ What's your agent's main job?`,
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-900 truncate">{participant.name}</p>
-                    <p className="text-xs text-slate-500 truncate">
+                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{participant.name}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                       {participant.email || (participant.type === 'system' ? 'System Agent' : '')}
                     </p>
                   </div>
                 </div>
               ))}
               {participants.length === 0 && (
-                <p className="text-sm text-slate-500 py-2">No participants yet.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 py-2">No participants yet.</p>
               )}
             </div>
           </Card>

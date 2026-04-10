@@ -51,15 +51,15 @@ export function Login({ onNavigate }: LoginProps) {
           <div className="w-16 h-16 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <MessageSquare className="w-8 h-8 text-white" />
           </div>
-          <h2 className="text-slate-900 mb-2">Welcome back</h2>
-          <p className="text-slate-600">Sign in to your Let's Confab account</p>
+          <h2 className="text-slate-900 dark:text-white mb-2">Welcome back</h2>
+          <p className="text-slate-600 dark:text-slate-400">Sign in to your Let's Confab account</p>
         </div>
 
         <Card className="p-6 sm:p-8">
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md flex items-center gap-2">
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-md flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-500" />
-              <span className="text-sm text-red-700">{error}</span>
+              <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
             </div>
           )}
 
@@ -115,10 +115,10 @@ export function Login({ onNavigate }: LoginProps) {
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-200" />
+                <div className="w-full border-t border-slate-200 dark:border-slate-700" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-slate-500">Or continue with</span>
+                <span className="px-2 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400">Or continue with</span>
               </div>
             </div>
 
@@ -137,7 +137,7 @@ export function Login({ onNavigate }: LoginProps) {
           </div>
 
           <div className="mt-6 text-center">
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-600 dark:text-slate-400">
               Don't have an account?{' '}
               <button
                 onClick={() => onNavigate('register')}
