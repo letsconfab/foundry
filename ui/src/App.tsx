@@ -63,7 +63,6 @@ function AppContent() {
               <Header
                 currentView={currentView}
                 onNavigate={handleNavigate}
-                isLoggedIn={isLoggedIn}
                 user={user}
               />
 
