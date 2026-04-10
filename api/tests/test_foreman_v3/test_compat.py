@@ -144,6 +144,20 @@ class TestFormatV3Response:
 
         assert result["v2_metadata"]["saved_fields"] == {"purpose": "test purpose"}
 
+    def test_includes_structured_response_parts_in_v2_metadata(self):
+        state = self._make_state(
+            stage_result={
+                "status": "complete",
+                "data": {"purpose": "test purpose"},
+                "response_ack": "Recorded the purpose.",
+                "interview_prompt": "Who should have access to this agent?",
+            }
+        )
+        result = format_v3_response(state, thread_id=1)
+
+        assert result["v2_metadata"]["response_ack"] == "Recorded the purpose."
+        assert result["v2_metadata"]["interview_prompt"] == "Who should have access to this agent?"
+
     def test_includes_is_update_in_v2_metadata(self):
         state = self._make_state(is_update=True, update_target="purpose")
         result = format_v3_response(state, thread_id=1)
@@ -202,6 +216,8 @@ class TestFormatErrorResponse:
         )
 
         assert result["v2_metadata"]["stage_status"] == "error"
+        assert result["v2_metadata"]["response_ack"] is None
+        assert result["v2_metadata"]["interview_prompt"] is None
 
     def test_has_version_flags(self):
         result = format_error_response(

@@ -386,6 +386,14 @@ class ForemanV2Metadata(BaseModel):
         default=None,
         description="The suggested next question if clarification needed"
     )
+    response_ack: Optional[str] = Field(
+        default=None,
+        description="Short acknowledgement of what the Foreman just recorded or decided"
+    )
+    interview_prompt: Optional[str] = Field(
+        default=None,
+        description="The explicit next call to action the Foreman wants the user to answer"
+    )
     next_stage: Optional[str] = Field(
         default=None,
         description="The stage that will be active after this one"

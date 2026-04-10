@@ -54,6 +54,9 @@ class StageResultDict(TypedDict, total=False):
     summary: Optional[str]  # What was saved (for response)
     next_question: Optional[str]  # What to ask next (for clarify)
     error_message: Optional[str]  # If status == "error"
+    ui_hint: Optional[str]  # Frontend hint for stage-specific UX
+    response_ack: Optional[str]  # Short acknowledgement for the previous turn
+    interview_prompt: Optional[str]  # Next explicit call to action for the interview
 
 
 class ForemanState(TypedDict):

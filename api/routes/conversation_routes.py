@@ -381,6 +381,8 @@ async def chat(
                 stage_status=v2_data.get("stage_status"),
                 saved_fields=v2_data.get("saved_fields"),
                 next_question=v2_data.get("next_question"),
+                response_ack=v2_data.get("response_ack"),
+                interview_prompt=v2_data.get("interview_prompt"),
                 next_stage=setup_progress.get("current_stage") if setup_progress else None,
                 clarification_needed=v2_data.get("stage_status") == "clarify" if v2_data else False,
                 ui_hint=v2_data.get("ui_hint"),

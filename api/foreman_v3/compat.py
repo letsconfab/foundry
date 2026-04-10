@@ -82,6 +82,8 @@ def format_v3_response(state: ForemanState, thread_id: int) -> Dict[str, Any]:
             "updated_stage": state.get("update_target"),
             "saved_fields": stage_result.get("data"),
             "next_question": stage_result.get("next_question"),
+            "response_ack": stage_result.get("response_ack"),
+            "interview_prompt": stage_result.get("interview_prompt"),
             "ui_hint": stage_result.get("ui_hint"),
         },
 
@@ -130,6 +132,8 @@ def format_error_response(
             "updated_stage": None,
             "saved_fields": None,
             "next_question": None,
+            "response_ack": None,
+            "interview_prompt": None,
         },
         "is_v2": False,
         "is_v3": True,

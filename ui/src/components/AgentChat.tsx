@@ -26,6 +26,9 @@ interface Message {
   timestamp: Date;
   userName?: string;
   senderName?: string;  // For detecting Foreman vs other agents
+  interviewPrompt?: string;
+  foremanStage?: string;
+  uiHint?: string;
 }
 
 interface Participant {
@@ -202,6 +205,28 @@ const PROMPT_SUGGESTIONS = [
   "Create an agent that summarizes meeting transcripts",
 ];
 
+const FOREMAN_STAGE_PROMPTS: Record<string, string> = {
+  purpose: "What should this agent do? Describe its main job in a sentence or two.",
+  participants: "Who should have access to this agent? You can add email addresses or skip for now.",
+  memory: "Should this agent remember previous conversations? (yes, no, or limited)",
+  documents: "Would you like to upload any reference documents? You can upload PDFs, text files, or skip for later.",
+  tools: "What external tools or APIs does this agent need? (e.g., web search, database, none)",
+  guardrails: "What safety boundaries should this agent follow? List any rules or restrictions.",
+  sample_io: "Can you provide an example interaction? (e.g., 'User asks X, agent responds Y')",
+  review: "Here's your agent configuration. Ready to save and deploy?",
+};
+
+const FOREMAN_STAGE_HINTS: Record<string, string> = {
+  purpose: "Be concrete about the job, audience, and outcome. A short sentence is enough.",
+  participants: "You can add specific email addresses later. If unsure, skip and keep moving.",
+  memory: "If the agent should adapt across turns, choose yes or limited.",
+  documents: "Upload source material if the agent needs to reference policies, docs, or examples.",
+  tools: "List integrations only if the agent truly needs them. 'None' is a valid answer.",
+  guardrails: "Think about things the agent must not do or must always verify.",
+  sample_io: "A single realistic example is usually enough.",
+  review: "Use this step to make final edits before saving.",
+};
+
 
 export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   const { user } = useAuth();
@@ -298,6 +323,9 @@ What's your agent's main job?`,
   const [remoteBranchHint, setRemoteBranchHint] = useState<string | null>(null);
   const [definitionConflict, setDefinitionConflict] = useState<DefinitionConflict | null>(null);
   const [showRegistryTokenBanner, setShowRegistryTokenBanner] = useState(false);
+  const [foremanPrompt, setForemanPrompt] = useState<string>(FOREMAN_STAGE_PROMPTS.purpose);
+  const [foremanStage, setForemanStage] = useState<string>('purpose');
+  const [foremanUiHint, setForemanUiHint] = useState<string | null>(null);
 
   // Load existing confab data if resuming
   useEffect(() => {
@@ -316,6 +344,8 @@ What's your agent's main job?`,
         if (conversation.current_stage) {
           // Stage info available from server
           console.log('Resumed at stage:', conversation.current_stage);
+          setForemanStage(conversation.current_stage);
+          setForemanPrompt(FOREMAN_STAGE_PROMPTS[conversation.current_stage] || '');
         }
 
         // Load confab name from server
@@ -516,18 +546,32 @@ What's your agent's main job?`,
 
           // The response contains user_message and agent_responses
           if (response.agent_responses && response.agent_responses.length > 0) {
+            const v2 = response.foreman_metadata?.v2_metadata;
             // Add each agent response as a message
-            for (const agentResp of response.agent_responses) {
+            response.agent_responses.forEach((agentResp: any, index: number) => {
+              const isLastResponse = index === response.agent_responses.length - 1;
+              const isForemanResponse = (agentResp.sender_name || 'Foreman') === 'Foreman';
               const agentMsg: Message = {
                 id: String(agentResp.id),
                 role: 'assistant',
-                content: agentResp.content,
+                content: isForemanResponse && isLastResponse && v2?.response_ack
+                  ? v2.response_ack
+                  : agentResp.content,
                 timestamp: new Date(agentResp.created_at),
                 senderName: agentResp.sender_name || 'Foreman',
+                interviewPrompt: isForemanResponse && isLastResponse ? (v2?.interview_prompt || '') : '',
+                foremanStage: isForemanResponse && isLastResponse ? (v2?.next_stage || v2?.stage || '') : '',
+                uiHint: isForemanResponse && isLastResponse ? (v2?.ui_hint || '') : '',
               };
               setMessages((prev) => [...prev, agentMsg]);
-            }
+            });
             assistantContent = response.agent_responses[response.agent_responses.length - 1].content;
+
+            if (v2) {
+              setForemanStage(v2.next_stage || v2.stage || '');
+              setForemanPrompt(v2.interview_prompt || v2.next_question || '');
+              setForemanUiHint(v2.ui_hint || null);
+            }
 
             // Refresh confab name in case Foreman set it
             refreshConfabName();
@@ -596,6 +640,10 @@ What's your agent's main job?`,
 
   const handleSuggestionClick = (suggestion: string) => {
     setInput(suggestion);
+  };
+
+  const setSuggestedReply = (value: string) => {
+    setInput(value);
   };
 
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -1178,9 +1226,77 @@ What's your agent's main job?`,
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                 Press Enter to send, Shift+Enter for new line
               </p>
+
+              {foremanPrompt && (
+                <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
+                        Next Step
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">
+                        {foremanPrompt}
+                      </p>
+                      {foremanStage && FOREMAN_STAGE_HINTS[foremanStage] && (
+                        <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                          {FOREMAN_STAGE_HINTS[foremanStage]}
+                        </p>
+                      )}
+                    </div>
+                    {foremanStage && (
+                      <Badge variant="secondary" className="capitalize">
+                        {foremanStage.replace('_', ' ')}
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {foremanStage === 'purpose' && PROMPT_SUGGESTIONS.slice(0, 2).map((suggestion, index) => (
+                      <Button
+                        key={index}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => setSuggestedReply(suggestion)}
+                      >
+                        Use Example
+                      </Button>
+                    ))}
+                    {foremanStage === 'participants' && (
+                      <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('skip')}>
+                        Skip For Now
+                      </Button>
+                    )}
+                    {foremanStage === 'memory' && (
+                      <>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('yes')}>Yes</Button>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('no')}>No</Button>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('limited')}>Limited</Button>
+                      </>
+                    )}
+                    {(foremanStage === 'documents' || foremanUiHint === 'show_upload_panel') && (
+                      <>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setUploadDialogOpen(true)}>
+                          Open Upload Panel
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('skip')}>
+                          Skip Documents
+                        </Button>
+                      </>
+                    )}
+                    {foremanStage === 'tools' && (
+                      <>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('none')}>No Tools</Button>
+                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('web search')}>Web Search</Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
               
               {/* Prompt Suggestions */}
-              {messages.length === 1 && (
+              {messages.length === 1 && foremanStage === 'purpose' && (
                 <div className="mt-4">
                   <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Try these examples:</p>
                   <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">

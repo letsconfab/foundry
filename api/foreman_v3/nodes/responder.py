@@ -78,7 +78,7 @@ def responder_node(state: ForemanState) -> Dict[str, Any]:
 
     logger.info(f"[V3] responder_node: status={status}, stage={responded_stage}, current_stage={current_stage}, is_update={is_update}")
 
-    response_text = _build_response(
+    response_payload = build_response_payload(
         status=status,
         stage=responded_stage,
         current_stage=current_stage,
@@ -87,20 +87,26 @@ def responder_node(state: ForemanState) -> Dict[str, Any]:
         state=state,
     )
 
+    stage_result.update({
+        "response_ack": response_payload["ack"],
+        "interview_prompt": response_payload["prompt"],
+    })
+
     return {
-        "messages": [AIMessage(content=response_text)],
+        "messages": [AIMessage(content=response_payload["text"])],
+        "stage_result": stage_result,
     }
 
 
-def _build_response(
+def build_response_payload(
     status: str,
     stage: str,
     current_stage: str,
     stage_result: dict,
     is_update: bool,
     state: ForemanState,
-) -> str:
-    """Build the response text based on status and stage."""
+) -> Dict[str, str]:
+    """Build structured response parts for the current turn."""
 
     if status == "complete":
         return _build_complete_response(stage, current_stage, stage_result, is_update)
@@ -111,7 +117,20 @@ def _build_response(
     elif status == "error":
         return _build_error_response(stage, stage_result)
     else:
-        return f"Something went wrong. {STAGE_QUESTIONS.get(current_stage, '')}"
+        prompt = STAGE_QUESTIONS.get(current_stage, "")
+        return _compose_parts("Something went wrong.", prompt)
+
+
+def _compose_parts(ack: str, prompt: str) -> Dict[str, str]:
+    """Return structured response parts plus the combined legacy text."""
+    ack = (ack or "").strip()
+    prompt = (prompt or "").strip()
+    text = " ".join(part for part in [ack, prompt] if part).strip()
+    return {
+        "ack": ack,
+        "prompt": prompt,
+        "text": text,
+    }
 
 
 def _build_complete_response(
@@ -119,7 +138,7 @@ def _build_complete_response(
     current_stage: str,
     stage_result: dict,
     is_update: bool,
-) -> str:
+) -> Dict[str, str]:
     """Build response for successful completion."""
     ack = STAGE_ACKNOWLEDGMENTS.get(stage, "Saved.")
 
@@ -131,57 +150,60 @@ def _build_complete_response(
     # For updates, confirm and re-ask current stage
     if is_update and stage != current_stage:
         next_q = STAGE_QUESTIONS.get(current_stage, "")
-        return f"{ack} {next_q}"
+        return _compose_parts(ack, next_q)
 
     # For normal flow, ask next stage question
     # Note: current_stage will have been advanced by advancer before responder
     next_q = STAGE_QUESTIONS.get(current_stage, "")
 
     if current_stage == "complete":
-        return f"{ack} Your agent is ready to deploy!"
+        return _compose_parts(ack, "Your agent is ready to deploy!")
 
-    return f"{ack} {next_q}"
+    return _compose_parts(ack, next_q)
 
 
 def _build_clarify_response(
     stage: str,
     stage_result: dict,
     state: ForemanState,
-) -> str:
+) -> Dict[str, str]:
     """Build response requesting clarification."""
     next_question = stage_result.get("next_question")
 
     # Handle special signals
     if next_question == "_show_config":
-        return _build_config_summary(state)
+        return _compose_parts("", _build_config_summary(state))
 
     if next_question and next_question.startswith("_edit:"):
         edit_target = next_question.split(":")[1]
-        return f"Sure, let's update the {edit_target}. What changes would you like to make?"
+        return _compose_parts(
+            f"Sure, let's update the {edit_target}.",
+            "What changes would you like to make?",
+        )
 
     # Use custom clarification or default
     if next_question:
-        return next_question
+        return _compose_parts("", next_question)
 
-    return STAGE_CLARIFICATIONS.get(stage, "Could you clarify that?")
+    return _compose_parts("", STAGE_CLARIFICATIONS.get(stage, "Could you clarify that?"))
 
 
-def _build_skip_response(stage: str, current_stage: str) -> str:
+def _build_skip_response(stage: str, current_stage: str) -> Dict[str, str]:
     """Build response for skipping a stage."""
     # Note: current_stage will have been advanced by advancer
     next_q = STAGE_QUESTIONS.get(current_stage, "")
 
     if current_stage == "complete":
-        return "Skipped. Your agent is ready to deploy!"
+        return _compose_parts("Skipped.", "Your agent is ready to deploy!")
 
-    return f"Skipped. {next_q}"
+    return _compose_parts("Skipped.", next_q)
 
 
-def _build_error_response(stage: str, stage_result: dict) -> str:
+def _build_error_response(stage: str, stage_result: dict) -> Dict[str, str]:
     """Build response for errors."""
     error_msg = stage_result.get("error_message", "Something went wrong.")
     retry_q = STAGE_QUESTIONS.get(stage, "Let's try again.")
-    return f"Error: {error_msg}. {retry_q}"
+    return _compose_parts(f"Error: {error_msg}.", retry_q)
 
 
 def _build_config_summary(state: ForemanState) -> str:

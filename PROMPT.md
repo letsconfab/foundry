@@ -1,124 +1,119 @@
-# Foundry April 9 Evolution — Ralph Loop Prompt
+# Foundry UI/UX Ralph Loop Prompt
 
-You are iteratively refactoring the Foundry repo on branch `foundry-april-9-evolution`. Each loop iteration, you pick up where you left off by reading git history, file state, and this prompt.
+You are iteratively improving the Foundry repo on branch `foundry-april-9-evolution`. Each loop iteration, you pick up where you left off by reading git history, file state, and this prompt.
+
+## Objective
+
+The main objective is **UI/UX improvement across the product**, with all parts of the repo in scope. Do not limit work to the issues listed below, but use them as priority input.
+
+## Priority Issues
+
+### Foreman Chat Interview Flow
+- [ ] Split foreman responses so the response to the previous turn is distinct from the call to action for the next step.
+- [ ] Preserve the feeling that the Foreman is actively leading the interview.
+- [ ] Add hints, affordances, and/or active CTA controls in the chat window to make progress easier.
+- [ ] Evaluate whether step-specific actions such as file upload, suggestion chips, skip affordances, or guided input controls should appear inline in the Foreman flow.
+
+### Broader UI/UX Improvement
+- [ ] Audit the rest of the application for inconsistent UX, weak affordances, confusing state transitions, visual regressions, accessibility issues, and interaction friction.
+- [ ] Improve any UX discovered during the audit, even if it was not explicitly listed up front.
 
 ## How to Work
 
-1. **At the start of each iteration**, run `git log --oneline -20` and check what's been done.
-2. **Consult the phase tracker** below to find the next incomplete phase.
-3. **Do one focused unit of work** per iteration — a single phase step or a meaningful chunk within a phase. Commit after each meaningful change with a clear message.
-4. **Update the phase tracker** in this file after completing a phase (change `[ ]` to `[x]`).
-5. **Run tests** after backend changes: `cd api && . .venv/bin/activate && python -m pytest tests/ -x -q 2>&1 | tail -30`
-6. **Run type/lint checks** after frontend changes: `cd ui && npx tsc --noEmit 2>&1 | tail -30`
-7. **Never break existing functionality.** If unsure, keep the old code path and add the new one alongside it.
-8. **Commit early and often.** Small, focused commits. Use conventional-ish messages: `refactor: ...`, `feat: ...`, `fix: ...`, `docs: ...`.
-9. **Bump versions on bugfixes**: patch version in `api/main.py` and/or `ui/package.json` as appropriate.
+1. **At the start of each iteration**, run `git log --oneline -20` and check what has already been done.
+2. **Consult the phase tracker** below and take the next incomplete phase or the next meaningful chunk inside that phase.
+3. **Do one focused unit of work per iteration**, but make multiple commits inside the iteration if that is the cleanest way to land the work.
+4. **Update this prompt** as phases and priority issues are completed.
+5. **Add tests as needed** for new behavior, especially where UX changes depend on backend contracts, orchestration behavior, or component logic.
+6. **Prevent regressions**. Validate the changed area each iteration and run broader checks before declaring completion.
+7. **Use good judgment** on architecture, tests, and commit granularity. No artificial constraints beyond preserving quality.
+8. **If a UX issue is discovered during implementation**, you may add it to the relevant phase in this file before fixing it.
 
-## Key Files Reference
+## Default Validation
 
-- **Backend monolith**: `api/main.py` (1672 lines — needs splitting)
-- **Legacy Foreman**: `api/foreman.py` (1424 lines — to be deprecated)
-- **Foreman V3**: `api/foreman_v3/` (canonical orchestrator)
-- **Models/Schemas**: `api/models.py`, `api/schemas.py`
-- **Frontend chat**: `ui/src/components/AgentChat.tsx`, `ui/src/components/ConfabChat.tsx`
-- **API client**: `ui/src/api/client.js`
-- **Spec docs**: `spec/`
-- **Tests**: `api/tests/`
+Run the checks that match the changed area:
+
+- **Backend changes**: `cd api && . .venv/bin/activate && python -m pytest tests/ -x -q 2>&1 | tail -30`
+- **Frontend changes**: `cd ui && npx tsc --noEmit 2>&1 | tail -30`
+- **UI pipeline / styling changes**: `cd ui && npm run build 2>&1 | tail -30`
+
+Add narrower or broader tests where appropriate. If you change behavior and there is no test coverage around it, add coverage unless there is a strong reason not to.
+
+## Key Files To Inspect Frequently
+
+- `ui/src/components/AgentChat.tsx`
+- `ui/src/components/ConfabChat.tsx`
+- `ui/src/components/DocumentUploadDialog.tsx`
+- `ui/src/components/Header.tsx`
+- `ui/src/components/HeroSection.tsx`
+- `ui/src/components/Login.tsx`
+- `ui/src/components/Register.tsx`
+- `ui/src/components/ThemeToggle.tsx`
+- `ui/src/components/ui/`
+- `ui/src/api/client.js`
+- `ui/src/contexts/ThemeContext.tsx`
+- `api/routes/conversation_routes.py`
+- `api/services/conversation_service.py`
+- `api/foreman_v3/`
+- `api/tests/`
 
 ## Phase Tracker
 
-### Phase 1 — Freeze architecture and define contracts `[x]`
-- [x] Create `spec/ConversationArchitecture.md` with conversation modes, ownership boundaries, request/response contracts
-- [x] Define interfaces: `ConversationService`, `ConversationRouter`, `ConversationBootstrapper`, `AgentOrchestrator`
-- [x] Define conversation modes: `foreman_build`, `confab_runtime`, reserve `multi_agent_workspace`
-- [x] Document source-of-truth policy (LangGraph checkpoint = execution state, `confab.setup_progress` = UI summary snapshot)
+### Phase 1 — Audit Current UX and Capture Issues `[ ]`
+- [ ] Review the main user journeys: landing, auth, foreman build chat, confab runtime chat, dashboard, deployment, document flows
+- [x] Capture UX issues discovered during review directly in this prompt
+- [x] Confirm current Foreman interview UX behavior and identify where previous-turn response and next-step CTA are coupled
+- [x] Identify supporting backend/frontend contracts that will need to change
 
-### Phase 2 — Introduce ConversationService on the backend `[x]`
-- [x] Create `api/services/__init__.py` and `api/services/conversation_service.py`
-- [x] Implement: start foreman conversation (create confab, thread, participants, seed message)
-- [x] Implement: resume foreman conversation
-- [x] Implement: start runtime conversation for published confab
-- [x] Implement: persist messages, route to orchestrator, return unified ChatResponse
-- [x] Add helpers: `create_thread_for_confab_build`, `attach_foreman_participant`, `attach_confab_participant`, `persist_message`, `infer_conversation_mode`
+#### Discovered Issues
+- [ ] Foreman V3 currently concatenates acknowledgement and next-stage CTA into one assistant message in `api/foreman_v3/nodes/responder.py`
+- [ ] `ForemanV2Metadata` already carries enough structure to support a split interaction, but the UI is not using it to render the interview as a guided sequence
+- [ ] `AgentChat.tsx` already has suggestion chips, upload affordances, and UI-hint handling, but these are not organized as stage-aware CTA controls
+- [ ] Resumed foreman conversations currently load raw message history only, so interview guidance is weaker after resume than during a live turn
 
-### Phase 3 — Make foreman_v3 canonical `[x]`
-- [x] Promote `api/foreman_v3/` as the only production Foreman runtime
-- [x] Convert `api/foreman.py` to thin compatibility shim or deprecated wrapper
-- [x] Remove legacy V1 production path from `main.py`
-- [x] Simplify feature flags
+### Phase 2 — Reshape the Foreman Chat Interaction Model `[ ]`
+- [ ] Separate “answer to previous turn” from “prompt for next step” in the Foreman chat experience
+- [ ] Preserve or improve progression clarity so the interview still feels guided and deliberate
+- [ ] Decide whether this should be represented as multiple messages, structured metadata, or richer UI composition
+- [ ] Keep backward compatibility where practical, or add compatibility shims if response shape changes
 
-### Phase 4 — Split main.py into routers `[x]`
-- [x] Create `api/routes/auth_routes.py`
-- [x] Create `api/routes/confab_routes.py`
-- [x] Create `api/routes/conversation_routes.py`
-- [x] Create `api/routes/github_sync_routes.py`
-- [x] Create `api/routes/learning_routes.py`
-- [x] Create `api/routes/document_routes.py`
-- [x] Slim `main.py` to app creation, middleware, router registration, startup wiring
+### Phase 3 — Add Guided CTAs and Input Affordances `[ ]`
+- [ ] Add step-aware hints in the Foreman chat UI
+- [ ] Add active CTA controls where they materially reduce friction
+- [ ] Support optional guided actions such as skip, examples, structured suggestions, or file upload where appropriate
+- [ ] Ensure these controls feel native to the interview rather than bolted on
 
-### Phase 5 — Introduce high-level conversation endpoints `[x]`
-- [x] `POST /conversations/foreman/start`
-- [x] `POST /conversations/foreman/{confab_id}/resume`
-- [x] `POST /conversations/runtime/{confab_id}/start`
-- [x] `POST /conversations/{thread_id}/messages`
-- [x] Keep legacy `/threads/*` endpoints for backward compatibility
+### Phase 4 — Strengthen Supporting Backend and Tests `[ ]`
+- [ ] Update backend or orchestration behavior if needed to support the improved Foreman UX
+- [ ] Add or update tests for any changed Foreman/chat behavior
+- [ ] Verify no regressions in conversation start, resume, message persistence, and progress synchronization
 
-### Phase 6 — Refactor frontend to use high-level conversation APIs `[x]`
-- [x] Add conversation methods to `ui/src/api/client.js`
-- [x] Refactor `AgentChat.tsx` — remove manual thread/participant/message creation
-- [x] Refactor `ConfabChat.tsx` — use `startRuntimeConversation`
-- [x] Keep raw thread/message APIs for review/admin tooling only
+### Phase 5 — Broader UI/UX Improvement Sweep `[ ]`
+- [ ] Fix additional UX issues found across the application
+- [ ] Improve consistency of spacing, hierarchy, controls, empty states, and interaction feedback
+- [ ] Improve accessibility and responsiveness where obvious issues exist
+- [ ] Refine components that feel visually or behaviorally inconsistent with the rest of the product
 
-### Phase 7 — Normalize progress/state synchronization `[x]`
-- [x] Add adapter to sync LangGraph graph state to `confab.setup_progress`
-- [x] Ensure `setup_progress` writes go through a single mapping function
-- [x] Ensure resume flows use this mapping consistently
-
-### Phase 8 — Clarify participant semantics and routing `[x]`
-- [x] Add helper utilities for membership, addressing, routing, permissions
-- [x] Add explicit conversation mode field (not just participant presence)
-- [x] Document participant semantics
-
-### Phase 9 — Prepare external chat/collaboration provider seam `[x]`
-- [x] Define interfaces: `ConversationStore`, `MessagePublisher`, `ParticipantDirectory`
-- [x] Current Postgres model = default implementation
-- [x] No external provider integration yet — just the seam
-
-### Phase 10 — Testing and migration hardening `[x]`
-- [x] Tests for starting/resuming foreman conversations
-- [x] Tests for runtime confab conversations
-- [x] Tests for participant bootstrap correctness
-- [x] Tests for setup_progress synchronization
-- [x] Tests for backward compatibility with current chat payload shape
-
-### Phase 11 — UI/UX Polish and Dark Mode `[x]`
-- [x] Add dark mode support: configure Tailwind `darkMode: 'class'`, add theme toggle component
-- [x] Create a `ThemeProvider` context with localStorage persistence
-- [x] Audit all page components for dark mode compatibility (backgrounds, text, borders, shadows)
-- [x] Polish `AgentChat.tsx` — improve message bubbles, loading states, scroll behavior, input UX
-- [x] Polish `ConfabChat.tsx` — consistent styling with AgentChat
-- [x] Polish `AgentDashboard.tsx` — card layouts, empty states, responsive grid
-- [x] Polish `Header.tsx` — add theme toggle, improve nav responsiveness
-- [x] Polish `Footer.tsx` — dark mode compatible
-- [x] Polish `DocumentUploadDialog.tsx` — drag-and-drop visual feedback, progress indicators
-- [x] Polish `Login.tsx` and `Register.tsx` — form validation UX, consistent styling
-- [x] Polish `HeroSection.tsx` — responsive layout, dark mode hero
-- [x] Add subtle animations/transitions (page transitions, hover effects, loading skeletons)
-- [x] Ensure all Radix UI primitive components (`ui/src/components/ui/`) have proper dark: variants
+### Phase 6 — Final Regression Pass and Cleanup `[ ]`
+- [ ] Run relevant backend tests
+- [ ] Run frontend typecheck
+- [ ] Run frontend build
+- [ ] Resolve any regressions introduced during the UI/UX work
+- [ ] Confirm all issues captured in this prompt are either fixed or explicitly superseded by a better solution
 
 ## Completion
 
-When ALL phases (1-11) are checked off and tests pass, output:
+When all outstanding UI/UX issues and bug fixes tracked here have been applied, all tests/checks are passing, and there are no known regressions, output:
 
-<promise>FOUNDRY EVOLUTION COMPLETE</promise>
+<promise>FOUNDRY UI UX LOOP COMPLETE</promise>
 
-If you finish an iteration but more work remains, just commit your progress and exit cleanly. You will be re-invoked with this same prompt.
+If work remains, commit progress and exit cleanly. You will be re-invoked with this same prompt.
 
 ## Important Rules
 
-- **Do not modify this PROMPT.md** except to check off completed phases.
-- **Read CLAUDE.md** for project conventions (ports, commands, structure).
-- **Read spec/ docs** before making architectural decisions.
-- **Keep backward compatibility** — never remove an endpoint without a replacement in place.
-- **Small commits** — one logical change per commit.
-- **Test after every backend change.**
+- You **may modify this PROMPT.md** to track progress, add discovered issues, and check off completed work.
+- Everything in the repo is in scope.
+- Nothing is out of scope.
+- Use multiple commits per iteration if needed, but make at least one commit per iteration.
+- Favor real product improvements over superficial visual tweaks.
+- Do not accept regressions in core flows while improving UX.
