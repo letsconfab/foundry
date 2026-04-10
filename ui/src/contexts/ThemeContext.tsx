@@ -27,6 +27,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const root = document.documentElement;
+    // Add smooth color transition for theme switches
+    root.style.setProperty('transition', 'background-color 0.2s ease, color 0.2s ease');
     if (resolvedTheme === 'dark') {
       root.classList.add('dark');
     } else {
