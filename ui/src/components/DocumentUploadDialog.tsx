@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import { Upload, FileText, Check, AlertCircle, Loader2, Trash2 } from 'lucide-react';
 import {
   Dialog,
@@ -62,6 +62,17 @@ const formatFileSize = (bytes: number): string => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 };
 
+const formatDocumentTimestamp = (value?: string): string => {
+  if (!value) return 'Added recently';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Added recently';
+  return `Added ${date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })}`;
+};
+
 export function DocumentUploadDialog({
   open,
   onOpenChange,
@@ -74,7 +85,14 @@ export function DocumentUploadDialog({
   const [uploadedInSession, setUploadedInSession] = useState<UploadedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [removedDocumentIds, setRemovedDocumentIds] = useState<number[]>([]);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const visibleExistingDocuments = useMemo(
+    () => existingDocuments.filter((doc) => !removedDocumentIds.includes(doc.id)),
+    [existingDocuments, removedDocumentIds]
+  );
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -162,13 +180,20 @@ export function DocumentUploadDialog({
     setErrorMessage(null);
   };
 
-  const handleDeleteDocument = async (docId: number, tempId: string) => {
+  const handleDeleteDocument = async (docId: number, tempId?: string) => {
     try {
+      setDeletingDocumentId(docId);
       await apiClient.deleteDocument(confabId, docId);
-      setUploadedInSession((prev) => prev.filter((f) => f.tempId !== tempId));
+      if (tempId) {
+        setUploadedInSession((prev) => prev.filter((f) => f.tempId !== tempId));
+      } else {
+        setRemovedDocumentIds((prev) => [...prev, docId]);
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Delete failed';
       setErrorMessage(message);
+    } finally {
+      setDeletingDocumentId(null);
     }
   };
 
@@ -181,6 +206,8 @@ export function DocumentUploadDialog({
     setUploadState('ready');
     setCurrentFile(null);
     setErrorMessage(null);
+    setRemovedDocumentIds([]);
+    setDeletingDocumentId(null);
   };
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -195,11 +222,13 @@ export function DocumentUploadDialog({
       setUploadState('ready');
       setCurrentFile(null);
       setErrorMessage(null);
+      setRemovedDocumentIds([]);
+      setDeletingDocumentId(null);
     }
     onOpenChange(newOpen);
   };
 
-  const totalExisting = existingDocuments.length;
+  const totalExisting = visibleExistingDocuments.length;
   const totalUploaded = uploadedInSession.filter((f) => f.status === 'indexed').length;
 
   return (
@@ -216,9 +245,20 @@ export function DocumentUploadDialog({
             )}
           </DialogTitle>
           <DialogDescription>
-            Add reference documents for your agent. Supported formats: PDF, TXT, MD
+            Add reference documents for your agent. Supported formats: PDF, TXT, MD. You can review what is already attached below.
           </DialogDescription>
         </DialogHeader>
+
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="secondary" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            {totalExisting} in knowledge base
+          </Badge>
+          {totalUploaded > 0 && (
+            <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">
+              {totalUploaded} uploaded this session
+            </Badge>
+          )}
+        </div>
 
         {/* Dropzone */}
         <div
@@ -298,6 +338,54 @@ export function DocumentUploadDialog({
           )}
         </div>
 
+        {visibleExistingDocuments.length > 0 && (
+          <div className="mt-4">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              Existing documents
+            </p>
+            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+              {visibleExistingDocuments.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/60"
+                >
+                  <div className="min-w-0 flex items-start gap-2">
+                    <FileText className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-400" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-slate-700 dark:text-slate-200">
+                        {doc.filename}
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                        <span>{formatDocumentTimestamp(doc.created_at)}</span>
+                        {doc.version_count ? <span>{doc.version_count} version{doc.version_count !== 1 ? 's' : ''}</span> : null}
+                        <span className="uppercase">{doc.content_type?.split('/').pop() || 'file'}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                      {doc.status}
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      disabled={deletingDocumentId === doc.id}
+                      onClick={() => handleDeleteDocument(doc.id)}
+                    >
+                      {deletingDocumentId === doc.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-red-500" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Session uploads list */}
         {uploadedInSession.length > 0 && (
           <div className="mt-4">
@@ -335,9 +423,14 @@ export function DocumentUploadDialog({
                         variant="ghost"
                         size="sm"
                         className="h-6 w-6 p-0"
+                        disabled={deletingDocumentId === file.id}
                         onClick={() => handleDeleteDocument(file.id!, file.tempId)}
                       >
-                        <Trash2 className="h-3 w-3 text-slate-400 hover:text-red-500" />
+                        {deletingDocumentId === file.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
+                        ) : (
+                          <Trash2 className="h-3 w-3 text-slate-400 hover:text-red-500" />
+                        )}
                       </Button>
                     )}
                   </div>
