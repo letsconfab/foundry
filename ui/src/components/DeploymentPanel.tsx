@@ -56,8 +56,8 @@ export function DeploymentPanel({ onNavigate }: DeploymentPanelProps) {
             <Cloud className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h2 className="text-slate-900">Deploy Agent</h2>
-            <p className="text-slate-600 text-sm">Configure and deploy your AI agent</p>
+            <h2 className="text-slate-900 dark:text-white">Deploy Agent</h2>
+            <p className="text-sm text-slate-600 dark:text-slate-400">Configure and deploy your AI agent</p>
           </div>
         </div>
       </div>
@@ -67,25 +67,25 @@ export function DeploymentPanel({ onNavigate }: DeploymentPanelProps) {
         <div className="lg:col-span-2 space-y-6">
           {/* Deployment Type */}
           <Card className="p-6">
-            <h3 className="text-slate-900 mb-4">Deployment Type</h3>
+            <h3 className="mb-4 text-slate-900 dark:text-white">Deployment Type</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={() => setDeploymentType('cloud')}
                 className={`p-4 rounded-lg border-2 transition-all ${
                   deploymentType === 'cloud'
-                    ? 'border-indigo-600 bg-indigo-50'
-                    : 'border-slate-200 hover:border-indigo-300'
+                    ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/40'
+                    : 'border-slate-200 hover:border-indigo-300 dark:border-slate-800 dark:hover:border-indigo-700'
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    deploymentType === 'cloud' ? 'bg-indigo-600' : 'bg-slate-100'
+                    deploymentType === 'cloud' ? 'bg-indigo-600' : 'bg-slate-100 dark:bg-slate-800'
                   }`}>
-                    <Cloud className={`w-5 h-5 ${deploymentType === 'cloud' ? 'text-white' : 'text-slate-600'}`} />
+                    <Cloud className={`w-5 h-5 ${deploymentType === 'cloud' ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`} />
                   </div>
                   <div className="text-left">
-                    <p className="text-slate-900">Cloud Deploy</p>
-                    <p className="text-xs text-slate-600">Managed hosting</p>
+                    <p className="text-slate-900 dark:text-white">Cloud Deploy</p>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">Managed hosting</p>
                   </div>
                 </div>
               </button>
@@ -93,19 +93,19 @@ export function DeploymentPanel({ onNavigate }: DeploymentPanelProps) {
                 onClick={() => setDeploymentType('self-host')}
                 className={`p-4 rounded-lg border-2 transition-all ${
                   deploymentType === 'self-host'
-                    ? 'border-indigo-600 bg-indigo-50'
-                    : 'border-slate-200 hover:border-indigo-300'
+                    ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/40'
+                    : 'border-slate-200 hover:border-indigo-300 dark:border-slate-800 dark:hover:border-indigo-700'
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    deploymentType === 'self-host' ? 'bg-indigo-600' : 'bg-slate-100'
+                    deploymentType === 'self-host' ? 'bg-indigo-600' : 'bg-slate-100 dark:bg-slate-800'
                   }`}>
-                    <Server className={`w-5 h-5 ${deploymentType === 'self-host' ? 'text-white' : 'text-slate-600'}`} />
+                    <Server className={`w-5 h-5 ${deploymentType === 'self-host' ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`} />
                   </div>
                   <div className="text-left">
-                    <p className="text-slate-900">Self-Host</p>
-                    <p className="text-xs text-slate-600">Run on your server</p>
+                    <p className="text-slate-900 dark:text-white">Self-Host</p>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">Run on your server</p>
                   </div>
                 </div>
               </button>
@@ -114,7 +114,7 @@ export function DeploymentPanel({ onNavigate }: DeploymentPanelProps) {
 
           {/* Agent Selection */}
           <Card className="p-6">
-            <h3 className="text-slate-900 mb-4">Agent</h3>
+            <h3 className="mb-4 text-slate-900 dark:text-white">Agent</h3>
             <div className="space-y-4">
               <div>
                 <Label>Select Agent to Deploy</Label>
@@ -131,7 +131,7 @@ export function DeploymentPanel({ onNavigate }: DeploymentPanelProps) {
                   </SelectContent>
                 </Select>
               </div>
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-slate-600 dark:text-slate-400">
                 Select the agent you want to deploy.
               </p>
             </div>
@@ -140,7 +140,7 @@ export function DeploymentPanel({ onNavigate }: DeploymentPanelProps) {
           {/* Cloud Provider - Only show for cloud deployment */}
           {deploymentType === 'cloud' && (
             <Card className="p-6">
-              <h3 className="text-slate-900 mb-4">Cloud</h3>
+              <h3 className="mb-4 text-slate-900 dark:text-white">Cloud</h3>
               <div className="space-y-4">
                 <div>
                   <Label>Cloud Provider</Label>
@@ -183,7 +183,7 @@ export function DeploymentPanel({ onNavigate }: DeploymentPanelProps) {
 
           {/* LLM Provider */}
           <Card className="p-6">
-            <h3 className="text-slate-900 mb-4">LLM Provider</h3>
+            <h3 className="mb-4 text-slate-900 dark:text-white">LLM Provider</h3>
             <div className="space-y-4">
               <div>
                 <Label>LLM Provider</Label>
@@ -227,7 +227,7 @@ export function DeploymentPanel({ onNavigate }: DeploymentPanelProps) {
         {/* Summary Panel */}
         <div>
           <Card className="p-6 sticky top-24">
-            <h3 className="text-slate-900 mb-4">Deployment Summary</h3>
+            <h3 className="mb-4 text-slate-900 dark:text-white">Deployment Summary</h3>
             
             <div className="space-y-3 mb-6">
               <div className="flex items-start gap-2">

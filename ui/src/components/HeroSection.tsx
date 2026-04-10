@@ -36,13 +36,13 @@ export function HeroSection({ onNavigate }: HeroSectionProps) {
   ];
 
   return (
-    <div className="relative overflow-hidden">
+    <div className="relative overflow-hidden text-slate-950 dark:text-slate-50">
       {/* Hero Section */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
         <div className="text-center">
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-full mb-8">
             <Zap className="w-4 h-4" />
-            <span className="text-sm">Transform Your Knowledge into Collaborative AI Agents</span>
+            <span className="text-sm font-medium">Transform Your Knowledge into Collaborative AI Agents</span>
           </div>
           
           <h1 className="text-slate-900 dark:text-white mb-6 max-w-4xl mx-auto">
@@ -79,7 +79,10 @@ export function HeroSection({ onNavigate }: HeroSectionProps) {
           {features.map((feature, index) => {
             const Icon = feature.icon;
             return (
-              <Card key={index} className="p-6 hover:shadow-lg transition-shadow">
+              <Card
+                key={index}
+                className="p-6 border-slate-200/70 bg-white/80 shadow-sm backdrop-blur-sm transition-all hover:-translate-y-1 hover:shadow-xl dark:border-slate-800 dark:bg-slate-950/70"
+              >
                 <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center mb-4">
                   <Icon className="w-6 h-6 text-white" />
                 </div>

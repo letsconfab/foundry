@@ -101,12 +101,14 @@ export function Header({ currentView, onNavigate, user }: HeaderProps) {
                   size="icon"
                   onClick={() => window.open('https://github.com', '_blank')}
                   title="GitHub"
+                  className="text-slate-600 dark:text-slate-300"
                 >
                   <Github className="w-5 h-5" />
                 </Button>
                 <Button
                   variant={currentView === 'login' ? 'default' : 'ghost'}
                   onClick={() => onNavigate('login')}
+                  className={currentView === 'login' ? '' : 'text-slate-700 dark:text-slate-200'}
                 >
                   Login
                 </Button>
@@ -132,7 +134,7 @@ export function Header({ currentView, onNavigate, user }: HeaderProps) {
               {isLoggedIn ? (
                 <>
                   {user && (
-                    <div className="text-sm text-slate-600 px-3 py-2">
+                    <div className="px-3 py-2 text-sm text-slate-600 dark:text-slate-300">
                       Signed in as {user.name}
                     </div>
                   )}

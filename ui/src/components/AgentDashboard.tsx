@@ -86,15 +86,15 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'published':
-        return 'bg-green-100 text-green-700';
+        return 'border-green-200 bg-green-100 text-green-800 dark:border-green-900 dark:bg-green-950/60 dark:text-green-300';
       case 'building':
-        return 'bg-amber-100 text-amber-700';
+        return 'border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-300';
       case 'draft':
-        return 'bg-blue-100 text-blue-700';
+        return 'border-blue-200 bg-blue-100 text-blue-800 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300';
       case 'archived':
-        return 'bg-slate-100 text-slate-700';
+        return 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300';
       default:
-        return 'bg-slate-100 text-slate-700';
+        return 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300';
     }
   };
 
@@ -140,7 +140,10 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {confabs.map((confab) => (
-            <Card key={confab.id} className="p-6 hover:shadow-lg transition-shadow">
+            <Card
+              key={confab.id}
+              className="p-6 border-slate-200/70 bg-white/80 shadow-sm backdrop-blur-sm transition-all hover:-translate-y-1 hover:shadow-xl dark:border-slate-800 dark:bg-slate-950/70"
+            >
               <div className="flex items-start justify-between mb-4">
                 <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
                   confab.status === 'building'

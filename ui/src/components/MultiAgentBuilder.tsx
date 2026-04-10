@@ -67,7 +67,7 @@ export function MultiAgentBuilder({ onNavigate }: MultiAgentBuilderProps) {
         {/* Configuration Panel */}
         <div className="lg:col-span-2 space-y-6">
           {/* System Name */}
-          <Card className="p-6">
+          <Card className="p-6 border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/70">
             <Label>System Name</Label>
             <Input
               value={systemName}
@@ -78,7 +78,7 @@ export function MultiAgentBuilder({ onNavigate }: MultiAgentBuilderProps) {
           </Card>
 
           {/* Add Agents */}
-          <Card className="p-6">
+          <Card className="p-6 border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/70">
             <h3 className="text-slate-900 dark:text-white mb-4">Add Agents to System</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {availableAgents.map((agent) => (
@@ -101,7 +101,7 @@ export function MultiAgentBuilder({ onNavigate }: MultiAgentBuilderProps) {
 
           {/* Active Agents */}
           {nodes.length > 0 && (
-            <Card className="p-6">
+            <Card className="p-6 border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/70">
               <h3 className="text-slate-900 dark:text-white mb-4">Active Agents</h3>
               <div className="space-y-3">
                 {nodes.map((node) => (
@@ -123,7 +123,7 @@ export function MultiAgentBuilder({ onNavigate }: MultiAgentBuilderProps) {
 
           {/* Conversation Moderator */}
           {nodes.length >= 2 && (
-            <Card className="p-6">
+            <Card className="p-6 border-slate-200/70 bg-white/80 dark:border-slate-800 dark:bg-slate-950/70">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 bg-gradient-to-br from-amber-600 to-orange-600 rounded-lg flex items-center justify-center">
                   <Shield className="w-5 h-5 text-white" />
@@ -206,13 +206,13 @@ export function MultiAgentBuilder({ onNavigate }: MultiAgentBuilderProps) {
 
         {/* Summary Panel */}
         <div>
-          <Card className="p-6 sticky top-24">
-            <h3 className="text-slate-900 mb-4">System Summary</h3>
+          <Card className="sticky top-24 border-slate-200/70 bg-white/80 p-6 dark:border-slate-800 dark:bg-slate-950/70">
+            <h3 className="mb-4 text-slate-900 dark:text-white">System Summary</h3>
             
             <div className="space-y-4 mb-6">
               <div>
-                <p className="text-sm text-slate-600">Agents</p>
-                <p className="text-2xl text-slate-900">{nodes.length}</p>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Agents</p>
+                <p className="text-2xl text-slate-900 dark:text-white">{nodes.length}</p>
               </div>
             </div>
 

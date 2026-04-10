@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+  import tailwindcss from '@tailwindcss/vite';
   import react from '@vitejs/plugin-react-swc';
   import path from 'path';
   import { readFileSync } from 'fs';
@@ -7,7 +8,7 @@ import { defineConfig } from 'vite';
   const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
   export default defineConfig({
-    plugins: [react()],
+    plugins: [tailwindcss(), react()],
     define: {
       __APP_VERSION__: JSON.stringify(packageJson.version),
     },

@@ -10,7 +10,7 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'foundry-theme';
+const STORAGE_KEY = 'foundry-theme-v2';
 
 function getSystemTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light';
@@ -20,21 +20,26 @@ function getSystemTheme(): 'light' | 'dark' {
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return (stored as Theme) || 'system';
+    return (stored as Theme) || 'dark';
   });
 
   const resolvedTheme = theme === 'system' ? getSystemTheme() : theme;
 
   useEffect(() => {
     const root = document.documentElement;
-    // Add smooth color transition for theme switches
-    root.style.setProperty('transition', 'background-color 0.2s ease, color 0.2s ease');
+    root.style.colorScheme = resolvedTheme;
     if (resolvedTheme === 'dark') {
       root.classList.add('dark');
     } else {
       root.classList.remove('dark');
     }
   }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (!localStorage.getItem(STORAGE_KEY)) {
+      localStorage.setItem(STORAGE_KEY, 'dark');
+    }
+  }, []);
 
   // Listen for system theme changes when in system mode
   useEffect(() => {
