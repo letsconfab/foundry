@@ -231,27 +231,53 @@ const FOREMAN_WELCOME_INTRO = `Hi, I'm the Foreman. I'll help you build your age
 
 I'll guide this interview one step at a time.`;
 
+const FOREMAN_OPENING_MESSAGE = `${FOREMAN_WELCOME_INTRO}
+
+${FOREMAN_STAGE_PROMPTS.purpose}`;
+
 function normalizeWhitespace(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function detectEmbeddedForemanPrompt(content: string) {
+  const normalizedContent = normalizeWhitespace(content || '');
+  if (!normalizedContent) {
+    return { prompt: '', stage: '' };
+  }
+
+  let bestMatch = { prompt: '', stage: '', index: -1 };
+  for (const [stage, prompt] of Object.entries(FOREMAN_STAGE_PROMPTS)) {
+    const normalizedPrompt = normalizeWhitespace(prompt);
+    const index = normalizedContent.lastIndexOf(normalizedPrompt);
+    if (index > bestMatch.index) {
+      bestMatch = { prompt: normalizedPrompt, stage, index };
+    }
+  }
+
+  return bestMatch.index >= 0
+    ? { prompt: bestMatch.prompt, stage: bestMatch.stage }
+    : { prompt: '', stage: '' };
+}
+
 function splitForemanMessage(content: string, prompt?: string) {
   const trimmed = (content || '').trim();
-  const normalizedPrompt = normalizeWhitespace(prompt || '');
+  const detected = prompt ? { prompt: normalizeWhitespace(prompt), stage: '' } : detectEmbeddedForemanPrompt(trimmed);
+  const normalizedPrompt = detected.prompt;
   if (!trimmed || !normalizedPrompt) {
-    return { ack: trimmed, prompt: '' };
+    return { ack: trimmed, prompt: '', stage: detected.stage };
   }
 
   const normalizedContent = normalizeWhitespace(trimmed);
-  if (!normalizedContent.endsWith(normalizedPrompt)) {
-    return { ack: trimmed, prompt: '' };
+  const promptIndex = normalizedContent.lastIndexOf(normalizedPrompt);
+  if (promptIndex < 0) {
+    return { ack: trimmed, prompt: '', stage: detected.stage };
   }
 
-  const promptIndex = normalizedContent.lastIndexOf(normalizedPrompt);
   const normalizedAck = normalizedContent.slice(0, promptIndex).trim();
   return {
     ack: normalizedAck || trimmed,
     prompt: normalizedPrompt,
+    stage: detected.stage,
   };
 }
 
@@ -262,7 +288,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
     {
       id: '1',
       role: 'assistant',
-      content: FOREMAN_WELCOME_INTRO,
+      content: FOREMAN_OPENING_MESSAGE,
       timestamp: new Date(),
       senderName: 'Foreman',
     },
@@ -388,7 +414,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
             const isLatestForemanMessage = index === lastAssistantIndex;
             const split = isForemanAssistant && isLatestForemanMessage
               ? splitForemanMessage(msg.content, currentPrompt)
-              : { ack: msg.content, prompt: '' };
+              : { ack: msg.content, prompt: '', stage: '' };
 
             return {
               id: String(msg.id),
@@ -397,7 +423,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
               timestamp: new Date(msg.created_at),
               senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
               interviewPrompt: isForemanAssistant && isLatestForemanMessage ? split.prompt : '',
-              foremanStage: isForemanAssistant && isLatestForemanMessage ? (conversation.current_stage || '') : '',
+              foremanStage: isForemanAssistant && isLatestForemanMessage ? (conversation.current_stage || split.stage || '') : '',
               uiHint: isForemanAssistant && isLatestForemanMessage && conversation.current_stage === 'documents'
                 ? 'show_upload_panel'
                 : '',
@@ -591,16 +617,22 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
             response.agent_responses.forEach((agentResp: any, index: number) => {
               const isLastResponse = index === response.agent_responses.length - 1;
               const isForemanResponse = (agentResp.sender_name || 'Foreman') === 'Foreman';
+              const promptCandidate = v2?.interview_prompt || v2?.next_question || '';
+              const ackCandidate = v2?.response_ack || agentResp.content;
+              const split = isForemanResponse && isLastResponse
+                ? splitForemanMessage(ackCandidate, promptCandidate)
+                : { ack: agentResp.content, prompt: '', stage: '' };
+
               const agentMsg: Message = {
                 id: String(agentResp.id),
                 role: 'assistant',
-                content: isForemanResponse && isLastResponse && v2?.response_ack
-                  ? v2.response_ack
-                  : agentResp.content,
+                content: isForemanResponse && isLastResponse
+                  ? split.ack
+                  : split.ack,
                 timestamp: new Date(agentResp.created_at),
                 senderName: agentResp.sender_name || 'Foreman',
-                interviewPrompt: isForemanResponse && isLastResponse ? (v2?.interview_prompt || '') : '',
-                foremanStage: isForemanResponse && isLastResponse ? (v2?.next_stage || v2?.stage || '') : '',
+                interviewPrompt: isForemanResponse && isLastResponse ? (v2?.interview_prompt || split.prompt || '') : '',
+                foremanStage: isForemanResponse && isLastResponse ? (v2?.next_stage || v2?.stage || split.stage || '') : '',
                 uiHint: isForemanResponse && isLastResponse ? (v2?.ui_hint || '') : '',
               };
               setMessages((prev) => [...prev, agentMsg]);
@@ -608,9 +640,15 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
             assistantContent = response.agent_responses[response.agent_responses.length - 1].content;
 
             if (v2) {
-              setForemanStage(v2.next_stage || v2.stage || '');
-              setForemanPrompt(v2.interview_prompt || v2.next_question || '');
+              const metadataPrompt = v2.interview_prompt || v2.next_question || '';
+              const detectedPrompt = metadataPrompt ? { prompt: metadataPrompt, stage: '' } : detectEmbeddedForemanPrompt(assistantContent);
+              setForemanStage(v2.next_stage || v2.stage || detectedPrompt.stage || '');
+              setForemanPrompt(metadataPrompt || detectedPrompt.prompt || '');
               setForemanUiHint(v2.ui_hint || null);
+            } else if (assistantContent) {
+              const detectedPrompt = detectEmbeddedForemanPrompt(assistantContent);
+              setForemanStage(detectedPrompt.stage || '');
+              setForemanPrompt(detectedPrompt.prompt || '');
             }
 
             // Refresh confab name in case Foreman set it
@@ -687,6 +725,8 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   };
 
   const shouldShowUploadCta = foremanStage === 'documents' || foremanUiHint === 'show_upload_panel';
+  const hasUserMessages = messages.some((message) => message.role === 'user');
+  const shouldShowForemanPanel = hasUserMessages && !!foremanPrompt;
 
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -1269,7 +1309,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
                 Press Enter to send, Shift+Enter for new line
               </p>
 
-              {foremanPrompt && (
+              {shouldShowForemanPanel && (
                 <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -1357,7 +1397,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
               {/* Prompt Suggestions */}
               {messages.length === 1 && foremanStage === 'purpose' && (
                 <div className="mt-4">
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Try these examples:</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Try these examples or describe the agent in your own words:</p>
                   <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
                     {PROMPT_SUGGESTIONS.map((suggestion, index) => (
                       <button
