@@ -44,14 +44,15 @@ async def extract_purpose_node(state: ForemanState) -> Dict[str, Any]:
         data = result.data
 
         if data.get("is_clear", False):
+            purpose_text = data.get("purpose_text", last_msg)
             return {
                 "stage_result": {
                     "status": "complete",
                     "data": {
-                        "purpose": data.get("purpose_text", last_msg),
+                        "purpose": purpose_text,
                         "name": data.get("suggested_name"),
                     },
-                    "summary": f"Purpose: {data.get('purpose_text', last_msg)[:100]}...",
+                    "summary": f"Purpose: {purpose_text}",
                 }
             }
         elif data.get("clarification_needed"):
@@ -68,7 +69,7 @@ async def extract_purpose_node(state: ForemanState) -> Dict[str, Any]:
         "stage_result": {
             "status": "complete",
             "data": {"purpose": last_msg, "name": None},
-            "summary": f"Purpose: {last_msg[:100]}...",
+            "summary": f"Purpose: {last_msg}",
         }
     }
 

@@ -1344,44 +1344,8 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
 
             {/* Input Area */}
             <div className="border-t border-slate-200 dark:border-slate-700 p-4">
-              <div className="flex gap-2">
-                <Textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Describe what you want your confab to do..."
-                  className="min-h-[60px] max-h-32 resize-none"
-                />
-                <div className="flex flex-col gap-2">
-                  <Button
-                    onClick={handleSend}
-                    disabled={!input.trim() || isTyping}
-                    size="icon"
-                    className="h-[60px]"
-                  >
-                    <Send className="w-5 h-5" />
-                  </Button>
-                  <Button
-                    onClick={() => onNavigate('dashboard')}
-                    variant="outline"
-                    size="icon"
-                    title="Save and continue later"
-                  >
-                    <Save className="w-5 h-5" />
-                  </Button>
-                  {currentThreadId && (
-                    <span className="text-xs text-emerald-600 self-center" title="Conversation saved">
-                      Saved
-                    </span>
-                  )}
-                </div>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
-                Press Enter to send, Shift+Enter for new line
-              </p>
-
               {shouldShowForemanPanel && (
-                <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
+                <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
@@ -1419,6 +1383,42 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
                   </div>
                 </div>
               )}
+
+              <div className="flex gap-2">
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type your response..."
+                  className="min-h-[60px] max-h-32 resize-none"
+                />
+                <div className="flex flex-col gap-2">
+                  <Button
+                    onClick={handleSend}
+                    disabled={!input.trim() || isTyping}
+                    size="icon"
+                    className="h-[60px]"
+                  >
+                    <Send className="w-5 h-5" />
+                  </Button>
+                  <Button
+                    onClick={() => onNavigate('dashboard')}
+                    variant="outline"
+                    size="icon"
+                    title="Save and continue later"
+                  >
+                    <Save className="w-5 h-5" />
+                  </Button>
+                  {currentThreadId && (
+                    <span className="text-xs text-emerald-600 self-center" title="Conversation saved">
+                      Saved
+                    </span>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                Press Enter to send, Shift+Enter for new line
+              </p>
               
               {/* Prompt Suggestions */}
               {messages.length === 1 && foremanStage === 'purpose' && (
