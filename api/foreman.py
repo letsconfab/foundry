@@ -80,6 +80,7 @@ class StageResult:
     summary: Optional[str] = None               # What was saved (for response)
     next_question: Optional[str] = None         # What to ask next
     error_message: Optional[str] = None         # If status == "error"
+    ui_hint: Optional[str] = None               # Frontend hint for stage-specific UX
 
 
 # Interview-style questions with examples for each stage
@@ -740,13 +741,17 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 # Reload confab to get updated data for summary
                 self.db.refresh(self.confab)
                 if current_stage == "review":
-                    response_text = f"Updated {target_stage}.{self._build_config_summary()}\n\n{STAGE_QUESTIONS.get(current_stage, '')}"
+                    response_ack = f"Updated {target_stage}.{self._build_config_summary()}".strip()
                 else:
-                    response_text = f"Updated {target_stage}. {STAGE_QUESTIONS.get(current_stage, '')}"
+                    response_ack = f"Updated {target_stage}."
+                interview_prompt = STAGE_QUESTIONS.get(current_stage, "")
+                response_text = response_ack
             else:
-                response_text = self._render_foreman_reply(result, target_stage)
+                response_ack, interview_prompt = self._build_response_parts(result, target_stage)
+                response_text = response_ack
         else:
-            response_text = self._render_foreman_reply(result, current_stage)
+            response_ack, interview_prompt = self._build_response_parts(result, current_stage)
+            response_text = response_ack
             # Only advance stage for normal flow (not updates)
             if result.status in ("complete", "skip"):
                 await self._complete_stage(current_stage)
@@ -771,6 +776,9 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 "updated_stage": target_stage if is_update else None,
                 "saved_fields": result.data,
                 "next_question": result.next_question,
+                "response_ack": response_ack,
+                "interview_prompt": interview_prompt,
+                "ui_hint": result.ui_hint,
             }
         }
 
@@ -866,39 +874,41 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
 
     def _render_foreman_reply(self, result: StageResult, current_stage: str) -> str:
         """Render a consistent Foreman response from a StageResult."""
-        parts = []
+        response_ack, _ = self._build_response_parts(result, current_stage)
+        return response_ack
+
+    def _build_response_parts(self, result: StageResult, current_stage: str) -> Tuple[str, str]:
+        """Build the acknowledgment text and next-step prompt for a stage result."""
+        response_ack = ""
+        interview_prompt = ""
 
         if result.status == "error":
-            parts.append(result.error_message or "An error occurred.")
-            parts.append(STAGE_QUESTIONS.get(current_stage, "How would you like to proceed?"))
+            response_ack = result.error_message or "An error occurred."
+            interview_prompt = STAGE_QUESTIONS.get(current_stage, "How would you like to proceed?")
 
         elif result.status == "clarify":
-            if result.summary:
-                parts.append(result.summary)
-            parts.append(result.next_question or STAGE_CLARIFICATIONS.get(current_stage, "Could you provide more detail?"))
+            response_ack = result.summary or "I need a bit more detail."
+            interview_prompt = result.next_question or STAGE_CLARIFICATIONS.get(current_stage, "Could you provide more detail?")
 
         elif result.status == "skip":
-            parts.append("Skipping this step.")
+            response_ack = "Skipping this step."
             next_stage = self._next_stage_after(current_stage)
             if next_stage:
                 if next_stage == "review":
-                    parts.append(self._build_config_summary())
-                parts.append(STAGE_QUESTIONS.get(next_stage, ""))
+                    response_ack = f"{response_ack}\n\n{self._build_config_summary()}".strip()
+                interview_prompt = STAGE_QUESTIONS.get(next_stage, "")
 
         elif result.status == "complete":
-            # Acknowledgment + next question
-            ack = result.summary or STAGE_ACKNOWLEDGMENTS.get(current_stage, "Saved.")
-            parts.append(ack)
+            response_ack = result.summary or STAGE_ACKNOWLEDGMENTS.get(current_stage, "Saved.")
             next_stage = self._next_stage_after(current_stage)
             if next_stage:
                 if next_stage == "review":
-                    parts.append(self._build_config_summary())
-                parts.append(STAGE_QUESTIONS.get(next_stage, ""))
+                    response_ack = f"{response_ack}\n\n{self._build_config_summary()}".strip()
+                interview_prompt = STAGE_QUESTIONS.get(next_stage, "")
             else:
-                parts.append("All steps complete. Your agent is ready.")
+                interview_prompt = "All steps complete. Your agent is ready."
 
-        # Use double newlines to preserve formatting in multi-line questions with examples
-        return "\n\n".join(parts)
+        return response_ack, interview_prompt
 
     def _build_error_response(self, error_msg: str, stage: str) -> Dict[str, Any]:
         """Build an error response dict."""
@@ -919,6 +929,9 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 "stage_status": "error",
                 "saved_fields": None,
                 "next_question": None,
+                "response_ack": f"Error: {error_msg}",
+                "interview_prompt": STAGE_QUESTIONS.get(stage, "How would you like to proceed?"),
+                "ui_hint": None,
             }
         }
 

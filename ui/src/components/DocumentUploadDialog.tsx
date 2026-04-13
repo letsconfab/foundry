@@ -36,7 +36,7 @@ interface DocumentUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   confabId: number;
-  onUploadComplete?: (count: number) => void;
+  onUploadComplete?: (result: { count: number; filenames: string[] }) => void;
   existingDocuments?: DocumentListItem[];
 }
 
@@ -198,8 +198,11 @@ export function DocumentUploadDialog({
   };
 
   const handleDone = () => {
-    const successCount = uploadedInSession.filter((f) => f.status === 'indexed').length;
-    onUploadComplete?.(successCount);
+    const uploadedFiles = uploadedInSession.filter((f) => f.status === 'indexed');
+    onUploadComplete?.({
+      count: uploadedFiles.length,
+      filenames: uploadedFiles.map((file) => file.name),
+    });
     onOpenChange(false);
     // Reset state for next open
     setUploadedInSession([]);
@@ -213,9 +216,12 @@ export function DocumentUploadDialog({
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen) {
       // User is closing without clicking Done - still call onUploadComplete
-      const successCount = uploadedInSession.filter((f) => f.status === 'indexed').length;
-      if (successCount > 0) {
-        onUploadComplete?.(successCount);
+      const uploadedFiles = uploadedInSession.filter((f) => f.status === 'indexed');
+      if (uploadedFiles.length > 0) {
+        onUploadComplete?.({
+          count: uploadedFiles.length,
+          filenames: uploadedFiles.map((file) => file.name),
+        });
       }
       // Reset state
       setUploadedInSession([]);

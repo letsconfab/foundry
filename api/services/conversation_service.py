@@ -500,7 +500,11 @@ class ConversationService:
             await foreman.initialize()
             result = await foreman.process_message(content)
 
-        response_content = result.get("response", "")
+        v2_data = result.get("v2_metadata") or {}
+        response_content = (
+            v2_data.get("response_ack")
+            or result.get("response", "")
+        )
 
         # Persist Foreman's response
         agent_msg = self.persist_message(
@@ -652,6 +656,8 @@ class ConversationService:
                 stage_status=v2_data.get("stage_status"),
                 saved_fields=v2_data.get("saved_fields"),
                 next_question=v2_data.get("next_question"),
+                response_ack=v2_data.get("response_ack"),
+                interview_prompt=v2_data.get("interview_prompt"),
                 next_stage=setup_progress_data.get("current_stage") if setup_progress_data else None,
                 clarification_needed=v2_data.get("stage_status") == "clarify",
                 ui_hint=v2_data.get("ui_hint"),

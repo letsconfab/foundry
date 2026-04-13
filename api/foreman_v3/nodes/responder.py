@@ -122,14 +122,13 @@ def build_response_payload(
 
 
 def _compose_parts(ack: str, prompt: str) -> Dict[str, str]:
-    """Return structured response parts plus the combined legacy text."""
+    """Return structured response parts with chat text limited to the acknowledgment."""
     ack = (ack or "").strip()
     prompt = (prompt or "").strip()
-    text = " ".join(part for part in [ack, prompt] if part).strip()
     return {
         "ack": ack,
         "prompt": prompt,
-        "text": text,
+        "text": ack,
     }
 
 
@@ -172,7 +171,7 @@ def _build_clarify_response(
 
     # Handle special signals
     if next_question == "_show_config":
-        return _compose_parts("", _build_config_summary(state))
+        return _compose_parts(_build_config_summary(state), "")
 
     if next_question and next_question.startswith("_edit:"):
         edit_target = next_question.split(":")[1]
@@ -183,9 +182,9 @@ def _build_clarify_response(
 
     # Use custom clarification or default
     if next_question:
-        return _compose_parts("", next_question)
+        return _compose_parts("I need a bit more detail.", next_question)
 
-    return _compose_parts("", STAGE_CLARIFICATIONS.get(stage, "Could you clarify that?"))
+    return _compose_parts("I need a bit more detail.", STAGE_CLARIFICATIONS.get(stage, "Could you clarify that?"))
 
 
 def _build_skip_response(stage: str, current_stage: str) -> Dict[str, str]:
@@ -196,7 +195,7 @@ def _build_skip_response(stage: str, current_stage: str) -> Dict[str, str]:
     if current_stage == "complete":
         return _compose_parts("Skipped.", "Your agent is ready to deploy!")
 
-    return _compose_parts("Skipped.", next_q)
+    return _compose_parts("Skipped this step.", next_q)
 
 
 def _build_error_response(stage: str, stage_result: dict) -> Dict[str, str]:

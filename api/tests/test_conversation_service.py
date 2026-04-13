@@ -383,3 +383,43 @@ class TestBackwardCompatibility:
         for p in result.participants:
             assert hasattr(p, "id")
             assert hasattr(p, "participant_type")
+
+
+class TestForemanMetadata:
+    """Tests for structured Foreman metadata used by the builder UI."""
+
+    @pytest.fixture
+    def service(self, db):
+        return ConversationService(db)
+
+    def test_build_foreman_metadata_preserves_ack_and_prompt(self, service):
+        result = {
+            "response": "Recorded the purpose.",
+            "confab_id": 1,
+            "setup_progress": {
+                "completed_steps": [1],
+                "current_stage": "participants",
+                "total_steps": 8,
+                "remaining_steps": [2, 3, 4, 5, 6, 7, 8],
+            },
+            "tool_calls": [],
+            "timestamp": "2026-04-13T10:00:00",
+            "v2_metadata": {
+                "stage": "purpose",
+                "stage_status": "complete",
+                "saved_fields": {"purpose": "Test"},
+                "next_question": None,
+                "response_ack": "Recorded the purpose.",
+                "interview_prompt": "Who should have access to this agent?",
+                "ui_hint": None,
+            },
+            "is_v2": False,
+            "is_v3": True,
+        }
+
+        metadata = service._build_foreman_metadata(result, thread_id=12)
+
+        assert metadata is not None
+        assert metadata.v2_metadata is not None
+        assert metadata.v2_metadata.response_ack == "Recorded the purpose."
+        assert metadata.v2_metadata.interview_prompt == "Who should have access to this agent?"

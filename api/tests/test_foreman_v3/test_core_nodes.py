@@ -168,16 +168,18 @@ class TestResponderNode:
         assert isinstance(result["messages"][0], AIMessage)
         assert "Purpose: test" in result["messages"][0].content
 
-    def test_clarify_response_includes_question(self):
+    def test_clarify_response_keeps_question_in_metadata(self):
         state = make_state(
             current_stage="purpose",
             stage_result={"status": "clarify", "next_question": "What should it do?"},
         )
         result = responder_node(state)
 
-        assert "What should it do?" in result["messages"][0].content
+        assert "What should it do?" not in result["messages"][0].content
+        assert result["stage_result"]["interview_prompt"] == "What should it do?"
+        assert "bit more detail" in result["messages"][0].content.lower()
 
-    def test_skip_response_includes_next_question(self):
+    def test_skip_response_keeps_next_question_out_of_message(self):
         state = make_state(
             current_stage="memory",  # After participants skip
             stage_result={"status": "skip"},
@@ -185,8 +187,8 @@ class TestResponderNode:
         result = responder_node(state)
 
         assert "Skipped" in result["messages"][0].content
-        # Should include next stage question
-        assert "remember" in result["messages"][0].content.lower() or "memory" in result["messages"][0].content.lower()
+        assert "remember" not in result["messages"][0].content.lower()
+        assert "remember" in result["stage_result"]["interview_prompt"].lower()
 
     def test_error_response_includes_error_message(self):
         state = make_state(
@@ -216,7 +218,8 @@ class TestResponderNode:
         )
         result = responder_node(state)
 
-        assert "ready to deploy" in result["messages"][0].content.lower() or "saved" in result["messages"][0].content.lower()
+        assert "Configuration saved" in result["messages"][0].content
+        assert "ready to deploy" in result["stage_result"]["interview_prompt"].lower()
 
 
 class TestSaverNode:

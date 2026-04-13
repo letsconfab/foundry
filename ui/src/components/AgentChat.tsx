@@ -118,6 +118,12 @@ interface DefinitionConflict {
   merged: string;
 }
 
+interface ForemanAction {
+  id: string;
+  label: string;
+  onClick: () => void;
+}
+
 const PURPOSE_TEMPLATE = (name: string, firstUserInput: string) => `# ${name} Purpose
 
 ## Overview
@@ -259,29 +265,6 @@ function detectEmbeddedForemanPrompt(content: string) {
     : { prompt: '', stage: '' };
 }
 
-function splitForemanMessage(content: string, prompt?: string) {
-  const trimmed = (content || '').trim();
-  const detected = prompt ? { prompt: normalizeWhitespace(prompt), stage: '' } : detectEmbeddedForemanPrompt(trimmed);
-  const normalizedPrompt = detected.prompt;
-  if (!trimmed || !normalizedPrompt) {
-    return { ack: trimmed, prompt: '', stage: detected.stage };
-  }
-
-  const normalizedContent = normalizeWhitespace(trimmed);
-  const promptIndex = normalizedContent.lastIndexOf(normalizedPrompt);
-  if (promptIndex < 0) {
-    return { ack: trimmed, prompt: '', stage: detected.stage };
-  }
-
-  const normalizedAck = normalizedContent.slice(0, promptIndex).trim();
-  return {
-    ack: normalizedAck || trimmed,
-    prompt: normalizedPrompt,
-    stage: detected.stage,
-  };
-}
-
-
 export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
@@ -402,33 +385,13 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
 
         // Convert server messages to local Message format
         if (conversation.messages && conversation.messages.length > 0) {
-          const currentPrompt = FOREMAN_STAGE_PROMPTS[conversation.current_stage || ''] || '';
-          const lastAssistantIndex = [...conversation.messages]
-            .map((msg: any, index: number) => ({ msg, index }))
-            .filter(({ msg }: any) => msg.role === 'assistant' && (msg.sender_name || 'Foreman') === 'Foreman')
-            .map(({ index }: any) => index)
-            .pop();
-
-          const loadedMessages: Message[] = conversation.messages.map((msg: any, index: number) => {
-            const isForemanAssistant = msg.role === 'assistant' && (msg.sender_name || 'Foreman') === 'Foreman';
-            const isLatestForemanMessage = index === lastAssistantIndex;
-            const split = isForemanAssistant && isLatestForemanMessage
-              ? splitForemanMessage(msg.content, currentPrompt)
-              : { ack: msg.content, prompt: '', stage: '' };
-
-            return {
-              id: String(msg.id),
-              role: msg.role as 'user' | 'assistant',
-              content: split.ack,
-              timestamp: new Date(msg.created_at),
-              senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
-              interviewPrompt: isForemanAssistant && isLatestForemanMessage ? split.prompt : '',
-              foremanStage: isForemanAssistant && isLatestForemanMessage ? (conversation.current_stage || split.stage || '') : '',
-              uiHint: isForemanAssistant && isLatestForemanMessage && conversation.current_stage === 'documents'
-                ? 'show_upload_panel'
-                : '',
-            };
-          });
+          const loadedMessages: Message[] = conversation.messages.map((msg: any) => ({
+            id: String(msg.id),
+            role: msg.role as 'user' | 'assistant',
+            content: msg.content,
+            timestamp: new Date(msg.created_at),
+            senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
+          }));
           setMessages(loadedMessages);
         }
       } catch (error) {
@@ -619,20 +582,15 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
               const isForemanResponse = (agentResp.sender_name || 'Foreman') === 'Foreman';
               const promptCandidate = v2?.interview_prompt || v2?.next_question || '';
               const ackCandidate = v2?.response_ack || agentResp.content;
-              const split = isForemanResponse && isLastResponse
-                ? splitForemanMessage(ackCandidate, promptCandidate)
-                : { ack: agentResp.content, prompt: '', stage: '' };
 
               const agentMsg: Message = {
                 id: String(agentResp.id),
                 role: 'assistant',
-                content: isForemanResponse && isLastResponse
-                  ? split.ack
-                  : split.ack,
+                content: isForemanResponse && isLastResponse ? ackCandidate : agentResp.content,
                 timestamp: new Date(agentResp.created_at),
                 senderName: agentResp.sender_name || 'Foreman',
-                interviewPrompt: isForemanResponse && isLastResponse ? (v2?.interview_prompt || split.prompt || '') : '',
-                foremanStage: isForemanResponse && isLastResponse ? (v2?.next_stage || v2?.stage || split.stage || '') : '',
+                interviewPrompt: isForemanResponse && isLastResponse ? promptCandidate : '',
+                foremanStage: isForemanResponse && isLastResponse ? (v2?.next_stage || v2?.stage || '') : '',
                 uiHint: isForemanResponse && isLastResponse ? (v2?.ui_hint || '') : '',
               };
               setMessages((prev) => [...prev, agentMsg]);
@@ -641,7 +599,9 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
 
             if (v2) {
               const metadataPrompt = v2.interview_prompt || v2.next_question || '';
-              const detectedPrompt = metadataPrompt ? { prompt: metadataPrompt, stage: '' } : detectEmbeddedForemanPrompt(assistantContent);
+              const detectedPrompt = !metadataPrompt && assistantContent
+                ? detectEmbeddedForemanPrompt(assistantContent)
+                : { prompt: '', stage: '' };
               setForemanStage(v2.next_stage || v2.stage || detectedPrompt.stage || '');
               setForemanPrompt(metadataPrompt || detectedPrompt.prompt || '');
               setForemanUiHint(v2.ui_hint || null);
@@ -720,13 +680,124 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
     setInput(suggestion);
   };
 
-  const setSuggestedReply = (value: string) => {
-    setInput(value);
+  const setSuggestedReply = (value: string, mode: 'replace' | 'append' = 'replace') => {
+    const normalized = value.trim();
+    if (!normalized) return;
+
+    setInput((prev) => {
+      if (mode === 'replace' || !prev.trim()) {
+        return normalized;
+      }
+
+      const existingLines = prev
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (existingLines.includes(normalized)) {
+        return prev;
+      }
+
+      return `${prev.replace(/\s+$/, '')}\n${normalized}`;
+    });
+  };
+
+  const appendUploadedDocumentLines = (filenames: string[]) => {
+    filenames.forEach((filename) => {
+      setSuggestedReply(`uploaded ${filename}`, 'append');
+    });
   };
 
   const shouldShowUploadCta = foremanStage === 'documents' || foremanUiHint === 'show_upload_panel';
   const hasUserMessages = messages.some((message) => message.role === 'user');
   const shouldShowForemanPanel = hasUserMessages && !!foremanPrompt;
+  const foremanActions: ForemanAction[] = [];
+
+  if (foremanStage === 'purpose') {
+    PROMPT_SUGGESTIONS.slice(0, 2).forEach((suggestion, index) => {
+      foremanActions.push({
+        id: `purpose-example-${index + 1}`,
+        label: `Example ${index + 1}`,
+        onClick: () => setSuggestedReply(suggestion),
+      });
+    });
+  }
+
+  if (foremanStage === 'participants') {
+    foremanActions.push({
+      id: 'participants-skip',
+      label: 'Skip For Now',
+      onClick: () => setSuggestedReply('skip'),
+    });
+  }
+
+  if (foremanStage === 'memory') {
+    ['yes', 'no', 'limited'].forEach((choice) => {
+      foremanActions.push({
+        id: `memory-${choice}`,
+        label: choice === 'limited' ? 'Limited' : choice.charAt(0).toUpperCase() + choice.slice(1),
+        onClick: () => setSuggestedReply(choice),
+      });
+    });
+  }
+
+  if (shouldShowUploadCta) {
+    foremanActions.push({
+      id: 'documents-open',
+      label: 'Open Upload Panel',
+      onClick: () => setUploadDialogOpen(true),
+    });
+    if (documents.length > 0) {
+      foremanActions.push({
+        id: 'documents-finish',
+        label: 'Finish Documents',
+        onClick: () => setSuggestedReply('done uploading documents'),
+      });
+    }
+    foremanActions.push({
+      id: 'documents-skip',
+      label: 'Skip Documents',
+      onClick: () => setSuggestedReply('skip'),
+    });
+  }
+
+  if (foremanStage === 'tools') {
+    foremanActions.push(
+      {
+        id: 'tools-none',
+        label: 'No Tools',
+        onClick: () => setSuggestedReply('none'),
+      },
+      {
+        id: 'tools-web-search',
+        label: 'Web Search',
+        onClick: () => setSuggestedReply('web search'),
+      },
+    );
+  }
+
+  if (foremanStage === 'guardrails') {
+    foremanActions.push(
+      {
+        id: 'guardrails-safety',
+        label: 'Add Safety Rule',
+        onClick: () => setSuggestedReply('Do not fabricate facts.'),
+      },
+      {
+        id: 'guardrails-clarify',
+        label: 'Add Clarification Rule',
+        onClick: () => setSuggestedReply('Ask for clarification when the request is ambiguous.'),
+      },
+    );
+  }
+
+  if (foremanStage === 'sample_io') {
+    foremanActions.push({
+      id: 'sample-io-example',
+      label: 'Insert Example',
+      onClick: () => setSuggestedReply('User asks for a refund status update. Agent verifies the order ID, summarizes the status, and explains the next step.'),
+    });
+  }
 
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -1333,63 +1404,18 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {foremanStage === 'purpose' && PROMPT_SUGGESTIONS.slice(0, 2).map((suggestion, index) => (
+                    {foremanActions.map((action) => (
                       <Button
-                        key={index}
+                        key={action.id}
                         type="button"
                         variant="outline"
                         size="sm"
                         className="text-xs"
-                        onClick={() => setSuggestedReply(suggestion)}
+                        onClick={action.onClick}
                       >
-                        Example {index + 1}
+                        {action.label}
                       </Button>
                     ))}
-                    {foremanStage === 'participants' && (
-                      <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('skip')}>
-                        Skip For Now
-                      </Button>
-                    )}
-                    {foremanStage === 'memory' && (
-                      <>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('yes')}>Yes</Button>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('no')}>No</Button>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('limited')}>Limited</Button>
-                      </>
-                    )}
-                    {shouldShowUploadCta && (
-                      <>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setUploadDialogOpen(true)}>
-                          Open Upload Panel
-                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('skip')}>
-                          Skip Documents
-                        </Button>
-                      </>
-                    )}
-                    {foremanStage === 'tools' && (
-                      <>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('none')}>No Tools</Button>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('web search')}>Web Search</Button>
-                      </>
-                    )}
-                    {foremanStage === 'guardrails' && (
-                      <>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('Do not fabricate facts.')}>Add Safety Rule</Button>
-                        <Button type="button" variant="outline" size="sm" className="text-xs" onClick={() => setSuggestedReply('Ask for clarification when the request is ambiguous.')}>Add Clarification Rule</Button>
-                      </>
-                    )}
-                    {foremanStage === 'sample_io' && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="text-xs"
-                        onClick={() => setSuggestedReply('User asks for a refund status update. Agent verifies the order ID, summarizes the status, and explains the next step.')}
-                      >
-                        Insert Example
-                      </Button>
-                    )}
                   </div>
                 </div>
               )}
@@ -1742,14 +1768,15 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
           }}
           confabId={currentConfabId}
           existingDocuments={documents}
-          onUploadComplete={(count) => {
+          onUploadComplete={({ count, filenames }) => {
             // Refresh documents list
             if (currentConfabId) {
               apiClient.listDocuments(currentConfabId).then(setDocuments);
             }
-            // Pre-fill input with confirmation message for user to send
-            if (count > 0) {
-              setInput(`I've uploaded ${count} document${count !== 1 ? 's' : ''}.`);
+            if (filenames.length > 0) {
+              appendUploadedDocumentLines(filenames);
+            } else if (count > 0) {
+              setSuggestedReply(`uploaded ${count} document${count !== 1 ? 's' : ''}`, 'append');
             }
           }}
         />

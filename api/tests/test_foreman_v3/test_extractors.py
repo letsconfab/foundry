@@ -15,6 +15,7 @@ from foreman_v3.nodes.extractors import (
     extract_purpose_node,
     extract_participants_node,
     extract_memory_node,
+    extract_documents_node,
     extract_tools_node,
     extract_guardrails_node,
     extract_sample_io_node,
@@ -243,6 +244,46 @@ class TestExtractToolsNode:
 
         assert result["stage_result"]["status"] == "complete"
         assert result["stage_result"]["data"]["tools"] == []
+
+
+class TestExtractDocumentsNode:
+    """Tests for extract_documents_node."""
+
+    @pytest.mark.asyncio
+    @patch("foreman_v3.nodes.extractors.extract_documents_intent")
+    async def test_uploaded_documents_keep_stage_open_until_user_finishes(self, mock_extract):
+        mock_extract.return_value = MockExtractionResult(
+            success=True,
+            data={
+                "has_uploads": True,
+                "document_count": 2,
+            }
+        )
+
+        state = make_state("uploaded handbook.pdf\nuploaded policy.md", "documents")
+        result = await extract_documents_node(state)
+
+        assert result["stage_result"]["status"] == "clarify"
+        assert result["stage_result"]["summary"] == "2 document(s) uploaded"
+        assert "upload more files" in result["stage_result"]["next_question"].lower()
+        assert result["stage_result"]["ui_hint"] == "show_upload_panel"
+
+    @pytest.mark.asyncio
+    @patch("foreman_v3.nodes.extractors.extract_documents_intent")
+    async def test_uploaded_documents_complete_once_user_says_done(self, mock_extract):
+        mock_extract.return_value = MockExtractionResult(
+            success=True,
+            data={
+                "has_uploads": True,
+                "document_count": 1,
+            }
+        )
+
+        state = make_state("uploaded handbook.pdf\ndone uploading documents", "documents")
+        result = await extract_documents_node(state)
+
+        assert result["stage_result"]["status"] == "complete"
+        assert result["stage_result"]["summary"] == "1 document(s) uploaded"
 
 
 class TestExtractGuardrailsNode:

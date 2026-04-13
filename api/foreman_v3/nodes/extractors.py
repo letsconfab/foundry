@@ -236,6 +236,19 @@ async def extract_documents_node(state: ForemanState) -> Dict[str, Any]:
     logger.info(f"[V3] extract_documents_node: input='{last_msg[:50]}...'")
 
     result = await extract_documents_intent(last_msg)
+    normalized_message = last_msg.lower()
+    is_done_uploading = any(
+        phrase in normalized_message
+        for phrase in (
+            "done",
+            "finished",
+            "that's all",
+            "that is all",
+            "continue",
+            "move on",
+            "next step",
+        )
+    )
 
     if result.success and result.data:
         data = result.data
@@ -250,10 +263,19 @@ async def extract_documents_node(state: ForemanState) -> Dict[str, Any]:
             }
 
         if data.get("has_uploads", False):
-            # User confirms they've uploaded documents
-            # The actual documents are already in the database via the API
             doc_count = data.get("document_count")
             summary = f"{doc_count} document(s) uploaded" if doc_count else "Documents uploaded"
+
+            if not is_done_uploading:
+                return {
+                    "stage_result": {
+                        "status": "clarify",
+                        "summary": summary,
+                        "next_question": "You can upload more files, or tell me you're done when you're ready to continue.",
+                        "ui_hint": "show_upload_panel",
+                    }
+                }
+
             return {
                 "stage_result": {
                     "status": "complete",
