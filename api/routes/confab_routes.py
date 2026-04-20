@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User, Confab, ConfabLearning, GitHubAccount
+from models import User, Confab, ConfabLearning, GitHubAccount, ConfabDocumentV2, DocumentVersion
 from schemas import (
     ConfabCreate, ConfabUpdate, ConfabResponse, ConfabListItem,
     DefinitionFilesRefreshResponse, DefinitionFilesCommitRequest, DefinitionFilesCommitResponse,
@@ -554,6 +554,12 @@ async def delete_confab(
                 # Continue trying other paths
 
     # Delete related records before deleting confab
+    # Delete document versions first (foreign key to documents)
+    doc_ids = [d.id for d in db.query(ConfabDocumentV2.id).filter(ConfabDocumentV2.confab_id == confab_id).all()]
+    if doc_ids:
+        db.query(DocumentVersion).filter(DocumentVersion.document_id.in_(doc_ids)).delete(synchronize_session=False)
+        db.query(ConfabDocumentV2).filter(ConfabDocumentV2.confab_id == confab_id).delete(synchronize_session=False)
+
     # Delete learnings
     db.query(ConfabLearning).filter(ConfabLearning.confab_id == confab_id).delete(synchronize_session=False)
 
