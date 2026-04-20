@@ -8,14 +8,14 @@ from datetime import datetime
 # =============================================================================
 
 class UserBase(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1)
     email: EmailStr
     country: str
     timezone: str
 
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(..., min_length=8)
 
 
 class UserLogin(BaseModel):
@@ -106,7 +106,7 @@ class TestScenario(BaseModel):
 
 class ConfabCreate(BaseModel):
     """Create a new confab."""
-    name: str
+    name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
     status: Literal["building", "draft", "published", "archived"] = "building"
 
@@ -120,7 +120,7 @@ class ConfabCreate(BaseModel):
 
 class ConfabUpdate(BaseModel):
     """Update an existing confab."""
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     description: Optional[str] = None
     status: Optional[Literal["building", "draft", "published", "archived"]] = None
 

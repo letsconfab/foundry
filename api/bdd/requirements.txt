@@ -1,0 +1,4 @@
+behave>=1.2.6
+requests>=2.31.0
+pytest>=8.0.0
+responses>=0.25.0

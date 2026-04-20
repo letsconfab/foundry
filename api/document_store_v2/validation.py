@@ -72,6 +72,20 @@ EXTENSION_MIME_MAP = {
 # Characters not allowed in filenames
 UNSAFE_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
+# Blocked file extensions (executables and scripts)
+BLOCKED_EXTENSIONS = {
+    ".exe",
+    ".sh",
+    ".bin",
+    ".bat",
+    ".cmd",
+    ".com",
+    ".msi",
+    ".dll",
+    ".scr",
+    ".ps1",
+}
+
 # Path traversal patterns
 PATH_TRAVERSAL_PATTERN = re.compile(r'(^|[\\/])\.\.($|[\\/])')
 
@@ -123,6 +137,15 @@ def validate_upload(
             is_valid=False,
             error="File is empty",
             original_size=0,
+        )
+
+    # Check for blocked file extensions
+    ext = os.path.splitext(filename.lower())[1]
+    if ext in BLOCKED_EXTENSIONS:
+        return ValidationResult(
+            is_valid=False,
+            error=f"File extension '{ext}' is not allowed",
+            original_size=original_size,
         )
 
     # Detect actual MIME type via magic bytes
