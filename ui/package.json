@@ -1,6 +1,6 @@
 {
       "name": "Let's Confab Website",
-      "version": "0.1.0",
+      "version": "0.2.1",
       "private": true,
       "dependencies": {
             "@radix-ui/react-accordion": "^1.2.3",
@@ -51,15 +51,18 @@
             "vaul": "^1.1.2"
       },
       "devDependencies": {
+            "@tailwindcss/vite": "^4.2.2",
             "@types/node": "^20.10.0",
             "@types/react": "^18.2.0",
             "@types/react-dom": "^18.2.0",
             "@types/react-router-dom": "^5.3.3",
             "@vitejs/plugin-react-swc": "^3.10.2",
+            "typescript": "^6.0.2",
             "vite": "6.3.5"
       },
       "scripts": {
             "dev": "vite --port 3002",
-            "build": "vite build"
+            "build": "vite build",
+            "type-check": "tsc --noEmit"
       }
 }

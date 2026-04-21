@@ -23,15 +23,67 @@ STEP_DESCRIPTIONS = {
     7: "Review and finalize"
 }
 
-# Prompts to guide users through each stage
+# Interview-style prompts for each stage (synced with STAGE_QUESTIONS in foreman.py)
 STAGE_PROMPTS = {
-    "purpose": "What would you like this agent to do? Describe its main purpose and objectives.",
-    "participants": "Who should have access to this agent? You can add participant emails or skip this step.",
-    "memory": "Should this agent remember conversation history? Let me know your memory preferences.",
-    "tools": "What external tools or APIs should this agent have access to?",
-    "guardrails": "What safety constraints or behavioral boundaries should this agent have?",
-    "sample_io": "Would you like to provide example inputs and expected outputs to guide the agent's behavior?",
-    "review": "Let's review what we've configured and finalize your agent."
+    "purpose": """What should this agent do?
+
+Examples:
+- "A customer support bot that handles refund requests and tracks order status"
+- "An internal assistant that answers questions about company policies"
+- "A code reviewer that checks for security issues and suggests fixes"
+
+What's your agent's main job?""",
+
+    "participants": """Who should have access to this agent?
+
+Examples:
+- "My team: alice@company.com, bob@company.com, carol@company.com"
+- "The support department - I'll add their emails"
+- "Just me for now"
+
+Enter email addresses or say 'skip':""",
+
+    "memory": """Should this agent remember previous conversations?
+
+Examples:
+- "Yes, remember everything"
+- "Just this conversation"
+- "No memory needed"
+
+Your preference:""",
+
+    "tools": """What external tools or APIs does this agent need?
+
+Examples:
+- "Web search and our internal database"
+- "Slack and calendar integrations"
+- "None - just conversations"
+
+What tools does it need:""",
+
+    "guardrails": """What rules should this agent follow?
+
+Examples:
+- "Never share customer financial data. Escalate complaints over $500."
+- "Only discuss our products. Don't mention competitors."
+- "Be polite. If unsure, say so rather than guessing."
+
+Your rules:""",
+
+    "sample_io": """Show me an example of how this agent should respond.
+
+Examples:
+- "User: How do I return an item? Agent: I'd be happy to help. Could you provide your order number?"
+- "User: What's our vacation policy? Agent: Full-time employees get 15 days PTO annually."
+
+Your example:""",
+
+    "review": """Ready to save and deploy this agent?
+
+You can say:
+- "Yes, save it"
+- "Change the guardrails to..."
+- "Show me the configuration again\""""
 }
 
 
@@ -67,21 +119,19 @@ class ResumePromptGenerator:
         return self._general_resume_prompt()
 
     def _new_confab_prompt(self) -> str:
-        """Generate welcome prompt for a brand new confab."""
+        """Generate interview-style welcome prompt for a brand new confab."""
         confab_name = self.confab.name or "your new agent"
 
-        return f"""Welcome! I'm the Foreman, and I'll be helping you build '{confab_name}'.
+        return f"""Hi, I'm the Foreman. I'll help you build '{confab_name}' through a quick conversation.
 
-I'll guide you through a simple 7-step process to configure your agent:
-1. Define purpose - What should your agent do?
-2. Add participants - Who can access it?
-3. Configure memory - Should it remember conversations?
-4. Set up tools - What external capabilities does it need?
-5. Establish guardrails - What are its safety boundaries?
-6. Sample I/O - Provide example interactions
-7. Review - Finalize your configuration
+Let's start with the basics: **What should this agent do?**
 
-Let's start with the most important part: **{STAGE_PROMPTS['purpose']}**"""
+Here are some examples:
+- "A customer support bot that handles refund requests and tracks order status"
+- "An internal assistant that answers questions about company policies"
+- "A code reviewer that checks for security issues and suggests fixes"
+
+What's your agent's main job?"""
 
     def _pending_question_prompt(self, last_assistant_message: str) -> str:
         """Remind user of a pending question from the assistant."""

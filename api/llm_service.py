@@ -344,9 +344,74 @@ Respond with valid JSON only."""
     return await ask_llm_json(prompt, "tools extraction")
 
 
-async def extract_guardrails(user_message: str) -> ExtractionResult:
-    """Extract safety guardrails from user message."""
-    prompt = f"""Analyze this user message about safety guardrails for an AI agent.
+async def extract_documents_intent(user_message: str) -> ExtractionResult:
+    """Extract document upload intent from user message.
+
+    Handles three scenarios:
+    1. User wants to skip uploading documents
+    2. User has uploaded documents (confirm completion)
+    3. User wants to upload but hasn't yet (clarify)
+    """
+    prompt = f"""Analyze this user message about uploading documents for an AI agent.
+
+User message: "{user_message}"
+
+The user is being asked if they want to upload reference documents (PDFs, text files, etc.)
+for the agent to use as knowledge.
+
+Determine the user's intent and return JSON with these fields:
+{{
+    "wants_to_skip": true/false (user says skip, no, none, not now, later, etc.),
+    "has_uploads": true/false (user confirms they've uploaded documents or says "I've uploaded X"),
+    "wants_to_upload": true/false (user wants to upload but hasn't yet),
+    "document_count": number or null (if they mention a count),
+    "clarification_needed": null or "A question if unclear"
+}}
+
+Examples:
+- "skip" -> wants_to_skip: true
+- "no documents" -> wants_to_skip: true
+- "I've uploaded the PDF" -> has_uploads: true
+- "yes, I'll upload some files" -> wants_to_upload: true
+- "here are my docs" -> has_uploads: true
+
+Respond with valid JSON only."""
+
+    return await ask_llm_json(prompt, "documents intent extraction")
+
+
+async def extract_guardrails(user_message: str, existing_guardrails: str = None) -> ExtractionResult:
+    """Extract safety guardrails from user message.
+
+    Args:
+        user_message: The user's message about guardrails
+        existing_guardrails: Optional existing guardrails text for update context
+    """
+    if existing_guardrails:
+        # Update mode: user is modifying existing guardrails
+        prompt = f"""The user wants to update existing guardrails for an AI agent.
+
+Current guardrails:
+{existing_guardrails}
+
+User's update request: "{user_message}"
+
+Apply the user's requested changes to the existing guardrails. The user may reference rules by number (e.g., "the second rule", "rule 2") or by content.
+
+Return JSON with:
+{{
+    "guardrails_text": "The COMPLETE updated list of rules as a STRING with numbered rules, one per line",
+    "rules_count": number of rules in the updated list,
+    "wants_to_skip": false,
+    "clarification_needed": null or "A question if the update request is unclear"
+}}
+
+IMPORTANT: Return the FULL updated guardrails list, not just the changed rule.
+
+Respond with valid JSON only."""
+    else:
+        # New guardrails mode
+        prompt = f"""Analyze this user message about safety guardrails for an AI agent.
 
 User message: "{user_message}"
 

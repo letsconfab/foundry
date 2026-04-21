@@ -139,6 +139,10 @@ All variables from `api/.env.example` apply, with these adjustments:
 | `GITHUB_BACKEND_REDIRECT_URI` | Production API callback URL |
 | `GITHUB_FRONTEND_REDIRECT_URI` | Production frontend callback URL |
 | `VITE_API_URL` (frontend build-time) | Production API base URL |
+| `FOREMAN_V3_ENABLED` | `true` to enable LangGraph Foreman (default: `false`) |
+| `REGISTRY_GITHUB_TOKEN` | Server-side GitHub PAT for email/password user registry commits |
+| `REGISTRY_REPO_OWNER` | Registry repo owner (default: `letsconfab`) |
+| `REGISTRY_REPO_NAME` | Registry repo name (default: `registry`) |
 
 ### Infrastructure Considerations
 

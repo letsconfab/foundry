@@ -2,166 +2,183 @@
 
 ## Overview
 
-The Document Store provides confab-specific RAG (Retrieval-Augmented Generation) capabilities. Each confab has an isolated document collection for storing and semantically searching uploaded documents and approved learnings.
+PostgreSQL-native versioned document storage with compression. Each confab can store reference documents (PDFs, text files, office documents, images) with append-only version history and zstd compression.
 
-## Purpose
+Replaces V1 (ChromaDB-based RAG with embeddings and chunking), which was removed in migration `8538d84e49b6`.
 
-Enable confabs to:
-- Store reference documents (PDFs, text, markdown)
-- Perform semantic search across their knowledge base
-- Retrieve relevant context for answering user queries
-- Build up domain-specific knowledge over time
-
-## Supported Document Types
-
-| Type | MIME Type | Storage | Notes |
-|------|-----------|---------|-------|
-| Plain Text | `text/plain` | Database | Raw content stored in `raw_content` column |
-| Markdown | `text/markdown` | Database | YAML frontmatter stripped before chunking |
-| PDF | `application/pdf` | File system | Extracted text stored, original file in `data/uploads/` |
+---
 
 ## Architecture
 
-### Storage Layers
+### Storage
 
-1. **PostgreSQL (metadata)**
-   - `confab_documents` - Document records and status
-   - `document_chunks` - Chunk content and vector references
+All document data lives in PostgreSQL — no external vector store or embedding service:
 
-2. **ChromaDB (vectors)**
-   - Per-confab collections: `confab_{id}_documents`
-   - Stores embeddings for semantic search
-   - Includes both document chunks and approved learnings
+- **`confab_documents_v2`** — Document metadata, identity, and status
+- **`document_versions`** — Immutable, append-only version records with compressed binary content
 
-3. **File System (PDFs)**
-   - Location: `api/data/uploads/confab_{id}/`
-   - Original PDF files for re-processing if needed
+Content is stored as `LargeBinary` (`content_blob`) compressed with zstd. Each version includes a SHA-256 hash for deduplication checks.
 
-### Isolation Model
+### Compression
 
-Each confab gets a dedicated ChromaDB collection. This ensures:
-- Complete data isolation between confabs
-- Independent deletion/clearing per confab
-- No cross-contamination of search results
+Uses the `zstandard` library (zstd) at compression level 3:
 
-## Chunking Strategy
+- All uploaded content is compressed before storage
+- Decompressed on retrieval
+- Compression ratio tracked per version (`original_size` / `compressed_size`)
 
-Documents are split using LangChain's `RecursiveCharacterTextSplitter`:
+### Encryption (Phase 2 — not yet active)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `chunk_size` | 500 | Target chunk size in characters |
-| `chunk_overlap` | 50 | Overlap between consecutive chunks |
-| Separators | `\n\n`, `\n`, `. `, ` `, `` | Hierarchy of split points |
+Schema includes fields for AES-256-GCM encryption (`encryption_key_id`, `encryption_iv`, `encryption_tag`) but these are nullable and unused in Phase 1.
 
-Position tracking (`start_char`, `end_char`) enables locating chunks in source documents.
+---
 
-## Embedding Providers
+## Supported Document Types
 
-### Sentence Transformers (Default)
+Validated via magic bytes (not file extension) using `python-magic`:
 
-Local embedding with no API dependencies.
+| Category | Types |
+|----------|-------|
+| Text | plain text, markdown, CSV |
+| Structured | JSON, YAML, TOML |
+| PDF | application/pdf |
+| Office | DOCX, XLSX |
+| Images | PNG, JPEG, GIF, WebP, TIFF (for future OCR) |
 
-| Model | Dimensions | Use Case |
-|-------|------------|----------|
-| `all-MiniLM-L6-v2` | 384 | Fast, general-purpose (default) |
-| `all-mpnet-base-v2` | 768 | Higher quality, slower |
+### Validation Rules
 
-### Ollama
+- **Max file size:** 50 MB
+- **Empty files:** Rejected
+- **MIME detection:** Magic bytes first, extension fallback for `text/plain`
+- **Filename sanitization:** Path traversal prevention, unsafe character removal, unicode normalization (NFC), length truncation to 255 characters
 
-Local embedding via Ollama server.
+---
 
-| Model | Dimensions |
-|-------|------------|
-| `nomic-embed-text` | 768 |
-| `mxbai-embed-large` | 1024 |
+## Versioning
 
-Requires `OLLAMA_BASE_URL` environment variable.
+Each document has an append-only history of `DocumentVersion` records:
 
-### OpenAI
+- Versions are numbered sequentially (1, 2, 3, ...)
+- Content is never modified after creation — new versions are appended
+- Each version stores: compressed content blob, SHA-256 hash, original/compressed sizes
+- Text extraction status tracked per version (`pending`, `completed`, `failed`)
 
-External embedding via OpenAI API.
-
-| Model | Dimensions |
-|-------|------------|
-| `text-embedding-3-small` | 1536 |
-| `text-embedding-3-large` | 3072 |
-
-Requires `OPENAI_API_KEY` environment variable.
-
-## Configuration
-
-### Environment Variables
-
-```bash
-DOCUMENT_STORE_ENABLED=true
-CHROMADB_PERSIST_DIR=./data/chromadb
-UPLOAD_DIR=./data/uploads
-EMBEDDING_PROVIDER=sentence_transformers
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-CHUNK_SIZE=500
-CHUNK_OVERLAP=50
-```
-
-### Per-Confab Configuration
-
-Stored in `Confab.config` JSON field:
-
-```json
-{
-  "document_store": {
-    "enabled": true,
-    "embedding_provider": "sentence_transformers",
-    "embedding_model": "all-MiniLM-L6-v2"
-  }
-}
-```
-
-## MCP Tools
-
-Available to Foreman and deployed confabs:
-
-| Tool | Description |
-|------|-------------|
-| `upload_document` | Upload and index a document |
-| `list_documents` | List all documents in the store |
-| `delete_document` | Remove a document |
-| `search_documents` | Semantic search with top-k results |
-| `get_context_for_query` | Get formatted RAG context |
-| `reindex_documents` | Re-embed all documents |
-| `sync_learnings` | Index approved learnings |
-| `clear_document_store` | Delete all documents and vectors |
+---
 
 ## API Endpoints
 
+9 endpoints replacing V1's 6:
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/confabs/{id}/documents` | Upload document (multipart) |
-| GET | `/confabs/{id}/documents` | List documents |
-| GET | `/confabs/{id}/documents/{doc_id}` | Get document details |
-| DELETE | `/confabs/{id}/documents/{doc_id}` | Delete document |
-| POST | `/confabs/{id}/documents/search` | Semantic search |
-| GET | `/confabs/{id}/documents/stats` | Get store statistics |
+| `POST` | `/confabs/{id}/documents` | Upload document (JSON body with base64 content) |
+| `GET` | `/confabs/{id}/documents` | List active documents |
+| `GET` | `/confabs/{id}/documents/{doc_id}` | Get document metadata |
+| `DELETE` | `/confabs/{id}/documents/{doc_id}` | Archive (soft delete) |
+| `GET` | `/confabs/{id}/documents/{doc_id}/versions` | List all versions |
+| `GET` | `/confabs/{id}/documents/{doc_id}/versions/latest` | Get latest version content |
+| `GET` | `/confabs/{id}/documents/{doc_id}/versions/{num}` | Get specific version content |
+| `POST` | `/confabs/{id}/documents/{doc_id}/versions` | Create new version |
+| `GET` | `/documents/accepted-formats` | Get accepted formats and UI hints |
 
-## Learning Integration
+### Key Differences from V1
 
-Approved `ConfabLearning` records are automatically indexed:
-- Stored in same ChromaDB collection as documents
-- Metadata includes `type: "learning"` for filtering
-- Indexed on approval status change
-- Can be synced in bulk via `sync_learnings` tool
+- Upload accepts JSON body with `content_base64` (not multipart/form-data)
+- Delete is a soft-delete (archives the document, preserves data)
+- Semantic search and stats endpoints removed (no vector store)
+- Version management endpoints added
 
-## Retrieval Flow
+---
 
-1. User query received
-2. Generate query embedding
-3. Search ChromaDB collection (documents + learnings)
-4. Return top-k relevant chunks with scores
-5. Optionally assemble into formatted context for LLM
+## Request/Response Schemas
 
-## Limitations
+### Upload Request
 
-- Maximum document size: 10 MB (configurable)
-- PDF text extraction quality depends on document structure
-- Embedding model switch requires full reindex
-- No OCR for scanned PDFs (text-based extraction only)
+```json
+{
+  "filename": "report.pdf",
+  "content_base64": "JVBERi0xLjQ...",
+  "content_type": "application/pdf",
+  "metadata": {"author": "Jane", "tags": ["quarterly"]}
+}
+```
+
+### Document Response
+
+```json
+{
+  "id": 1,
+  "document_uuid": "550e8400-e29b-41d4-a716-446655440000",
+  "confab_id": 42,
+  "filename": "report.pdf",
+  "content_type": "application/pdf",
+  "source": "upload",
+  "status": "active",
+  "version_count": 2,
+  "latest_version": {
+    "id": 3,
+    "version_number": 2,
+    "content_hash": "a1b2c3...",
+    "original_size": 45000,
+    "compressed_size": 12000,
+    "compression_ratio": 0.267,
+    "text_extraction_status": "pending",
+    "created_at": "2026-04-07T12:00:00Z"
+  },
+  "created_at": "2026-04-06T10:00:00Z"
+}
+```
+
+### Version Content Response
+
+```json
+{
+  "document_id": 1,
+  "document_uuid": "550e8400-...",
+  "version_number": 2,
+  "filename": "report.pdf",
+  "content_type": "application/pdf",
+  "content_base64": "JVBERi0xLjQ...",
+  "original_size": 45000,
+  "extracted_text": null
+}
+```
+
+---
+
+## Foreman Integration
+
+Foreman V3 includes a **documents** stage (step 4 of 8) that integrates with the upload UI:
+
+1. When Foreman reaches the documents stage, the responder sends `ui_hint: "show_upload_panel"` in the response metadata
+2. The frontend's `DocumentUploadDialog` component auto-opens (drag-and-drop UI)
+3. User uploads files via `POST /confabs/{id}/documents` (V2 API)
+4. User says "done" or "skip" to continue to the next stage
+
+The `DocumentStageHint` schema provides accepted formats and size limits to the frontend.
+
+---
+
+## Implementation Files
+
+| File | Purpose |
+|------|---------|
+| `api/document_store_v2/__init__.py` | Package init and exports |
+| `api/document_store_v2/service.py` | `DocumentServiceV2` class — upload, version, list, archive |
+| `api/document_store_v2/schemas.py` | Pydantic request/response schemas |
+| `api/document_store_v2/validation.py` | Upload validation, MIME detection, filename sanitization |
+| `api/document_store_v2/compression.py` | zstd compress/decompress utilities |
+
+---
+
+## Migration from V1
+
+V1 used ChromaDB vector collections, embedding providers (Sentence Transformers, Ollama, OpenAI), and chunking via LangChain's `RecursiveCharacterTextSplitter`. It was removed because:
+
+- External vector store dependency (ChromaDB) added operational complexity
+- Embedding model management was brittle (model switch required full reindex)
+- The platform's current needs are document storage and versioning, not semantic search
+
+V1 tables (`confab_documents`, `document_chunks`) were dropped in Alembic migration `8538d84e49b6`. V1 dependencies (chromadb, sentence-transformers, pypdf) were removed from `requirements.txt`.
+
+Semantic search may be re-added in a future phase with a different approach.

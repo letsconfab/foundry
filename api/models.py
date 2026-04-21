@@ -1,4 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, JSON, Float
+import uuid
+
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, JSON, Float, LargeBinary
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -134,6 +137,7 @@ class Thread(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(500), nullable=False)  # was thread_name
     owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # denormalized for quick lookup
+    conversation_mode = Column(String(30), nullable=True)  # "foreman_build" | "confab_runtime" | "multi_agent_workspace"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
@@ -198,65 +202,95 @@ class Message(Base):
     replies = relationship("Message", backref="parent", remote_side=[id])
 
 
-class ConfabDocument(Base):
+# =============================================================================
+# Document Store V2 Models (with versioning, compression, encryption)
+# =============================================================================
+
+
+class ConfabDocumentV2(Base):
     """
-    Document uploaded to a confab's document store for RAG retrieval.
-    Stored locally (not synced to GitHub). Vector embeddings in ChromaDB.
+    Document metadata with versioning support (V2).
+
+    Replaces ConfabDocument with proper version tracking.
+    Content is stored in DocumentVersion records.
     """
-    __tablename__ = "confab_documents"
+    __tablename__ = "confab_documents_v2"
 
     id = Column(Integer, primary_key=True, index=True)
-    confab_id = Column(Integer, ForeignKey("confabs.id"), nullable=False)
+    confab_id = Column(Integer, ForeignKey("confabs.id", ondelete="CASCADE"), nullable=False)
 
-    # File info
-    filename = Column(String(500), nullable=False)
-    content_type = Column(String(100), nullable=False)  # text/plain, text/markdown, application/pdf
-    source = Column(String(50), nullable=False, default="upload")  # upload, url, manual
-    source_url = Column(String(2000), nullable=True)  # if imported from URL
+    # Identity
+    document_uuid = Column(UUID(as_uuid=True), default=uuid.uuid4, nullable=False)
+    filename = Column(String(255), nullable=False)  # Sanitized filename
+    original_content_type = Column(String(100), nullable=False)
 
-    # Content storage
-    content_hash = Column(String(64), nullable=False)  # SHA-256 for deduplication
-    raw_content = Column(Text, nullable=True)  # for text/markdown
-    file_path = Column(String(500), nullable=True)  # for PDFs (stored on disk)
+    # Source tracking
+    source = Column(String(50), nullable=False, default="upload")  # upload, url, api
+    source_url = Column(String(2000), nullable=True)
 
-    # Indexing state
-    chunk_count = Column(Integer, nullable=False, default=0)
-    status = Column(String(20), nullable=False, default="pending")  # pending, indexed, failed
-    error_message = Column(Text, nullable=True)  # if status is failed
+    # Status
+    status = Column(String(20), nullable=False, default="active")  # active, archived
 
-    # Custom metadata
-    metadata_json = Column(JSON, nullable=True)  # author, date, tags, etc.
-
+    # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
-    confab = relationship("Confab", backref="documents")
-    chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+    confab = relationship("Confab", backref="documents_v2")
+    versions = relationship(
+        "DocumentVersion",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="DocumentVersion.version_number.desc()"
+    )
+
+    # Unique constraint on confab_id + document_uuid
+    __table_args__ = (
+        {"extend_existing": True},
+    )
 
 
-class DocumentChunk(Base):
+class DocumentVersion(Base):
     """
-    Individual chunk of a document with reference to vector embedding.
-    Content stored here, embedding stored in ChromaDB.
+    Immutable document version with compressed (and optionally encrypted) content.
+
+    Each version is append-only - content is never modified after creation.
     """
-    __tablename__ = "document_chunks"
+    __tablename__ = "document_versions"
 
     id = Column(Integer, primary_key=True, index=True)
-    document_id = Column(Integer, ForeignKey("confab_documents.id"), nullable=False)
+    document_id = Column(Integer, ForeignKey("confab_documents_v2.id", ondelete="CASCADE"), nullable=False)
 
-    # Chunk content
-    chunk_index = Column(Integer, nullable=False)  # position in document (0-indexed)
-    content = Column(Text, nullable=False)
+    # Version info
+    version_number = Column(Integer, nullable=False)
 
-    # Position in original document
-    start_char = Column(Integer, nullable=True)
-    end_char = Column(Integer, nullable=True)
+    # Content storage (compressed, optionally encrypted)
+    content_blob = Column(LargeBinary, nullable=False)  # zstd compressed (+ encrypted in Phase 2)
+    content_hash = Column(String(64), nullable=False)  # SHA-256 of original content
+    original_size = Column(Integer, nullable=False)  # Size before compression
+    compressed_size = Column(Integer, nullable=False)  # Size after compression
 
-    # Reference to vector in ChromaDB
-    vector_id = Column(String(100), nullable=False)  # ID in ChromaDB collection
+    # Encryption metadata (Phase 2 - nullable for now)
+    encryption_key_id = Column(String(64), nullable=True)  # Reference to key
+    encryption_iv = Column(LargeBinary, nullable=True)  # AES-GCM IV (12 bytes)
+    encryption_tag = Column(LargeBinary, nullable=True)  # AES-GCM auth tag (16 bytes)
 
+    # Extracted text (for display/search)
+    extracted_text = Column(Text, nullable=True)
+    text_extraction_status = Column(String(20), default="pending")  # pending, completed, failed
+
+    # Metadata
+    metadata_json = Column(JSON, nullable=True)  # page_count, author, etc.
+
+    # Timestamps and audit
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Relationships
-    document = relationship("ConfabDocument", back_populates="chunks")
+    document = relationship("ConfabDocumentV2", back_populates="versions")
+    creator = relationship("User", foreign_keys=[created_by])
+
+    # Unique constraint on document_id + version_number
+    __table_args__ = (
+        {"extend_existing": True},
+    )

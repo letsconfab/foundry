@@ -18,10 +18,10 @@ langchain==1.2.12
 langchain-core==1.2.19
 langchain-community==0.4.1
 langgraph==1.1.2
+langgraph-checkpoint-postgres>=2.0.0
 langchain-groq>=0.2.0
 mcp==1.0.0
 
-# Document Store & RAG
-chromadb>=0.4.0
-sentence-transformers>=2.2.0
-pypdf>=3.17.0
+# Document Store V2 (Versioned with compression/encryption)
+zstandard>=0.21.0
+python-magic>=0.4.27

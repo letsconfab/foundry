@@ -2,6 +2,7 @@ import React from 'react';
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Header } from './components/Header';
+import { Footer } from './components/Footer';
 import { HeroSection } from './components/HeroSection';
 import { AgentChat } from './components/AgentChat';
 import { AgentDashboard } from './components/AgentDashboard';
@@ -10,13 +11,11 @@ import { MultiAgentBuilder } from './components/MultiAgentBuilder';
 import { Login } from './components/Login';
 import { Register } from './components/Register';
 import { ConfabChat } from './components/ConfabChat';
-import { ConfigureConfab } from './components/ConfigureConfab';
-import { ConfigureConfabWithThreads } from './components/ConfigureConfabWithThreads';
-import { ReviewChats } from './components/ReviewChats';
 import { GitHubCallback } from './components/GitHubCallback';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat' | 'configure' | 'review-chats';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat';
 
 function AppContent() {
   const { isLoggedIn, isLoading, user } = useAuth();
@@ -45,10 +44,10 @@ function AppContent() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className="text-slate-600">Loading...</p>
+          <p className="text-slate-600 dark:text-slate-400">Loading...</p>
         </div>
       </div>
     );
@@ -56,19 +55,18 @@ function AppContent() {
 
   return (
     <Router>
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 flex flex-col">
         <Routes>
           <Route path="/auth/github/callback" element={<GitHubCallback />} />
           <Route path="/*" element={
             <>
-              <Header 
-                currentView={currentView} 
-                onNavigate={handleNavigate} 
-                isLoggedIn={isLoggedIn}
+              <Header
+                currentView={currentView}
+                onNavigate={handleNavigate}
                 user={user}
               />
-              
-              <main>
+
+              <main className="flex-1">
                 {currentView === 'home' && <HeroSection onNavigate={handleNavigate} />}
                 {currentView === 'login' && <Login onNavigate={handleNavigate} />}
                 {currentView === 'register' && <Register onNavigate={handleNavigate} />}
@@ -76,10 +74,10 @@ function AppContent() {
                 {currentView === 'dashboard' && <AgentDashboard onNavigate={handleNavigate} />}
                 {currentView === 'deploy' && <DeploymentPanel onNavigate={handleNavigate} />}
                 {currentView === 'multi-agent' && <MultiAgentBuilder onNavigate={handleNavigate} />}
-                {currentView === 'confab-chat' && <ConfabChat onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} />}
-                {currentView === 'configure' && <ConfigureConfabWithThreads onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} confabId={selectedConfabId} />}
-                {currentView === 'review-chats' && <ReviewChats onNavigate={handleNavigate} />}
+                {currentView === 'confab-chat' && <ConfabChat onNavigate={handleNavigate} confabName={selectedConfabName} version={selectedConfabVersion} confabId={selectedConfabId} />}
               </main>
+
+              <Footer />
             </>
           } />
         </Routes>
@@ -90,8 +88,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

@@ -25,37 +25,35 @@ export function Register({ onNavigate }: RegisterProps) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const { register, githubLogin } = useAuth();
+  const hasStartedTyping = name.length > 0 || email.length > 0 || password.length > 0 || confirmPassword.length > 0;
+  const passwordTooShort = password.length > 0 && password.length < 6;
+  const passwordsMismatch = confirmPassword.length > 0 && password !== confirmPassword;
+  const isMissingProfileFields = hasStartedTyping && (!name.trim() || !email.trim() || !country || !timezone);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Register: Form submitted');
     setError('');
     setSuccess('');
     
     // Validation
     if (!name || !email || !password || !country || !timezone) {
-      console.log('Register: Validation failed - missing fields');
       setError('Please fill in all fields');
       return;
     }
     
     if (password !== confirmPassword) {
-      console.log('Register: Validation failed - passwords do not match');
       setError('Passwords do not match');
       return;
     }
     
     if (password.length < 6) {
-      console.log('Register: Validation failed - password too short');
       setError('Password must be at least 6 characters long');
       return;
     }
 
-    console.log('Register: Validation passed, calling register function');
     setIsLoading(true);
     
     try {
-      console.log('Register: About to call register API with:', { name, email, country, timezone });
       await register({
         name,
         email,
@@ -63,16 +61,13 @@ export function Register({ onNavigate }: RegisterProps) {
         country,
         timezone
       });
-      console.log('Register: Register API call successful');
       setSuccess('Account created successfully! Redirecting to your dashboard...');
       window.setTimeout(() => {
         onNavigate('dashboard');
       }, 600);
     } catch (err: any) {
-      console.error('Register: Register API call failed:', err);
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
-      console.log('Register: Setting isLoading to false');
       setIsLoading(false);
     }
   };
@@ -88,21 +83,25 @@ export function Register({ onNavigate }: RegisterProps) {
           <div className="w-16 h-16 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <MessageSquare className="w-8 h-8 text-white" />
           </div>
-          <h2 className="text-slate-900 mb-2">Create your account</h2>
-          <p className="text-slate-600">Start building AI agents with Let's Confab</p>
+          <h2 className="text-slate-900 dark:text-white mb-2">Create your account</h2>
+          <p className="text-slate-600 dark:text-slate-400">Start building AI agents with Let's Confab</p>
         </div>
 
         <Card className="p-6 sm:p-8">
+          <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
+            Create an account with email, or use GitHub if you want sign-in and repository access to live under one identity.
+          </div>
+
           {success && (
-            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md flex items-center gap-2">
+            <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-md flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-green-600" />
-              <span className="text-sm text-green-800">{success}</span>
+              <span className="text-sm text-green-800 dark:text-green-400">{success}</span>
             </div>
           )}
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md flex items-center gap-2">
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-md flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-500" />
-              <span className="text-sm text-red-700">{error}</span>
+              <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
             </div>
           )}
 
@@ -115,9 +114,11 @@ export function Register({ onNavigate }: RegisterProps) {
                   id="name"
                   type="text"
                   placeholder="John Smith"
+                  autoComplete="name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="pl-10"
+                  aria-invalid={isMissingProfileFields && !name.trim()}
                   required
                   disabled={isLoading}
                 />
@@ -132,9 +133,11 @@ export function Register({ onNavigate }: RegisterProps) {
                   id="email"
                   type="email"
                   placeholder="you@example.com"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="pl-10"
+                  aria-invalid={isMissingProfileFields && !email.trim()}
                   required
                   disabled={isLoading}
                 />
@@ -149,13 +152,18 @@ export function Register({ onNavigate }: RegisterProps) {
                   id="password"
                   type="password"
                   placeholder="Create a password"
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-10"
+                  aria-invalid={passwordTooShort}
                   required
                   disabled={isLoading}
                 />
               </div>
+              <p className={`text-xs ${passwordTooShort ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                Use at least 6 characters.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -166,13 +174,20 @@ export function Register({ onNavigate }: RegisterProps) {
                   id="confirmPassword"
                   type="password"
                   placeholder="Confirm your password"
+                  autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   className="pl-10"
+                  aria-invalid={passwordsMismatch}
                   required
                   disabled={isLoading}
                 />
               </div>
+              {passwordsMismatch && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Passwords need to match before you can create the account.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -198,6 +213,9 @@ export function Register({ onNavigate }: RegisterProps) {
                   <SelectItem value="other">Other</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                This helps tailor default region and collaboration settings later.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -238,20 +256,28 @@ export function Register({ onNavigate }: RegisterProps) {
                   <SelectItem value="utc+12">UTC+12:00 (Auckland)</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Choose the timezone you want schedules and timestamps to default to.
+              </p>
             </div>
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'Creating account...' : 'Create account'}
             </Button>
+            {(isMissingProfileFields || passwordTooShort || passwordsMismatch) && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Finish the required profile fields and resolve password warnings before submitting.
+              </p>
+            )}
           </form>
 
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-200" />
+                <div className="w-full border-t border-slate-200 dark:border-slate-700" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-slate-500">Or continue with</span>
+                <span className="px-2 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400">Or continue with</span>
               </div>
             </div>
 
@@ -270,7 +296,7 @@ export function Register({ onNavigate }: RegisterProps) {
           </div>
 
           <div className="mt-6 text-center">
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-600 dark:text-slate-400">
               Already have an account?{' '}
               <button
                 onClick={() => onNavigate('login')}
@@ -283,15 +309,8 @@ export function Register({ onNavigate }: RegisterProps) {
           </div>
         </Card>
 
-        <p className="mt-6 text-center text-xs text-slate-500">
-          By creating an account, you agree to our{' '}
-          <a href="#" className="text-indigo-600 hover:text-indigo-500">
-            Terms of Service
-          </a>{' '}
-          and{' '}
-          <a href="#" className="text-indigo-600 hover:text-indigo-500">
-            Privacy Policy
-          </a>
+        <p className="mt-6 text-center text-xs text-slate-500 dark:text-slate-400">
+          By creating an account, you agree to the Terms of Service and Privacy Policy.
         </p>
       </div>
     </div>

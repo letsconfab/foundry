@@ -55,7 +55,9 @@ All backend code lives in flat Python modules at the top of `/api`:
 | `auth.py` | JWT token generation/verification, password hashing |
 | `github_oauth.py` | GitHub OAuth flow, GitHub API client functions |
 | `github_service.py` | GitHub repository operations (create repos, branches, PRs, files) |
-| `foreman.py` | Foreman system agent: context loading, tool execution, directive conversation |
+| `foreman.py` | Foreman V2 system agent: context loading, tool execution, directive conversation |
+| `foreman_v3/` | Foreman V3: LangGraph StateGraph orchestrator (see `ForemanV3.md`) |
+| `document_store_v2/` | Versioned document storage service with compression (see `DocumentStore.md`) |
 | `context_loader.py` | Loads full context for Foreman (confab state, thread history, progress) |
 | `resume_generator.py` | Generates resume prompts based on current setup progress |
 | `llm_service.py` | LLM API integration (Groq API with qwen/qwen3-32b model) |
@@ -110,8 +112,9 @@ Conversations use a participant-based threading model:
 
 - **Provider:** Groq API
 - **Model:** qwen/qwen3-32b
-- **Temperature:** 0.7 (default)
+- **Temperature:** 0.7 (default), 0.1 for structured extraction (V2/V3 Foreman)
 - All LLM calls go through `llm_service.py` which handles the Groq API communication.
+- **LangGraph** (`langgraph` + `langgraph-checkpoint-postgres`) used by Foreman V3 for graph-based orchestration.
 
 ### Environment Variables
 
@@ -125,6 +128,10 @@ Defined in `api/.env` (copied from `api/.env.example`):
 - `APP_NAME`, `APP_VERSION`, `DEBUG` — Application metadata
 - `ALLOWED_ORIGINS` — Comma-separated CORS whitelist
 - `DEFAULT_CONFAB_REPO_OWNER`, `DEFAULT_CONFAB_REPO_NAME` — Default GitHub org/repo
+- `FOREMAN_V3_ENABLED` — Feature flag for LangGraph Foreman (default: `false`)
+- `REGISTRY_GITHUB_TOKEN` — Server-side GitHub PAT for email/password user registry commits
+- `REGISTRY_REPO_OWNER` — Registry repo owner (default: `letsconfab`)
+- `REGISTRY_REPO_NAME` — Registry repo name (default: `registry`)
 
 ---
 
@@ -190,6 +197,7 @@ ui/src/
 │   ├── Login.tsx          # Login form
 │   ├── Register.tsx       # Registration form
 │   ├── AgentChat.tsx      # Chat-based agent creation wizard
+│   ├── DocumentUploadDialog.tsx # Drag-and-drop document upload (Foreman documents stage)
 │   ├── AgentDashboard.tsx # Confab listing dashboard
 │   ├── DeploymentPanel.tsx # Deployment configuration
 │   ├── ConfabChat.tsx     # Chat with a deployed confab

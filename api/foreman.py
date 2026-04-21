@@ -1,6 +1,9 @@
 """
-Foreman Agent - Top-level orchestrator for confabs in 'building' status
-Handles context loading, resume prompts, and proactive conversation guidance.
+Foreman Agent (LEGACY) — V1/V2 orchestrator for confabs in 'building' status.
+
+DEPRECATED: This module is retained as a compatibility shim for emergency rollback.
+The canonical production implementation is foreman_v3/ (LangGraph StateGraph).
+Set FOREMAN_V3_ENABLED=false to fall back to this code.
 
 V2 Architecture (when FOREMAN_V2_ENABLED=true):
 - Deterministic stage machine with explicit transitions
@@ -21,6 +24,10 @@ from sqlalchemy.orm import Session
 # Feature flag for V2 deterministic interview flow
 FOREMAN_V2_ENABLED = os.getenv("FOREMAN_V2_ENABLED", "false").lower() == "true"
 
+# Feature flag for V3 LangGraph implementation (now default: true)
+# This copy is kept for imports that reference foreman.FOREMAN_V3_ENABLED
+FOREMAN_V3_ENABLED = os.getenv("FOREMAN_V3_ENABLED", "true").lower() == "true"
+
 from models import Confab, GitHubAccount
 from context_loader import ContextLoader, ForemanContext
 from resume_generator import ResumePromptGenerator, STAGE_PROMPTS, STEP_DESCRIPTIONS
@@ -35,7 +42,7 @@ from llm_service import (
     extract_sample_io,
     extract_review_intent,
 )
-from document_store.service import DocumentService
+from document_store_v2.service import DocumentServiceV2
 
 # Import tool functions at module level (not runtime)
 from agent_tools import (
@@ -73,17 +80,70 @@ class StageResult:
     summary: Optional[str] = None               # What was saved (for response)
     next_question: Optional[str] = None         # What to ask next
     error_message: Optional[str] = None         # If status == "error"
+    ui_hint: Optional[str] = None               # Frontend hint for stage-specific UX
 
 
-# Stage questions - the primary question for each stage
+# Interview-style questions with examples for each stage
 STAGE_QUESTIONS = {
-    "purpose": "What should this agent do? Describe its main job in a sentence or two.",
-    "participants": "Who should have access to this agent? You can add email addresses or skip for now.",
-    "memory": "Should this agent remember previous conversations? (yes, no, or limited)",
-    "tools": "What external tools or APIs does this agent need? (e.g., web search, database, none)",
-    "guardrails": "What safety boundaries should this agent follow? List any rules or restrictions.",
-    "sample_io": "Can you provide an example interaction? (e.g., 'User asks X, agent responds Y')",
-    "review": "Here's your agent configuration. Ready to save and deploy?",
+    "purpose": """What should this agent do?
+
+Examples:
+- "A customer support bot that handles refund requests and tracks order status"
+- "An internal assistant that answers questions about company policies"
+- "A code reviewer that checks for security issues and suggests fixes"
+
+What's your agent's main job?""",
+
+    "participants": """Who should have access to this agent?
+
+Examples:
+- "My team: alice@company.com, bob@company.com, carol@company.com"
+- "The support department - I'll add their emails"
+- "Just me for now"
+
+Enter email addresses or say 'skip':""",
+
+    "memory": """Should this agent remember previous conversations?
+
+Examples:
+- "Yes, remember everything"
+- "Just this conversation"
+- "No memory needed"
+
+Your preference:""",
+
+    "tools": """What external tools or APIs does this agent need?
+
+Examples:
+- "Web search and our internal database"
+- "Slack and calendar integrations"
+- "None - just conversations"
+
+What tools does it need:""",
+
+    "guardrails": """What rules should this agent follow?
+
+Examples:
+- "Never share customer financial data. Escalate complaints over $500."
+- "Only discuss our products. Don't mention competitors."
+- "Be polite. If unsure, say so rather than guessing."
+
+Your rules:""",
+
+    "sample_io": """Show me an example of how this agent should respond.
+
+Examples:
+- "User: How do I return an item? Agent: I'd be happy to help. Could you provide your order number?"
+- "User: What's our vacation policy? Agent: Full-time employees get 15 days PTO annually."
+
+Your example:""",
+
+    "review": """Ready to save and deploy this agent?
+
+You can say:
+- "Yes, save it"
+- "Change the guardrails to..."
+- "Show me the configuration again\"""",
 }
 
 # Clarification prompts when we need more info
@@ -97,31 +157,25 @@ STAGE_CLARIFICATIONS = {
     "review": "Would you like to make any changes, or shall I save this configuration?",
 }
 
-# Acknowledgment templates (short, no praise)
+# Natural transition acknowledgments
 STAGE_ACKNOWLEDGMENTS = {
-    "purpose": "Recorded the purpose.",
-    "participants": "Added participant.",
-    "memory": "Memory settings configured.",
-    "tools": "Tools configured.",
+    "purpose": "Got it. I've saved that purpose.",
+    "participants": "Noted.",
+    "memory": "Memory is configured.",
+    "tools": "Tools are set up.",
     "guardrails": "Guardrails saved.",
     "sample_io": "Example recorded.",
-    "review": "Configuration saved.",
+    "review": "Your agent is saved and ready to deploy.",
 }
 
 
 # System prompt for the Foreman agent
-FOREMAN_SYSTEM_PROMPT = """You are the Foreman, the lead orchestrator in the Agent Foundry. You guide users through building AI agents (called "confabs").
+FOREMAN_SYSTEM_PROMPT = """You are the Foreman, a friendly guide who helps users build AI agents (called "confabs") through a natural conversation.
 
-IMPORTANT: You must actively lead this conversation. Do not wait passively for the user to drive the process. After each user response, acknowledge what they said, save the relevant information using the appropriate tool, then proactively move to the next step.
+IMPORTANT: Lead the conversation like an interview, not a checklist. Focus on one topic at a time. After each user response, acknowledge what they said, save the information using the appropriate tool, then smoothly transition to the next topic.
 
-## The 7-Step Process
-1. **Define purpose** - What should the agent do? (CURRENT FOCUS if just starting)
-2. **Add participants** - Who can access it?
-3. **Configure memory** - Should it remember conversations?
-4. **Set up tools** - What external capabilities does it need?
-5. **Establish guardrails** - What are its safety boundaries?
-6. **Sample I/O** - Provide example interactions
-7. **Review** - Finalize the configuration
+## Conversation Flow
+Guide users through these topics in order: purpose, participants, memory, tools, guardrails, sample interactions, and final review. Do NOT list all topics upfront - reveal each one naturally as you progress.
 
 ## Available Tools
 CRITICAL: You MUST use these tools to save information. Without calling these tools, nothing is persisted!
@@ -171,10 +225,10 @@ When the user describes what their agent should do:
 4. Clear transition to the next step with a specific question
 
 ## Document Uploads
-When the user uploads documents, they are automatically chunked and indexed into the confab's knowledge base (ChromaDB vector store). You should:
-- Acknowledge when documents are uploaded and indexed
-- Mention the document name and chunk count when relevant
-- Explain that these documents will be available to the confab for RAG retrieval once it's deployed
+When the user uploads documents, they are stored in the confab's document store. You should:
+- Acknowledge when documents are uploaded
+- Mention the document name when relevant
+- Explain that these documents will be available to the confab once it's deployed
 
 {documents_context}
 
@@ -327,15 +381,15 @@ class Foreman:
     async def _get_documents_context(self) -> str:
         """Get formatted context about uploaded documents for this confab."""
         try:
-            doc_service = DocumentService(self.db)
-            documents = await doc_service.list_documents(self.confab_id)
+            doc_service = DocumentServiceV2(self.db)
+            response = await doc_service.list_documents(self.confab_id)
 
-            if not documents:
+            if not response.documents:
                 return "No documents have been uploaded to this confab yet."
 
-            doc_lines = [f"**Uploaded Documents ({len(documents)}):**"]
-            for doc in documents:
-                doc_lines.append(f"- {doc['filename']} ({doc['content_type']}, {doc['chunk_count']} chunks, status: {doc['status']})")
+            doc_lines = [f"**Uploaded Documents ({response.total}):**"]
+            for doc in response.documents:
+                doc_lines.append(f"- {doc.filename} ({doc.content_type}, {doc.version_count} version(s), status: {doc.status})")
 
             return "\n".join(doc_lines)
         except Exception as e:
@@ -687,13 +741,17 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 # Reload confab to get updated data for summary
                 self.db.refresh(self.confab)
                 if current_stage == "review":
-                    response_text = f"Updated {target_stage}.{self._build_config_summary()}\n\n{STAGE_QUESTIONS.get(current_stage, '')}"
+                    response_ack = f"Updated {target_stage}.{self._build_config_summary()}".strip()
                 else:
-                    response_text = f"Updated {target_stage}. {STAGE_QUESTIONS.get(current_stage, '')}"
+                    response_ack = f"Updated {target_stage}."
+                interview_prompt = STAGE_QUESTIONS.get(current_stage, "")
+                response_text = response_ack
             else:
-                response_text = self._render_foreman_reply(result, target_stage)
+                response_ack, interview_prompt = self._build_response_parts(result, target_stage)
+                response_text = response_ack
         else:
-            response_text = self._render_foreman_reply(result, current_stage)
+            response_ack, interview_prompt = self._build_response_parts(result, current_stage)
+            response_text = response_ack
             # Only advance stage for normal flow (not updates)
             if result.status in ("complete", "skip"):
                 await self._complete_stage(current_stage)
@@ -718,6 +776,9 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 "updated_stage": target_stage if is_update else None,
                 "saved_fields": result.data,
                 "next_question": result.next_question,
+                "response_ack": response_ack,
+                "interview_prompt": interview_prompt,
+                "ui_hint": result.ui_hint,
             }
         }
 
@@ -813,38 +874,41 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
 
     def _render_foreman_reply(self, result: StageResult, current_stage: str) -> str:
         """Render a consistent Foreman response from a StageResult."""
-        parts = []
+        response_ack, _ = self._build_response_parts(result, current_stage)
+        return response_ack
+
+    def _build_response_parts(self, result: StageResult, current_stage: str) -> Tuple[str, str]:
+        """Build the acknowledgment text and next-step prompt for a stage result."""
+        response_ack = ""
+        interview_prompt = ""
 
         if result.status == "error":
-            parts.append(result.error_message or "An error occurred.")
-            parts.append(STAGE_QUESTIONS.get(current_stage, "How would you like to proceed?"))
+            response_ack = result.error_message or "An error occurred."
+            interview_prompt = STAGE_QUESTIONS.get(current_stage, "How would you like to proceed?")
 
         elif result.status == "clarify":
-            if result.summary:
-                parts.append(result.summary)
-            parts.append(result.next_question or STAGE_CLARIFICATIONS.get(current_stage, "Could you provide more detail?"))
+            response_ack = result.summary or "I need a bit more detail."
+            interview_prompt = result.next_question or STAGE_CLARIFICATIONS.get(current_stage, "Could you provide more detail?")
 
         elif result.status == "skip":
-            parts.append("Skipping this step.")
+            response_ack = "Skipping this step."
             next_stage = self._next_stage_after(current_stage)
             if next_stage:
                 if next_stage == "review":
-                    parts.append(self._build_config_summary())
-                parts.append(STAGE_QUESTIONS.get(next_stage, ""))
+                    response_ack = f"{response_ack}\n\n{self._build_config_summary()}".strip()
+                interview_prompt = STAGE_QUESTIONS.get(next_stage, "")
 
         elif result.status == "complete":
-            # Acknowledgment + next question
-            ack = result.summary or STAGE_ACKNOWLEDGMENTS.get(current_stage, "Saved.")
-            parts.append(ack)
+            response_ack = result.summary or STAGE_ACKNOWLEDGMENTS.get(current_stage, "Saved.")
             next_stage = self._next_stage_after(current_stage)
             if next_stage:
                 if next_stage == "review":
-                    parts.append(self._build_config_summary())
-                parts.append(STAGE_QUESTIONS.get(next_stage, ""))
+                    response_ack = f"{response_ack}\n\n{self._build_config_summary()}".strip()
+                interview_prompt = STAGE_QUESTIONS.get(next_stage, "")
             else:
-                parts.append("All steps complete. Your agent is ready.")
+                interview_prompt = "All steps complete. Your agent is ready."
 
-        return " ".join(parts)
+        return response_ack, interview_prompt
 
     def _build_error_response(self, error_msg: str, stage: str) -> Dict[str, Any]:
         """Build an error response dict."""
@@ -865,6 +929,9 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
                 "stage_status": "error",
                 "saved_fields": None,
                 "next_question": None,
+                "response_ack": f"Error: {error_msg}",
+                "interview_prompt": STAGE_QUESTIONS.get(stage, "How would you like to proceed?"),
+                "ui_hint": None,
             }
         }
 
@@ -1202,8 +1269,11 @@ Respond helpfully as the Foreman. Guide the user through building their agent.""
         if self._detect_skip_intent(user_message):
             return StageResult(status="skip")
 
-        # Use structured LLM extraction
-        extraction = await extract_guardrails(user_message)
+        # Get existing guardrails for update context
+        existing_guardrails = self.confab.guardrails if self.confab.guardrails else None
+
+        # Use structured LLM extraction (with context if updating)
+        extraction = await extract_guardrails(user_message, existing_guardrails=existing_guardrails)
 
         if extraction.success:
             data = extraction.data

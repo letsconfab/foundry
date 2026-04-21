@@ -10,8 +10,9 @@ import { Avatar, AvatarFallback } from './ui/avatar';
 import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageContent } from './MessageContent';
+import { DocumentUploadDialog } from './DocumentUploadDialog';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'review-chats';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
 interface AgentChatProps {
   onNavigate: (view: View, confabName?: string) => void;
@@ -25,6 +26,9 @@ interface Message {
   timestamp: Date;
   userName?: string;
   senderName?: string;  // For detecting Foreman vs other agents
+  interviewPrompt?: string;
+  foremanStage?: string;
+  uiHint?: string;
 }
 
 interface Participant {
@@ -42,16 +46,16 @@ interface UploadedFile {
   id?: number;
   status: 'pending' | 'uploading' | 'indexed' | 'duplicate' | 'failed';
   error?: string;
-  chunkCount?: number;
   file?: File;
 }
 
 interface DocumentListItem {
   id: number;
+  document_uuid?: string;
   filename: string;
   content_type: string;
-  chunk_count: number;
   status: string;
+  version_count?: number;
   created_at?: string;
 }
 
@@ -114,6 +118,12 @@ interface DefinitionConflict {
   merged: string;
 }
 
+interface ForemanAction {
+  id: string;
+  label: string;
+  onClick: () => void;
+}
+
 const PURPOSE_TEMPLATE = (name: string, firstUserInput: string) => `# ${name} Purpose
 
 ## Overview
@@ -133,8 +143,6 @@ const guardrailsToMarkdown = (name: string, guardrails: Array<{ id: string; rule
   const lines = [`# Guardrails for ${name}`, '', '## Rules', ''];
   guardrails.forEach((g, idx) => {
     lines.push(`${idx + 1}. ${g.rule}`);
-    lines.push(`   - severity: \`${g.severity || 'error'}\``);
-    lines.push(`   - status: \`${g.enabled === false ? 'disabled' : 'enabled'}\``);
   });
   lines.push('');
   return lines.join('\n');
@@ -203,6 +211,59 @@ const PROMPT_SUGGESTIONS = [
   "Create an agent that summarizes meeting transcripts",
 ];
 
+const FOREMAN_STAGE_PROMPTS: Record<string, string> = {
+  purpose: "What should this agent do? Describe its main job in a sentence or two.",
+  participants: "Who should have access to this agent? You can add email addresses or skip for now.",
+  memory: "Should this agent remember previous conversations? (yes, no, or limited)",
+  documents: "Would you like to upload any reference documents? You can upload PDFs, text files, or skip for later.",
+  tools: "What external tools or APIs does this agent need? (e.g., web search, database, none)",
+  guardrails: "What safety boundaries should this agent follow? List any rules or restrictions.",
+  sample_io: "Can you provide an example interaction? (e.g., 'User asks X, agent responds Y')",
+  review: "Here's your agent configuration. Ready to save and deploy?",
+};
+
+const FOREMAN_STAGE_HINTS: Record<string, string> = {
+  purpose: "Be concrete about the job, audience, and outcome. A short sentence is enough.",
+  participants: "You can add specific email addresses later. If unsure, skip and keep moving.",
+  memory: "If the agent should adapt across turns, choose yes or limited.",
+  documents: "Upload source material if the agent needs to reference policies, docs, or examples.",
+  tools: "List integrations only if the agent truly needs them. 'None' is a valid answer.",
+  guardrails: "Think about things the agent must not do or must always verify.",
+  sample_io: "A single realistic example is usually enough.",
+  review: "Use this step to make final edits before saving.",
+};
+
+const FOREMAN_WELCOME_INTRO = `Hi, I'm the Foreman. I'll help you build your agent through a quick conversation.
+
+I'll guide this interview one step at a time.`;
+
+const FOREMAN_OPENING_MESSAGE = `${FOREMAN_WELCOME_INTRO}
+
+${FOREMAN_STAGE_PROMPTS.purpose}`;
+
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function detectEmbeddedForemanPrompt(content: string) {
+  const normalizedContent = normalizeWhitespace(content || '');
+  if (!normalizedContent) {
+    return { prompt: '', stage: '' };
+  }
+
+  let bestMatch = { prompt: '', stage: '', index: -1 };
+  for (const [stage, prompt] of Object.entries(FOREMAN_STAGE_PROMPTS)) {
+    const normalizedPrompt = normalizeWhitespace(prompt);
+    const index = normalizedContent.lastIndexOf(normalizedPrompt);
+    if (index > bestMatch.index) {
+      bestMatch = { prompt: normalizedPrompt, stage, index };
+    }
+  }
+
+  return bestMatch.index >= 0
+    ? { prompt: bestMatch.prompt, stage: bestMatch.stage }
+    : { prompt: '', stage: '' };
+}
 
 export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
   const { user } = useAuth();
@@ -210,18 +271,7 @@ export function AgentChat({ onNavigate, existingConfabId }: AgentChatProps) {
     {
       id: '1',
       role: 'assistant',
-      content: `Welcome to the Agent Foundry. I am the Foreman, and will walk you through the creation of this confab (Collaborative Agent).
-
-I'll guide you through a simple 7-step process to configure your agent:
-1. **Define purpose** - What should your agent do?
-2. **Add participants** - Who can access it?
-3. **Configure memory** - Should it remember conversations?
-4. **Set up tools** - What external capabilities does it need?
-5. **Establish guardrails** - What are its safety boundaries?
-6. **Sample I/O** - Provide example interactions
-7. **Review** - Finalize your configuration
-
-Let's start with the most important part: **What would you like this agent to do?** Describe its main purpose and objectives.`,
+      content: FOREMAN_OPENING_MESSAGE,
       timestamp: new Date(),
       senderName: 'Foreman',
     },
@@ -238,6 +288,9 @@ Let's start with the most important part: **What would you like this agent to do
   const [documents, setDocuments] = useState<DocumentListItem[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
+  // Upload dialog state
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [dismissedUploadHint, setDismissedUploadHint] = useState(false);
   /** Thread id for storing this conversation in DB (threads + messages tables). */
   const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
 
@@ -298,6 +351,9 @@ Let's start with the most important part: **What would you like this agent to do
   const [remoteBranchHint, setRemoteBranchHint] = useState<string | null>(null);
   const [definitionConflict, setDefinitionConflict] = useState<DefinitionConflict | null>(null);
   const [showRegistryTokenBanner, setShowRegistryTokenBanner] = useState(false);
+  const [foremanPrompt, setForemanPrompt] = useState<string>(FOREMAN_STAGE_PROMPTS.purpose);
+  const [foremanStage, setForemanStage] = useState<string>('purpose');
+  const [foremanUiHint, setForemanUiHint] = useState<string | null>(null);
 
   // Load existing confab data if resuming
   useEffect(() => {
@@ -309,51 +365,37 @@ Let's start with the most important part: **What would you like this agent to do
 
       setIsLoadingExisting(true);
       try {
-        // Load existing confab
+        // Use high-level resume endpoint — handles thread lookup, message loading
+        const conversation = await apiClient.resumeForemanConversation(existingConfabId);
+        setCurrentConfabId(conversation.confab_id);
+        setCurrentThreadId(conversation.thread_id);
+        if (conversation.current_stage) {
+          // Stage info available from server
+          console.log('Resumed at stage:', conversation.current_stage);
+          setForemanStage(conversation.current_stage);
+          setForemanPrompt(FOREMAN_STAGE_PROMPTS[conversation.current_stage] || '');
+          setForemanUiHint(conversation.current_stage === 'documents' ? 'show_upload_panel' : null);
+        }
+
+        // Load confab name from server
         const confab = await apiClient.getConfab(existingConfabId);
-        setCurrentConfabId(confab.id);
         if (confab.name) {
           setConfabName(confab.name);
         }
 
-        // Find the thread for THIS specific confab (must have both Foreman AND this confab as participants)
-        const threads = await apiClient.getThreads();
-        for (const thread of threads) {
-          try {
-            const participants = await apiClient.getThreadParticipants(thread.id);
-            const hasForeman = participants.some(
-              (p: any) => p.participant_type === 'system' && p.system_agent_name === 'foreman'
-            );
-            const hasThisConfab = participants.some(
-              (p: any) => p.participant_type === 'confab' && p.participant_id === existingConfabId
-            );
-
-            if (hasForeman && hasThisConfab) {
-              // Found the correct thread for this confab - load messages
-              setCurrentThreadId(thread.id);
-              const threadMessages = await apiClient.getThreadMessages(thread.id);
-
-              if (threadMessages && threadMessages.length > 0) {
-                // Convert to Message format
-                const loadedMessages: Message[] = threadMessages.map((msg: any) => ({
-                  id: String(msg.id),
-                  role: msg.role as 'user' | 'assistant',
-                  content: msg.content,
-                  timestamp: new Date(msg.created_at),
-                  senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
-                }));
-                setMessages(loadedMessages);
-              }
-              break; // Found the thread, stop searching
-            }
-          } catch (participantError) {
-            // Thread might not have participants, continue searching
-            console.debug('Error checking thread participants:', participantError);
-          }
+        // Convert server messages to local Message format
+        if (conversation.messages && conversation.messages.length > 0) {
+          const loadedMessages: Message[] = conversation.messages.map((msg: any) => ({
+            id: String(msg.id),
+            role: msg.role as 'user' | 'assistant',
+            content: msg.content,
+            timestamp: new Date(msg.created_at),
+            senderName: msg.sender_name || (msg.role === 'assistant' ? 'Foreman' : undefined),
+          }));
+          setMessages(loadedMessages);
         }
       } catch (error) {
-        console.error('Failed to load existing confab:', error);
-        // Reset to fresh state if resume fails
+        console.error('Failed to resume conversation:', error);
         setCurrentConfabId(null);
         setCurrentThreadId(null);
       } finally {
@@ -505,90 +547,69 @@ Let's start with the most important part: **What would you like this agent to do
     setInput('');
     setIsTyping(true);
 
-    // Create confab on first message if not exists
-    // Track the confab ID locally to avoid race condition with state update
+    // Bootstrap conversation on first message using high-level API
     let confabId = currentConfabId;
-    if (confabId == null) {
-      try {
-        const confab = await apiClient.createConfab({
-          generate_placeholder: true,
-          status: 'building'
-        });
-        console.log('Created new confab:', confab);
-        confabId = confab.id;
-        setCurrentConfabId(confab.id);
-      } catch (error) {
-        console.error('Failed to create confab:', error);
-      }
-    }
-
-    // === [CLAUDE: Initialize or use existing thread for conversation storage] ===
     let tid = currentThreadId;
     if (tid == null) {
       try {
-        const name = `Create Confab – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
-        const thread = await apiClient.createThread(name);
-        tid = thread?.id ?? null;
-        if (tid != null) setCurrentThreadId(tid);
-
-        // Add Foreman as participant FIRST (critical for chat to work)
-        if (tid != null) {
-          try {
-            await apiClient.addThreadParticipant(tid, 'system', null, 'foreman', 'participant');
-            console.log('[CLAUDE: IMPLEMENTATION] Foreman added as thread participant');
-          } catch (participantError) {
-            console.error('[CLAUDE: IMPLEMENTATION] Error adding thread participant:', participantError);
-          }
-        }
-
-        // Add confab as participant (links this thread to the specific confab for Continue Building)
-        if (tid != null && confabId != null) {
-          try {
-            await apiClient.addThreadParticipant(tid, 'confab', confabId, null, 'participant');
-            console.log('[CLAUDE: IMPLEMENTATION] Confab added as thread participant');
-          } catch (participantError) {
-            console.error('[CLAUDE: IMPLEMENTATION] Error adding confab participant:', participantError);
-          }
-        }
-
-        // Save welcome message with proper Foreman attribution (non-critical)
-        if (tid != null && messages[0]?.role === 'assistant') {
-          try {
-            await apiClient.addMessage(tid, messages[0].content, 'assistant', 'system', 'Foreman');
-          } catch (welcomeError) {
-            console.error('Failed to save welcome message:', welcomeError);
-          }
-        }
-      } catch {
+        const conversation = await apiClient.startForemanConversation();
+        tid = conversation.thread_id;
+        confabId = conversation.confab_id;
+        setCurrentThreadId(tid);
+        setCurrentConfabId(confabId);
+        console.log('Started foreman conversation:', { tid, confabId });
+      } catch (error) {
+        console.error('Failed to start conversation:', error);
         tid = null;
       }
     }
 
-    // === [CLAUDE: Send message via unified chat endpoint] ===
-    // The chat endpoint handles message storage and agent responses
+    // Send message via high-level conversation endpoint
     try {
       let assistantContent = '';
       let response: any = null;
 
       if (tid != null) {
         try {
-          // Use the unified chat endpoint - it handles everything
-          response = await apiClient.chat(tid, content);
+          response = await apiClient.sendConversationMessage(tid, content);
 
           // The response contains user_message and agent_responses
           if (response.agent_responses && response.agent_responses.length > 0) {
+            const v2 = response.foreman_metadata?.v2_metadata;
             // Add each agent response as a message
-            for (const agentResp of response.agent_responses) {
+            response.agent_responses.forEach((agentResp: any, index: number) => {
+              const isLastResponse = index === response.agent_responses.length - 1;
+              const isForemanResponse = (agentResp.sender_name || 'Foreman') === 'Foreman';
+              const promptCandidate = v2?.interview_prompt || v2?.next_question || '';
+              const ackCandidate = v2?.response_ack || agentResp.content;
+
               const agentMsg: Message = {
                 id: String(agentResp.id),
                 role: 'assistant',
-                content: agentResp.content,
+                content: isForemanResponse && isLastResponse ? ackCandidate : agentResp.content,
                 timestamp: new Date(agentResp.created_at),
                 senderName: agentResp.sender_name || 'Foreman',
+                interviewPrompt: isForemanResponse && isLastResponse ? promptCandidate : '',
+                foremanStage: isForemanResponse && isLastResponse ? (v2?.next_stage || v2?.stage || '') : '',
+                uiHint: isForemanResponse && isLastResponse ? (v2?.ui_hint || '') : '',
               };
               setMessages((prev) => [...prev, agentMsg]);
-            }
+            });
             assistantContent = response.agent_responses[response.agent_responses.length - 1].content;
+
+            if (v2) {
+              const metadataPrompt = v2.interview_prompt || v2.next_question || '';
+              const detectedPrompt = !metadataPrompt && assistantContent
+                ? detectEmbeddedForemanPrompt(assistantContent)
+                : { prompt: '', stage: '' };
+              setForemanStage(v2.next_stage || v2.stage || detectedPrompt.stage || '');
+              setForemanPrompt(metadataPrompt || detectedPrompt.prompt || '');
+              setForemanUiHint(v2.ui_hint || null);
+            } else if (assistantContent) {
+              const detectedPrompt = detectEmbeddedForemanPrompt(assistantContent);
+              setForemanStage(detectedPrompt.stage || '');
+              setForemanPrompt(detectedPrompt.prompt || '');
+            }
 
             // Refresh confab name in case Foreman set it
             refreshConfabName();
@@ -596,6 +617,12 @@ Let's start with the most important part: **What would you like this agent to do
             // Refresh definition files in case Foreman updated purpose/guardrails via tools
             if (confabId) {
               loadConfabDefinitionData(confabId);
+            }
+
+            // Check for UI hints from Foreman (e.g., show upload dialog)
+            if (response.foreman_metadata?.v2_metadata?.ui_hint === 'show_upload_panel'
+                && !dismissedUploadHint) {
+              setUploadDialogOpen(true);
             }
           } else {
             // No agent response yet - this shouldn't happen with Foreman
@@ -653,6 +680,125 @@ Let's start with the most important part: **What would you like this agent to do
     setInput(suggestion);
   };
 
+  const setSuggestedReply = (value: string, mode: 'replace' | 'append' = 'replace') => {
+    const normalized = value.trim();
+    if (!normalized) return;
+
+    setInput((prev) => {
+      if (mode === 'replace' || !prev.trim()) {
+        return normalized;
+      }
+
+      const existingLines = prev
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (existingLines.includes(normalized)) {
+        return prev;
+      }
+
+      return `${prev.replace(/\s+$/, '')}\n${normalized}`;
+    });
+  };
+
+  const appendUploadedDocumentLines = (filenames: string[]) => {
+    filenames.forEach((filename) => {
+      setSuggestedReply(`uploaded ${filename}`, 'append');
+    });
+  };
+
+  const shouldShowUploadCta = foremanStage === 'documents' || foremanUiHint === 'show_upload_panel';
+  const hasUserMessages = messages.some((message) => message.role === 'user');
+  const shouldShowForemanPanel = hasUserMessages && !!foremanPrompt;
+  const foremanActions: ForemanAction[] = [];
+
+  if (foremanStage === 'purpose') {
+    PROMPT_SUGGESTIONS.slice(0, 2).forEach((suggestion, index) => {
+      foremanActions.push({
+        id: `purpose-example-${index + 1}`,
+        label: `Example ${index + 1}`,
+        onClick: () => setSuggestedReply(suggestion),
+      });
+    });
+  }
+
+  if (foremanStage === 'participants') {
+    foremanActions.push({
+      id: 'participants-skip',
+      label: 'Skip For Now',
+      onClick: () => setSuggestedReply('skip'),
+    });
+  }
+
+  if (foremanStage === 'memory') {
+    ['yes', 'no', 'limited'].forEach((choice) => {
+      foremanActions.push({
+        id: `memory-${choice}`,
+        label: choice === 'limited' ? 'Limited' : choice.charAt(0).toUpperCase() + choice.slice(1),
+        onClick: () => setSuggestedReply(choice),
+      });
+    });
+  }
+
+  if (shouldShowUploadCta) {
+    foremanActions.push({
+      id: 'documents-open',
+      label: 'Open Upload Panel',
+      onClick: () => setUploadDialogOpen(true),
+    });
+    if (documents.length > 0) {
+      foremanActions.push({
+        id: 'documents-finish',
+        label: 'Finish Documents',
+        onClick: () => setSuggestedReply('done uploading documents'),
+      });
+    }
+    foremanActions.push({
+      id: 'documents-skip',
+      label: 'Skip Documents',
+      onClick: () => setSuggestedReply('skip'),
+    });
+  }
+
+  if (foremanStage === 'tools') {
+    foremanActions.push(
+      {
+        id: 'tools-none',
+        label: 'No Tools',
+        onClick: () => setSuggestedReply('none'),
+      },
+      {
+        id: 'tools-web-search',
+        label: 'Web Search',
+        onClick: () => setSuggestedReply('web search'),
+      },
+    );
+  }
+
+  if (foremanStage === 'guardrails') {
+    foremanActions.push(
+      {
+        id: 'guardrails-safety',
+        label: 'Add Safety Rule',
+        onClick: () => setSuggestedReply('Do not fabricate facts.'),
+      },
+      {
+        id: 'guardrails-clarify',
+        label: 'Add Clarification Rule',
+        onClick: () => setSuggestedReply('Ask for clarification when the request is ambiguous.'),
+      },
+    );
+  }
+
+  if (foremanStage === 'sample_io') {
+    foremanActions.push({
+      id: 'sample-io-example',
+      label: 'Insert Example',
+      onClick: () => setSuggestedReply('User asks for a refund status update. Agent verifies the order ID, summarizes the status, and explains the next step.'),
+    });
+  }
+
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -690,12 +836,13 @@ Let's start with the most important part: **What would you like this agent to do
       try {
         response = await apiClient.uploadDocument(currentConfabId, file);
         setDocumentError(null);
+        // V2 response: { document: { id, filename, status, ... }, message }
+        const uploadedDoc = response.document;
         setUploadedFiles(prev =>
           prev.map(f => f.tempId === tempId ? {
             ...f,
-            id: response.status === 'duplicate' ? undefined : response.document_id,
-            status: response.status,
-            chunkCount: response.chunk_count,
+            id: uploadedDoc?.id,
+            status: uploadedDoc?.status === 'active' ? 'indexed' : 'failed',
             file: undefined,
           } : f)
         );
@@ -1073,12 +1220,12 @@ Let's start with the most important part: **What would you like this agent to do
                         if (e.key === 'Enter') saveConfabName();
                         if (e.key === 'Escape') setIsEditingName(false);
                       }}
-                      className="text-slate-900 font-medium border border-slate-300 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="text-slate-900 dark:text-white font-medium border border-slate-300 dark:border-slate-600 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-800"
                       autoFocus
                     />
                     <button
                       onClick={saveConfabName}
-                      className="p-1 hover:bg-slate-100 rounded"
+                      className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
                       title="Save name"
                     >
                       <Check className="w-4 h-4 text-green-600" />
@@ -1086,11 +1233,11 @@ Let's start with the most important part: **What would you like this agent to do
                   </div>
                 ) : (
                   <>
-                    <h2 className="text-slate-900">{confabName}</h2>
+                    <h2 className="text-slate-900 dark:text-white">{confabName}</h2>
                     {currentConfabId && (
                       <button
                         onClick={startEditingName}
-                        className="p-1 hover:bg-slate-100 rounded"
+                        className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
                         title="Edit name"
                       >
                         <Pencil className="w-3.5 h-3.5 text-slate-400" />
@@ -1099,7 +1246,7 @@ Let's start with the most important part: **What would you like this agent to do
                   </>
                 )}
               </div>
-              <p className="text-slate-600 text-sm">
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
                 {existingConfabId ? 'Resume your conversation to continue building' : 'Chat with AI to build your confab'}
               </p>
             </div>
@@ -1121,7 +1268,7 @@ Let's start with the most important part: **What would you like this agent to do
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
                     <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-3" />
-                    <p className="text-slate-600">Loading your conversation...</p>
+                    <p className="text-slate-600 dark:text-slate-400">Loading your conversation...</p>
                   </div>
                 </div>
               ) : (
@@ -1148,13 +1295,13 @@ Let's start with the most important part: **What would you like this agent to do
                         className={`max-w-[80%] rounded-lg px-4 py-3 ${
                           message.role === 'user'
                             ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-100 text-slate-900'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-200'
                         }`}
                       >
                         <MessageContent content={message.content} variant={message.role} />
                         <p
                           className={`text-xs mt-1 ${
-                            message.role === 'user' ? 'text-indigo-200' : 'text-slate-500'
+                            message.role === 'user' ? 'text-indigo-200' : 'text-slate-500 dark:text-slate-400'
                           }`}
                         >
                           {message.timestamp.toLocaleTimeString([], {
@@ -1170,7 +1317,7 @@ Let's start with the most important part: **What would you like this agent to do
                               <User className="w-4 h-4 text-slate-600" />
                             </AvatarFallback>
                           </Avatar>
-                          <span className="text-xs text-slate-600">{user?.name ?? 'You'}</span>
+                          <span className="text-xs text-slate-600 dark:text-slate-400">{user?.name ?? 'You'}</span>
                         </div>
                       )}
                     </div>
@@ -1183,9 +1330,9 @@ Let's start with the most important part: **What would you like this agent to do
                           <HardHat className="w-4 h-4 text-white" />
                         </AvatarFallback>
                       </Avatar>
-                      <div className="bg-slate-100 rounded-lg px-4 py-3 flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin text-slate-600" />
-                        <span className="text-slate-600">Foreman is thinking...</span>
+                      <div className="bg-slate-100 dark:bg-slate-800 rounded-lg px-4 py-3 flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-slate-600 dark:text-slate-400" />
+                        <span className="text-slate-600 dark:text-slate-400">Foreman is thinking...</span>
                       </div>
                     </div>
                   )}
@@ -1196,13 +1343,53 @@ Let's start with the most important part: **What would you like this agent to do
             </div>
 
             {/* Input Area */}
-            <div className="border-t border-slate-200 p-4">
+            <div className="border-t border-slate-200 dark:border-slate-700 p-4">
+              {shouldShowForemanPanel && (
+                <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
+                        Next Step
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">
+                        {foremanPrompt}
+                      </p>
+                      {foremanStage && FOREMAN_STAGE_HINTS[foremanStage] && (
+                        <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                          {FOREMAN_STAGE_HINTS[foremanStage]}
+                        </p>
+                      )}
+                    </div>
+                    {foremanStage && (
+                      <Badge variant="secondary" className="capitalize">
+                        {foremanStage.replace('_', ' ')}
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {foremanActions.map((action) => (
+                      <Button
+                        key={action.id}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs"
+                        onClick={action.onClick}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-2">
                 <Textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Describe what you want your confab to do..."
+                  placeholder="Type your response..."
                   className="min-h-[60px] max-h-32 resize-none"
                 />
                 <div className="flex flex-col gap-2">
@@ -1223,26 +1410,26 @@ Let's start with the most important part: **What would you like this agent to do
                     <Save className="w-5 h-5" />
                   </Button>
                   {currentThreadId && (
-                    <span className="text-xs text-emerald-600 self-center" title="Conversation saved to Review Chats">
+                    <span className="text-xs text-emerald-600 self-center" title="Conversation saved">
                       Saved
                     </span>
                   )}
                 </div>
               </div>
-              <p className="text-xs text-slate-500 mt-2">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                 Press Enter to send, Shift+Enter for new line
               </p>
               
               {/* Prompt Suggestions */}
-              {messages.length === 1 && (
+              {messages.length === 1 && foremanStage === 'purpose' && (
                 <div className="mt-4">
-                  <p className="text-xs text-slate-600 mb-2">Try these examples:</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Try these examples or describe the agent in your own words:</p>
                   <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
                     {PROMPT_SUGGESTIONS.map((suggestion, index) => (
                       <button
                         key={index}
                         onClick={() => handleSuggestionClick(suggestion)}
-                        className="flex-shrink-0 text-left p-3 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 transition-colors text-sm text-slate-700 hover:text-indigo-700 min-w-[280px]"
+                        className="flex-shrink-0 text-left p-3 rounded-lg border border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-indigo-50 dark:hover:bg-slate-800 transition-colors text-sm text-slate-700 dark:text-slate-300 hover:text-indigo-700 dark:hover:text-indigo-400 min-w-[280px]"
                       >
                         {suggestion}
                       </button>
@@ -1255,9 +1442,9 @@ Let's start with the most important part: **What would you like this agent to do
               <div className="mt-4">
                 {/* Error Alert */}
                 {documentError && (
-                  <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
-                    <p className="text-sm text-red-700">{documentError}</p>
-                    <button onClick={() => setDocumentError(null)} className="text-red-400 hover:text-red-600">
+                  <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg flex items-center justify-between">
+                    <p className="text-sm text-red-700 dark:text-red-400">{documentError}</p>
+                    <button onClick={() => setDocumentError(null)} className="text-red-400 hover:text-red-600 dark:hover:text-red-300">
                       <X className="w-4 h-4" />
                     </button>
                   </div>
@@ -1275,12 +1462,12 @@ Let's start with the most important part: **What would you like this agent to do
                   />
                   <label
                     htmlFor="file-upload"
-                    className={`inline-flex items-center gap-2 px-3 py-2 text-sm cursor-pointer rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 transition-colors ${!currentConfabId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`inline-flex items-center gap-2 px-3 py-2 text-sm cursor-pointer rounded-lg border border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-indigo-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-indigo-700 dark:hover:text-indigo-400 transition-colors ${!currentConfabId ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     <Paperclip className="w-4 h-4" />
                     Upload Document
                   </label>
-                  <span className="text-xs text-slate-500">PDF, TXT, MD</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">PDF, TXT, MD</span>
                 </div>
 
                 {!currentConfabId && (
@@ -1291,11 +1478,11 @@ Let's start with the most important part: **What would you like this agent to do
                 {uploadedFiles.length > 0 && (
                   <div className="mt-3 space-y-2">
                     {uploadedFiles.map((file, index) => (
-                      <div key={file.tempId} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                      <div key={file.tempId} className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
                         <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <File className="w-4 h-4 text-slate-600 flex-shrink-0" />
+                          <File className="w-4 h-4 text-slate-600 dark:text-slate-400 flex-shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm text-slate-700 truncate">{file.name}</p>
+                            <p className="text-sm text-slate-700 dark:text-slate-300 truncate">{file.name}</p>
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-slate-500">({(file.size / 1024).toFixed(1)} KB)</span>
                               {file.status === 'uploading' && (
@@ -1306,7 +1493,7 @@ Let's start with the most important part: **What would you like this agent to do
                               )}
                               {file.status === 'indexed' && (
                                 <Badge className="text-xs bg-green-100 text-green-700">
-                                  Indexed ({file.chunkCount} chunks)
+                                  Uploaded
                                 </Badge>
                               )}
                               {file.status === 'duplicate' && (
@@ -1330,43 +1517,6 @@ Let's start with the most important part: **What would you like this agent to do
                   </div>
                 )}
 
-                {/* Loading Documents */}
-                {documentsLoading && (
-                  <div className="mt-3 flex items-center gap-2 text-slate-500">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm">Loading documents...</span>
-                  </div>
-                )}
-
-                {/* Existing Documents from Server */}
-                {documents.length > 0 && (
-                  <div className="mt-4">
-                    <h4 className="text-sm font-medium text-slate-700 mb-2">
-                      Uploaded Documents ({documents.length})
-                    </h4>
-                    <div className="space-y-2">
-                      {documents.map((doc) => (
-                        <div key={doc.id} className="flex items-center justify-between p-2 bg-white border border-slate-200 rounded-lg">
-                          <div className="flex items-center gap-2">
-                            <FileText className="w-4 h-4 text-slate-600" />
-                            <div>
-                              <p className="text-sm text-slate-700">{doc.filename}</p>
-                              <p className="text-xs text-slate-500">
-                                {doc.content_type} | {doc.chunk_count} chunks
-                              </p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleDeleteDocument(doc.id)}
-                            className="text-slate-400 hover:text-red-600 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           </Card>
@@ -1378,8 +1528,8 @@ Let's start with the most important part: **What would you like this agent to do
           <Card className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
-                <GitBranch className="w-4 h-4 text-slate-700" />
-                <h3 className="text-slate-900 text-sm font-medium">Definition Files</h3>
+                <GitBranch className="w-4 h-4 text-slate-700 dark:text-slate-300" />
+                <h3 className="text-slate-900 dark:text-white text-sm font-medium">Definition Files</h3>
               </div>
               <div className="flex gap-2">
                 <Button
@@ -1405,34 +1555,34 @@ Let's start with the most important part: **What would you like this agent to do
             </div>
 
             {remoteBranchHint && (
-              <p className="text-xs text-slate-500 mb-2">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
                 Branch: <span className="font-mono">{remoteBranchHint}</span>
               </p>
             )}
 
             {definitionError && (
-              <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <div className="mb-2 rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-3 py-2 text-xs text-red-700 dark:text-red-400">
                 {definitionError}
               </div>
             )}
 
             {definitionCommitInfo && (
-              <div className="mb-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+              <div className="mb-2 rounded-md border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 px-3 py-2 text-xs text-green-700 dark:text-green-400">
                 {definitionCommitInfo}
               </div>
             )}
 
             {showRegistryTokenBanner && !user?.github_connected && (
-              <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <div className="mb-2 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 px-3 py-2 text-xs text-amber-900 dark:text-amber-400">
                 Email-login sync requires server configuration. Ask an admin to set `REGISTRY_GITHUB_TOKEN` for writes to `letsconfab/registry`.
               </div>
             )}
 
             {definitionConflict && (
-              <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <div className="mb-3 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 p-3">
                 <div className="flex items-center gap-2 mb-2">
                   <AlertTriangle className="w-4 h-4 text-amber-700" />
-                  <p className="text-xs text-amber-900">
+                  <p className="text-xs text-amber-900 dark:text-amber-400">
                     Remote changes conflict with local edits in {definitionConflict.fileKey === 'purpose' ? 'PURPOSE.md' : 'GUARDRAILS.md'}.
                   </p>
                 </div>
@@ -1466,11 +1616,11 @@ Let's start with the most important part: **What would you like this agent to do
                 const status = getDefinitionFileStatus(file);
                 if (!file.visible) return null;
                 return (
-                  <div key={key} className="rounded-lg border border-slate-200 p-2">
+                  <div key={key} className="rounded-lg border border-slate-200 dark:border-slate-700 p-2">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <FileText className="w-3 h-3 text-slate-600" />
-                        <span className="text-xs text-slate-900 font-medium">{file.fileName}</span>
+                        <FileText className="w-3 h-3 text-slate-600 dark:text-slate-400" />
+                        <span className="text-xs text-slate-900 dark:text-white font-medium">{file.fileName}</span>
                         <Badge className={`text-[10px] px-1.5 py-0 ${statusBadgeClass(status)}`}>{status}</Badge>
                       </div>
                       <div className="flex items-center gap-1">
@@ -1500,11 +1650,11 @@ Let's start with the most important part: **What would you like this agent to do
                         onChange={(e) => handleDefinitionContentChange(key, e.target.value)}
                       />
                     ) : (
-                      <div className="max-h-[150px] overflow-auto rounded border border-slate-100 bg-white p-2 prose prose-slate prose-sm max-w-none">
+                      <div className="max-h-[150px] overflow-auto rounded border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800/50 p-2 prose prose-slate dark:prose-invert prose-sm max-w-none">
                         {file.content.trim() ? (
                           <ReactMarkdown>{file.content}</ReactMarkdown>
                         ) : (
-                          <p className="text-xs text-slate-500">No content yet.</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No content yet.</p>
                         )}
                       </div>
                     )}
@@ -1512,18 +1662,62 @@ Let's start with the most important part: **What would you like this agent to do
                 );
               })}
               {!definitionFiles.purpose.visible && !definitionFiles.guardrails.visible && (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   Files will appear as the confab conversation generates drafts.
                 </p>
               )}
             </div>
           </Card>
 
+          {/* Documents Card */}
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <FileText className="w-4 h-4 text-slate-700 dark:text-slate-300" />
+              <h3 className="text-slate-900 dark:text-white text-sm font-medium">Documents</h3>
+              <span className="text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full">
+                {documents.length}
+              </span>
+            </div>
+
+            {documentsLoading && (
+              <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Loading...</span>
+              </div>
+            )}
+
+            {documents.length > 0 ? (
+              <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                {documents.map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-4 h-4 text-slate-600 dark:text-slate-400 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-slate-700 dark:text-slate-300 truncate">{doc.filename}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{doc.content_type}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteDocument(doc.id)}
+                      className="text-slate-400 hover:text-red-600 transition-colors ml-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              !documentsLoading && (
+                <p className="text-sm text-slate-500 dark:text-slate-400">No documents uploaded yet.</p>
+              )
+            )}
+          </Card>
+
           {/* Participants Card */}
           <Card className="p-4">
             <div className="flex items-center gap-2 mb-4">
-              <Users className="w-5 h-5 text-slate-900" />
-              <h3 className="text-slate-900">Participants</h3>
+              <Users className="w-5 h-5 text-slate-900 dark:text-white" />
+              <h3 className="text-slate-900 dark:text-white">Participants</h3>
             </div>
             <div className="space-y-3">
               {participants.map((participant) => (
@@ -1531,8 +1725,8 @@ Let's start with the most important part: **What would you like this agent to do
                   key={participant.id}
                   className={`flex items-center gap-3 p-3 rounded-lg ${
                     participant.type === 'system'
-                      ? 'bg-amber-50 ring-1 ring-amber-200'
-                      : 'bg-indigo-50 ring-1 ring-indigo-200'
+                      ? 'bg-amber-50 dark:bg-amber-900/30 ring-1 ring-amber-200 dark:ring-amber-700'
+                      : 'bg-indigo-50 dark:bg-indigo-900/30 ring-1 ring-indigo-200 dark:ring-indigo-700'
                   }`}
                 >
                   <Avatar className="w-9 h-9">
@@ -1549,20 +1743,44 @@ Let's start with the most important part: **What would you like this agent to do
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-900 truncate">{participant.name}</p>
-                    <p className="text-xs text-slate-500 truncate">
+                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{participant.name}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                       {participant.email || (participant.type === 'system' ? 'System Agent' : '')}
                     </p>
                   </div>
                 </div>
               ))}
               {participants.length === 0 && (
-                <p className="text-sm text-slate-500 py-2">No participants yet.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 py-2">No participants yet.</p>
               )}
             </div>
           </Card>
         </div>
       </div>
+
+      {/* Document Upload Dialog */}
+      {currentConfabId && (
+        <DocumentUploadDialog
+          open={uploadDialogOpen}
+          onOpenChange={(open) => {
+            setUploadDialogOpen(open);
+            if (!open) setDismissedUploadHint(true);
+          }}
+          confabId={currentConfabId}
+          existingDocuments={documents}
+          onUploadComplete={({ count, filenames }) => {
+            // Refresh documents list
+            if (currentConfabId) {
+              apiClient.listDocuments(currentConfabId).then(setDocuments);
+            }
+            if (filenames.length > 0) {
+              appendUploadedDocumentLines(filenames);
+            } else if (count > 0) {
+              setSuggestedReply(`uploaded ${count} document${count !== 1 ? 's' : ''}`, 'append');
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -50,7 +50,6 @@ Represents a single AI agent configuration owned by a user.
 | description | text | no | no | Free-form description |
 | version | string | yes | no | Defaults to `"1.0.0"`. Incremented by 0.1 on each update. |
 | status | string | yes | no | One of: `building`, `draft`, `published`, `archived`. Defaults to `building`. |
-| config | JSON | no | no | Stores the full or simple confab configuration (see Features.md) |
 | setup_progress | JSON | no | no | Foreman setup state: `{"completed_steps": [1,2], "current_stage": "memory"}` |
 | purpose | text | no | no | PURPOSE.md content (denormalized for quick access) |
 | guardrails | JSON | no | no | Structured list of guardrail rules |
@@ -62,7 +61,6 @@ Represents a single AI agent configuration owned by a user.
 | skills | JSON | no | no | List of OASF skill IDs |
 | domains | JSON | no | no | List of domain strings |
 | oasf_yaml | text | no | no | Cached full OASF export |
-| github_url | string | no | no | URL to the GitHub pull request, if synced |
 | github_path | string | no | no | Folder name in GitHub repo |
 | github_synced_at | timestamp | no | no | When last synced to GitHub |
 | github_sync_version | string | no | no | Version that was synced |
@@ -135,42 +133,44 @@ Knowledge learned during confab operation, synced to GitHub.
 | github_synced_at | timestamp | no | no | When last synced |
 | created_at | timestamp | auto | no | Set on creation |
 
-### ConfabDocument
+### ConfabDocumentV2
 
-Document uploaded to a confab's document store for RAG retrieval. Stored locally (not synced to GitHub).
+Document metadata with versioning support. Content is stored in `DocumentVersion` records, not in this table. Table: `confab_documents_v2`.
 
 | Attribute | Type | Required | Unique | Notes |
 |-----------|------|----------|--------|-------|
 | id | integer | auto | yes | Primary identifier |
-| confab_id | integer | yes | no | References Confab |
-| filename | string(500) | yes | no | Original filename |
-| content_type | string(100) | yes | no | MIME type: `text/plain`, `text/markdown`, `application/pdf` |
-| source | string(50) | yes | no | One of: `upload`, `url`, `manual`. Defaults to `upload`. |
+| confab_id | integer | yes | no | References Confab (FK with `CASCADE` delete) |
+| document_uuid | UUID | auto | no | Generated via `uuid4` |
+| filename | string(255) | yes | no | Sanitized filename |
+| original_content_type | string(100) | yes | no | MIME type verified via magic bytes |
+| source | string(50) | yes | no | One of: `upload`, `url`, `api`. Defaults to `upload`. |
 | source_url | string(2000) | no | no | URL if imported from web |
-| content_hash | string(64) | yes | no | SHA-256 hash for deduplication |
-| raw_content | text | no | no | Full content for text/markdown |
-| file_path | string(500) | no | no | Path to PDF file on disk |
-| chunk_count | integer | yes | no | Number of chunks generated |
-| status | string(20) | yes | no | One of: `pending`, `indexed`, `failed`. Defaults to `pending`. |
-| error_message | text | no | no | Error details if status is `failed` |
-| metadata_json | JSON | no | no | Custom metadata (author, date, tags) |
+| status | string(20) | yes | no | One of: `active`, `archived`. Defaults to `active`. |
 | created_at | timestamp | auto | no | Set on creation |
 | updated_at | timestamp | auto | no | Set on update |
 
-### DocumentChunk
+### DocumentVersion
 
-Individual chunk of a document with reference to vector embedding in ChromaDB.
+Immutable document version with compressed (and optionally encrypted) content. Append-only — content is never modified after creation. Table: `document_versions`.
 
 | Attribute | Type | Required | Unique | Notes |
 |-----------|------|----------|--------|-------|
 | id | integer | auto | yes | Primary identifier |
-| document_id | integer | yes | no | References ConfabDocument |
-| chunk_index | integer | yes | no | Position in document (0-indexed) |
-| content | text | yes | no | Chunk text content |
-| start_char | integer | no | no | Start position in original document |
-| end_char | integer | no | no | End position in original document |
-| vector_id | string(100) | yes | no | ID in ChromaDB collection |
+| document_id | integer | yes | no | References ConfabDocumentV2 (FK with `CASCADE` delete) |
+| version_number | integer | yes | no | Sequential version (1, 2, 3...) |
+| content_blob | LargeBinary | yes | no | zstd-compressed content |
+| content_hash | string(64) | yes | no | SHA-256 hash of original (uncompressed) content |
+| original_size | integer | yes | no | Size before compression |
+| compressed_size | integer | yes | no | Size after compression |
+| encryption_key_id | string(64) | no | no | Phase 2: reference to encryption key |
+| encryption_iv | LargeBinary | no | no | Phase 2: AES-GCM IV (12 bytes) |
+| encryption_tag | LargeBinary | no | no | Phase 2: AES-GCM auth tag (16 bytes) |
+| extracted_text | text | no | no | Extracted text content (for display/search) |
+| text_extraction_status | string(20) | no | no | One of: `pending`, `completed`, `failed`. Defaults to `pending`. |
+| metadata_json | JSON | no | no | Custom metadata (page_count, author, etc.) |
 | created_at | timestamp | auto | no | Set on creation |
+| created_by | integer | no | no | References User (uploading user) |
 
 ---
 
@@ -181,8 +181,8 @@ User (1) ──── (0..1) GitHub Account
 User (1) ──── (0..*)  Confab
 User (1) ──── (0..*)  Thread (ownership)
 Confab (1) ──── (0..*) ConfabLearning
-Confab (1) ──── (0..*) ConfabDocument
-ConfabDocument (1) ──── (0..*) DocumentChunk
+Confab (1) ──── (0..*) ConfabDocumentV2
+ConfabDocumentV2 (1) ──── (0..*) DocumentVersion
 Thread (1) ──── (0..*) ThreadParticipant
 Thread (1) ──── (0..*) Message
 Message (1) ──── (0..*) Message (replies)
@@ -192,34 +192,13 @@ Message (1) ──── (0..*) Message (replies)
 - A user may own zero or more confabs.
 - A user may own zero or more threads.
 - A confab may have zero or more learnings.
+- A confab may have zero or more documents (`confab_documents_v2.confab_id` FK with `CASCADE` delete).
+- A document may have one or more versions (cascade delete from document to versions).
 - A thread has one or more participants (owner is always a participant).
 - A message may be a reply to another message (self-referential).
 - Deleting a user should cascade to their GitHub account, confabs, and owned threads.
 - Deleting a thread should cascade to its participants and messages.
-- Deleting a confab should cascade to its learnings.
-
----
-
-## Confab Configuration Shapes
-
-A confab's `config` field accepts one of two shapes:
-
-### Full Configuration
-
-| Section | Purpose |
-|---------|---------|
-| Capabilities | Which agent abilities are enabled (text generation, code generation, web search, etc.) |
-| Model | LLM provider, model name, temperature, max tokens, sampling parameters |
-| Knowledge Base | Optional: source type, indexing method, chunk settings |
-| Conversation | System prompt, memory settings, context window, greeting/error messages |
-| Security | Content filtering, domain allowlists, keyword blocklists, rate limiting |
-| Integrations | External APIs, webhooks, databases, storage |
-| Deployment | Environment, scaling, monitoring, logging level |
-| Custom Settings | Arbitrary key-value pairs |
-
-### Simple Configuration
-
-A lightweight alternative with just: model provider, model name, system prompt, temperature, and max tokens.
+- Deleting a confab cascades to its learnings and documents (V2).
 
 ---
 

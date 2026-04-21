@@ -1,0 +1,2591 @@
+@auth @mock_github
+Feature: GitHub Account Connection # features/auth/github_connect.feature:2
+  As an authenticated user
+  I want to connect my GitHub account
+  So that I can sync my confabs to GitHub repositories
+  @auth @mock_github
+  Feature: GitHub Account Connection  # features/auth/github_connect.feature:2
+
+  @positive
+  Scenario: Successfully connect GitHub account                        # features/auth/github_connect.feature:13
+    Given the API is available                                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                           # steps/common_steps.py:32
+    And GitHub API is mocked                                           # steps/github_steps.py:15
+    When I connect my GitHub account with:                             # steps/auth_steps.py:243
+      | github_id | github_username | access_token   | selected_repo |
+      | 12345     | testuser        | ghp_test123456 | confabs       |
+    Then the response status should be 200                             # steps/common_steps.py:63
+    And the response should contain message "GitHub account connected" # steps/common_steps.py:133
+
+  @positive
+  Scenario: Connect GitHub account with organization                   # features/auth/github_connect.feature:21
+    Given the API is available                                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                           # steps/common_steps.py:32
+    And GitHub API is mocked                                           # steps/github_steps.py:15
+    When I connect my GitHub account with:                             # steps/auth_steps.py:243
+      | github_id | github_username | access_token   | selected_repo | selected_org |
+      | 12345     | testuser        | ghp_test123456 | confabs       | my-org       |
+    Then the response status should be 200                             # steps/common_steps.py:63
+    And the response should contain message "GitHub account connected" # steps/common_steps.py:133
+
+  @positive
+  Scenario: Update existing GitHub connection        # features/auth/github_connect.feature:29
+    Given the API is available                       # steps/common_steps.py:16
+    And I am logged in as "user@example.com"         # steps/common_steps.py:32
+    And GitHub API is mocked                         # steps/github_steps.py:15
+    Given I have already connected my GitHub account # steps/auth_steps.py:105
+    When I connect my GitHub account with:           # steps/auth_steps.py:243
+      | github_id | github_username | access_token    | selected_repo |
+      | 12345     | testuser        | ghp_newtoken789 | new-repo      |
+    Then the response status should be 200           # steps/common_steps.py:63
+    And the GitHub connection should be updated      # steps/auth_steps.py:381
+
+  @positive @wip
+  Scenario: List available GitHub repositories     # features/auth/github_connect.feature:38
+    Given the API is available                     # None
+    And I am logged in as "user@example.com"       # None
+    And GitHub API is mocked                       # None
+    Given I have connected my GitHub account       # None
+    And GitHub returns repositories:               # None
+      | name    | full_name        | private |
+      | confabs | testuser/confabs | false   |
+      | private | testuser/private | true    |
+    When I request my GitHub repositories          # None
+    Then the response status should be 200         # None
+    And the response should contain 2 repositories # None
+
+  @negative
+  Scenario: Connect GitHub fails without authentication  # features/auth/github_connect.feature:50
+    Given the API is available                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"             # steps/common_steps.py:32
+    And GitHub API is mocked                             # steps/github_steps.py:15
+    Given I am not authenticated                         # steps/common_steps.py:26
+    When I connect my GitHub account with:               # steps/auth_steps.py:243
+      | github_id | github_username | access_token   | selected_repo |
+      | 12345     | testuser        | ghp_test123456 | confabs       |
+    Then the response status should be 401               # steps/common_steps.py:63
+
+@auth
+Feature: User Login # features/auth/login.feature:2
+  As a registered user
+  I want to log into my account
+  So that I can access my confabs
+  @auth
+  Feature: User Login  # features/auth/login.feature:2
+
+  @positive
+  Scenario: Successful login with valid credentials                      # features/auth/login.feature:14
+    Given the API is available                                           # steps/common_steps.py:16
+    And a user exists with:                                              # steps/auth_steps.py:24
+      | email            | password   | name      |
+      | user@example.com | SecureP@ss | Test User |
+    When I login with email "user@example.com" and password "SecureP@ss" # steps/auth_steps.py:205
+    Then the response status should be 200                               # steps/common_steps.py:63
+    And the response should contain an access token                      # steps/common_steps.py:123
+    And the response should contain user details:                        # steps/auth_steps.py:269
+      | name      | email            |
+      | Test User | user@example.com |
+
+  @positive @wip
+  Scenario: Login returns GitHub connection status                       # features/auth/login.feature:23
+    Given the API is available                                           # None
+    And a user exists with:                                              # None
+      | email            | password   | name      |
+      | user@example.com | SecureP@ss | Test User |
+    Given the user has connected their GitHub account                    # None
+    When I login with email "user@example.com" and password "SecureP@ss" # None
+    Then the response status should be 200                               # None
+    And the user should have GitHub connected                            # None
+
+  @negative
+  Scenario: Login fails with wrong password                                 # features/auth/login.feature:31
+    Given the API is available                                              # steps/common_steps.py:16
+    And a user exists with:                                                 # steps/auth_steps.py:24
+      | email            | password   | name      |
+      | user@example.com | SecureP@ss | Test User |
+    When I login with email "user@example.com" and password "WrongPassword" # steps/auth_steps.py:205
+    Then the response status should be 401                                  # steps/common_steps.py:63
+    And the response should contain error "Invalid credentials"             # steps/common_steps.py:71
+
+  @negative
+  Scenario: Login fails with non-existent email                            # features/auth/login.feature:37
+    Given the API is available                                             # steps/common_steps.py:16
+    And a user exists with:                                                # steps/auth_steps.py:24
+      | email            | password   | name      |
+      | user@example.com | SecureP@ss | Test User |
+    When I login with email "nobody@example.com" and password "SecureP@ss" # steps/auth_steps.py:205
+    Then the response status should be 401                                 # steps/common_steps.py:63
+    And the response should contain error "Invalid credentials"            # steps/common_steps.py:71
+
+  @negative @validation
+  Scenario: Login fails with invalid email format                    # features/auth/login.feature:43
+    Given the API is available                                       # steps/common_steps.py:16
+    And a user exists with:                                          # steps/auth_steps.py:24
+      | email            | password   | name      |
+      | user@example.com | SecureP@ss | Test User |
+    When I login with email "not-an-email" and password "SecureP@ss" # steps/auth_steps.py:205
+    Then the response status should be 422                           # steps/common_steps.py:63
+    And the response should contain a validation error for "email"   # steps/common_steps.py:102
+
+  @negative
+  Scenario: Login fails with empty password                     # features/auth/login.feature:49
+    Given the API is available                                  # steps/common_steps.py:16
+    And a user exists with:                                     # steps/auth_steps.py:24
+      | email            | password   | name      |
+      | user@example.com | SecureP@ss | Test User |
+    When I login with email "user@example.com" and password ""  # steps/auth_steps.py:219
+    Then the response status should be 401                      # steps/common_steps.py:63
+    And the response should contain error "Invalid credentials" # steps/common_steps.py:71
+
+@auth
+Feature: User Registration # features/auth/registration.feature:2
+  As a new user
+  I want to create an account
+  So that I can use the Foundry platform
+  @auth
+  Feature: User Registration  # features/auth/registration.feature:2
+
+  @positive
+  Scenario: Successful registration with valid data  # features/auth/registration.feature:11
+    Given the API is available                       # steps/common_steps.py:16
+    When I register with the following details:      # steps/auth_steps.py:144
+      | name     | email            | password    | country | timezone         |
+      | John Doe | john@example.com | SecureP@ss1 | US      | America/New_York |
+    Then the response status should be 200           # steps/common_steps.py:63
+    And the response should contain an access token  # steps/common_steps.py:123
+    And the response should contain user details:    # steps/auth_steps.py:269
+      | name     | email            | country | timezone         |
+      | John Doe | john@example.com | US      | America/New_York |
+    And the user should not have GitHub connected    # steps/auth_steps.py:288
+
+  @positive
+  Scenario: Registration with minimum required fields  # features/auth/registration.feature:23
+    Given the API is available                         # steps/common_steps.py:16
+    When I register with the following details:        # steps/auth_steps.py:144
+      | name | email         | password   | country | timezone |
+      | Jane | jane@test.com | Password8! | other   | UTC      |
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the response should contain an access token    # steps/common_steps.py:123
+
+  @negative @validation @wip
+  Scenario: Registration fails with duplicate email                  # features/auth/registration.feature:31
+    Given the API is available                                       # None
+    Given a user exists with email "existing@example.com"            # None
+    When I register with the following details:                      # None
+      | name    | email                | password   | country | timezone |
+      | Another | existing@example.com | SecureP@ss | US      | UTC      |
+    Then the response status should be 400                           # None
+    And the response should contain error "Email already registered" # None
+
+  @negative @validation
+  Scenario: Registration fails with invalid email format           # features/auth/registration.feature:41
+    Given the API is available                                     # steps/common_steps.py:16
+    When I register with the following details:                    # steps/auth_steps.py:144
+      | name | email        | password   | country | timezone |
+      | Test | not-an-email | SecureP@ss | US      | UTC      |
+    Then the response status should be 422                         # steps/common_steps.py:63
+    And the response should contain a validation error for "email" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Registration fails with password too short                # features/auth/registration.feature:49
+    Given the API is available                                        # steps/common_steps.py:16
+    When I register with the following details:                       # steps/auth_steps.py:144
+      | name | email         | password | country | timezone |
+      | Test | test@test.com | Short1!  | US      | UTC      |
+    Then the response status should be 422                            # steps/common_steps.py:63
+    And the response should contain a validation error for "password" # steps/common_steps.py:102
+    And the error should mention minimum length of 8 characters       # steps/auth_steps.py:348
+
+  @negative @validation
+  Scenario: Registration fails with missing required fields              # features/auth/registration.feature:58
+    Given the API is available                                           # steps/common_steps.py:16
+    When I register with the following details:                          # steps/auth_steps.py:144
+      | name | email         |
+      | Test | test@test.com |
+    Then the response status should be 422                               # steps/common_steps.py:63
+    And the response should contain validation errors for missing fields # steps/auth_steps.py:364
+
+  @negative @validation
+  Scenario: Registration fails with empty name                    # features/auth/registration.feature:66
+    Given the API is available                                    # steps/common_steps.py:16
+    When I register with the following details:                   # steps/auth_steps.py:144
+      | name | email         | password   | country | timezone |
+      |      | test@test.com | SecureP@ss | US      | UTC      |
+    Then the response status should be 422                        # steps/common_steps.py:63
+    And the response should contain a validation error for "name" # steps/common_steps.py:102
+
+@auth
+Feature: Session Management # features/auth/session.feature:2
+  As an authenticated user
+  I want my session to be properly managed
+  So that my account remains secure
+  @auth
+  Feature: Session Management  # features/auth/session.feature:2
+
+  @positive
+  Scenario: Access protected endpoint with valid token  # features/auth/session.feature:11
+    Given the API is available                          # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"          # steps/common_steps.py:32
+    When I request my user profile                      # steps/auth_steps.py:228
+    Then the response status should be 200              # steps/common_steps.py:63
+    And the response should contain my user details     # steps/auth_steps.py:304
+
+  @negative
+  Scenario: Access protected endpoint without token           # features/auth/session.feature:18
+    Given the API is available                                # steps/common_steps.py:16
+    When I request my user profile without authentication     # steps/auth_steps.py:234
+    Then the response status should be 401                    # steps/common_steps.py:63
+    And the response should contain error "Not authenticated" # steps/common_steps.py:71
+
+  @negative
+  Scenario: Access protected endpoint with invalid token        # features/auth/session.feature:24
+    Given the API is available                                  # steps/common_steps.py:16
+    Given I have an invalid auth token "invalid.token.here"     # steps/auth_steps.py:77
+    When I request my user profile                              # steps/auth_steps.py:228
+    Then the response status should be 401                      # steps/common_steps.py:63
+    And the response should contain error "Invalid credentials" # steps/common_steps.py:71
+
+  @negative
+  Scenario: Access protected endpoint with malformed token  # features/auth/session.feature:31
+    Given the API is available                              # steps/common_steps.py:16
+    Given I have an invalid auth token "not-even-a-jwt"     # steps/auth_steps.py:77
+    When I request my user profile                          # steps/auth_steps.py:228
+    Then the response status should be 401                  # steps/common_steps.py:63
+
+  @negative
+  Scenario: Access protected endpoint with expired token      # features/auth/session.feature:37
+    Given the API is available                                # steps/common_steps.py:16
+    Given I have an expired auth token                        # steps/auth_steps.py:83
+    When I request my user profile                            # steps/auth_steps.py:228
+    Then the response status should be 401                    # steps/common_steps.py:63
+    And the response should contain error "Token has expired" # steps/common_steps.py:71
+
+  @positive
+  Scenario: Token contains correct user information  # features/auth/session.feature:44
+    Given the API is available                       # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"       # steps/common_steps.py:32
+    When I request my user profile                   # steps/auth_steps.py:228
+    Then the response should contain:                # steps/auth_steps.py:313
+      | field |
+      | email |
+      | name  |
+      | id    |
+
+@confab
+Feature: Create Confab # features/confab/create.feature:2
+  As an authenticated user
+  I want to create new confabs
+  So that I can build AI agent configurations
+  @confab
+  Feature: Create Confab  # features/confab/create.feature:2
+
+  @positive
+  Scenario: Create confab with minimal fields       # features/confab/create.feature:12
+    Given the API is available                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"        # steps/common_steps.py:32
+    When I create a confab with:                    # steps/confab_steps.py:202
+      | name           |
+      | My First Agent |
+    Then the response status should be 200          # steps/common_steps.py:63
+    And the response should contain confab details: # steps/confab_steps.py:363
+      | name           | status   |
+      | My First Agent | building |
+    And the confab should have a valid ID           # steps/confab_steps.py:379
+    And the confab should have a version number     # steps/confab_steps.py:387
+
+  @positive
+  Scenario: Create confab with all fields           # features/confab/create.feature:24
+    Given the API is available                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"        # steps/common_steps.py:32
+    When I create a confab with:                    # steps/confab_steps.py:202
+      | name       | description           | model_provider | model_name     | temperature |
+      | Full Agent | A comprehensive agent | groq           | qwen/qwen3-32b | 0.8         |
+    Then the response status should be 200          # steps/common_steps.py:63
+    And the response should contain confab details: # steps/confab_steps.py:363
+      | name       | description           | model_provider | temperature |
+      | Full Agent | A comprehensive agent | groq           | 0.8         |
+
+  @positive
+  Scenario: Create confab with custom temperature  # features/confab/create.feature:34
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    When I create a confab with:                   # steps/confab_steps.py:202
+      | name       | temperature |
+      | Cool Agent | 0.2         |
+    Then the response status should be 200         # steps/common_steps.py:63
+    And the confab temperature should be 0.2       # steps/confab_steps.py:394
+
+  @positive
+  Scenario: Create confab with maximum temperature  # features/confab/create.feature:42
+    Given the API is available                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"        # steps/common_steps.py:32
+    When I create a confab with:                    # steps/confab_steps.py:202
+      | name      | temperature |
+      | Hot Agent | 2.0         |
+    Then the response status should be 200          # steps/common_steps.py:63
+    And the confab temperature should be 2.0        # steps/confab_steps.py:394
+
+  @negative @validation
+  Scenario: Create confab fails without name                      # features/confab/create.feature:50
+    Given the API is available                                    # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                      # steps/common_steps.py:32
+    When I create a confab with:                                  # steps/confab_steps.py:202
+      | description    |
+      | Missing a name |
+    Then the response status should be 422                        # steps/common_steps.py:63
+    And the response should contain a validation error for "name" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Create confab fails with empty name                   # features/confab/create.feature:58
+    Given the API is available                                    # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                      # steps/common_steps.py:32
+    When I create a confab with:                                  # steps/confab_steps.py:202
+      | name |
+      |      |
+    Then the response status should be 422                        # steps/common_steps.py:63
+    And the response should contain a validation error for "name" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Create confab fails with name exceeding 100 characters  # features/confab/create.feature:66
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    When I create a confab with a name of 101 characters            # steps/confab_steps.py:217
+    Then the response status should be 422                          # steps/common_steps.py:63
+    And the response should contain a validation error for "name"   # steps/common_steps.py:102
+    And the error should mention maximum length of 100 characters   # steps/auth_steps.py:356
+
+  @positive @validation
+  Scenario: Create confab succeeds with name of exactly 100 characters  # features/confab/create.feature:73
+    Given the API is available                                          # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                            # steps/common_steps.py:32
+    When I create a confab with a name of 100 characters                # steps/confab_steps.py:217
+    Then the response status should be 200                              # steps/common_steps.py:63
+    And the confab should be created successfully                       # steps/confab_steps.py:402
+
+  @negative @validation
+  Scenario: Create confab fails with temperature below 0                 # features/confab/create.feature:79
+    Given the API is available                                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                             # steps/common_steps.py:32
+    When I create a confab with:                                         # steps/confab_steps.py:202
+      | name     | temperature |
+      | Bad Temp | -0.1        |
+    Then the response status should be 422                               # steps/common_steps.py:63
+    And the response should contain a validation error for "temperature" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Create confab fails with temperature above 2.0               # features/confab/create.feature:87
+    Given the API is available                                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                             # steps/common_steps.py:32
+    When I create a confab with:                                         # steps/confab_steps.py:202
+      | name     | temperature |
+      | Bad Temp | 2.1         |
+    Then the response status should be 422                               # steps/common_steps.py:63
+    And the response should contain a validation error for "temperature" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Create confab fails with invalid status                 # features/confab/create.feature:95
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    When I create a confab with:                                    # steps/confab_steps.py:202
+      | name       | status  |
+      | Bad Status | invalid |
+    Then the response status should be 422                          # steps/common_steps.py:63
+    And the response should contain a validation error for "status" # steps/common_steps.py:102
+
+  @negative
+  Scenario: Create confab fails without authentication  # features/confab/create.feature:103
+    Given the API is available                          # steps/common_steps.py:16
+    And I am logged in as "user@example.com"            # steps/common_steps.py:32
+    Given I am not authenticated                        # steps/common_steps.py:26
+    When I create a confab with:                        # steps/confab_steps.py:202
+      | name        |
+      | Unauth Test |
+    Then the response status should be 401              # steps/common_steps.py:63
+
+@confab @mock_github
+Feature: Delete Confab # features/confab/delete.feature:2
+  As an authenticated user
+  I want to delete my confabs
+  So that I can remove unwanted AI agent configurations
+  @confab @mock_github
+  Feature: Delete Confab  # features/confab/delete.feature:2
+
+  @positive
+  Scenario: Delete confab successfully                       # features/confab/delete.feature:13
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    And GitHub API is mocked                                 # steps/github_steps.py:15
+    Given I have created a confab named "To Delete"          # steps/confab_steps.py:15
+    When I delete the confab                                 # steps/confab_steps.py:331
+    Then the response status should be 200                   # steps/common_steps.py:63
+    And the response should contain message "Confab deleted" # steps/common_steps.py:133
+    And the confab should no longer exist                    # steps/confab_steps.py:478
+
+  @positive
+  Scenario: Delete confab with documents attached            # features/confab/delete.feature:21
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    And GitHub API is mocked                                 # steps/github_steps.py:15
+    Given I have created a confab named "With Docs"          # steps/confab_steps.py:15
+    And the confab has documents:                            # steps/document_steps.py:16
+      | filename |
+      | doc1.pdf |
+      | doc2.txt |
+    When I delete the confab                                 # steps/confab_steps.py:331
+    Then the response status should be 200                   # steps/common_steps.py:63
+    And the response should contain message "Confab deleted" # steps/common_steps.py:133
+    And all associated documents should be deleted           # steps/document_steps.py:785
+
+  @positive
+  Scenario: Delete confab with learnings attached        # features/confab/delete.feature:33
+    Given the API is available                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"             # steps/common_steps.py:32
+    And GitHub API is mocked                             # steps/github_steps.py:15
+    Given I have created a confab named "With Learnings" # steps/confab_steps.py:15
+    And the confab has learnings:                        # steps/document_steps.py:227
+      | content             |
+      | User prefers formal |
+      | Avoid jargon        |
+    When I delete the confab                             # steps/confab_steps.py:331
+    Then the response status should be 200               # steps/common_steps.py:63
+    And all associated learnings should be deleted       # steps/document_steps.py:792
+
+  @positive @wip
+  Scenario: Delete confab removes GitHub folder when connected  # features/confab/delete.feature:44
+    Given the API is available                                  # None
+    And I am logged in as "user@example.com"                    # None
+    And GitHub API is mocked                                    # None
+    Given I have connected my GitHub account                    # None
+    And I have created a confab named "Synced Agent"            # None
+    And the confab has been synced to GitHub                    # None
+    When I delete the confab                                    # None
+    Then the response status should be 200                      # None
+    And the response should indicate GitHub folder was deleted  # None
+
+  @positive @wip
+  Scenario: Delete confab succeeds even if GitHub folder deletion fails  # features/confab/delete.feature:54
+    Given the API is available                                           # None
+    And I am logged in as "user@example.com"                             # None
+    And GitHub API is mocked                                             # None
+    Given I have connected my GitHub account                             # None
+    And I have created a confab named "Synced Agent"                     # None
+    And the confab has been synced to GitHub                             # None
+    And GitHub folder deletion will fail                                 # None
+    When I delete the confab                                             # None
+    Then the response status should be 200                               # None
+    And the confab should be deleted from database                       # None
+    And the response should indicate GitHub folder was not deleted       # None
+
+  @positive
+  Scenario: Deleting confab removes it from list  # features/confab/delete.feature:66
+    Given the API is available                    # steps/common_steps.py:16
+    And I am logged in as "user@example.com"      # steps/common_steps.py:32
+    And GitHub API is mocked                      # steps/github_steps.py:15
+    Given I have created the following confabs:   # steps/confab_steps.py:64
+      | name    |
+      | Agent 1 |
+      | Agent 2 |
+      | Agent 3 |
+    When I delete the confab named "Agent 2"      # steps/confab_steps.py:344
+    And I list my confabs                         # steps/confab_steps.py:244
+    Then the response should contain 2 confabs    # steps/confab_steps.py:410
+    And the list should not contain "Agent 2"     # steps/confab_steps.py:495
+
+  @negative
+  Scenario: Delete confab that does not exist                # features/confab/delete.feature:78
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    And GitHub API is mocked                                 # steps/github_steps.py:15
+    When I delete confab with ID 99999                       # steps/confab_steps.py:338
+    Then the response status should be 404                   # steps/common_steps.py:63
+    And the response should contain error "Confab not found" # steps/common_steps.py:71
+
+  @negative
+  Scenario: Delete another user's confab                                    # features/confab/delete.feature:84
+    Given the API is available                                              # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                                # steps/common_steps.py:32
+    And GitHub API is mocked                                                # steps/github_steps.py:15
+    Given another user "other@example.com" has a confab named "Other Agent" # steps/confab_steps.py:87
+    When I try to delete that confab                                        # steps/confab_steps.py:352
+    Then the response status should be 404                                  # steps/common_steps.py:63
+    And the response should contain error "Confab not found"                # steps/common_steps.py:71
+
+  @negative
+  Scenario: Delete confab without authentication  # features/confab/delete.feature:91
+    Given the API is available                    # steps/common_steps.py:16
+    And I am logged in as "user@example.com"      # steps/common_steps.py:32
+    And GitHub API is mocked                      # steps/github_steps.py:15
+    Given a confab exists with ID 1               # steps/confab_steps.py:142
+    And I am not authenticated                    # steps/common_steps.py:26
+    When I delete confab with ID 1                # steps/confab_steps.py:338
+    Then the response status should be 401        # steps/common_steps.py:63
+
+@confab
+Feature: Read Confab # features/confab/read.feature:2
+  As an authenticated user
+  I want to view my confabs
+  So that I can review and manage my AI agent configurations
+  @confab
+  Feature: Read Confab  # features/confab/read.feature:2
+
+  @positive
+  Scenario: Get single confab by ID                  # features/confab/read.feature:12
+    Given the API is available                       # steps/common_steps.py:16
+    And I am logged in as "user@example.com"         # steps/common_steps.py:32
+    Given I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I get the confab by ID                      # steps/confab_steps.py:224
+    Then the response status should be 200           # steps/common_steps.py:63
+    And the response should contain confab details:  # steps/confab_steps.py:363
+      | name       |
+      | Test Agent |
+    And the response should contain:                 # steps/auth_steps.py:313
+      | field      |
+      | id         |
+      | version    |
+      | status     |
+      | created_at |
+
+  @positive
+  Scenario: Get confab with all populated fields     # features/confab/read.feature:27
+    Given the API is available                       # steps/common_steps.py:16
+    And I am logged in as "user@example.com"         # steps/common_steps.py:32
+    Given I have created a confab with full details: # steps/confab_steps.py:33
+      | name       | description | purpose         | status |
+      | Full Agent | Test agent  | Help users test | draft  |
+    When I get the confab by ID                      # steps/confab_steps.py:224
+    Then the response should contain confab details: # steps/confab_steps.py:363
+      | name       | description | purpose         | status |
+      | Full Agent | Test agent  | Help users test | draft  |
+
+  @positive
+  Scenario: List all my confabs                 # features/confab/read.feature:37
+    Given the API is available                  # steps/common_steps.py:16
+    And I am logged in as "user@example.com"    # steps/common_steps.py:32
+    Given I have created the following confabs: # steps/confab_steps.py:64
+      | name    |
+      | Agent 1 |
+      | Agent 2 |
+      | Agent 3 |
+    When I list my confabs                      # steps/confab_steps.py:244
+    Then the response status should be 200      # steps/common_steps.py:63
+    And the response should contain 3 confabs   # steps/confab_steps.py:410
+    And all confabs should belong to me         # steps/confab_steps.py:424
+
+  @positive
+  Scenario: List confabs returns empty when none exist  # features/confab/read.feature:49
+    Given the API is available                          # steps/common_steps.py:16
+    And I am logged in as "user@example.com"            # steps/common_steps.py:32
+    Given I have no confabs                             # steps/confab_steps.py:78
+    When I list my confabs                              # steps/confab_steps.py:244
+    Then the response status should be 200              # steps/common_steps.py:63
+    And the response should contain 0 confabs           # steps/confab_steps.py:410
+
+  @negative
+  Scenario: Get confab that does not exist                   # features/confab/read.feature:56
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    When I get confab with ID 99999                          # steps/confab_steps.py:231
+    Then the response status should be 404                   # steps/common_steps.py:63
+    And the response should contain error "Confab not found" # steps/common_steps.py:71
+
+  @negative
+  Scenario: Get another user's confab                                         # features/confab/read.feature:62
+    Given the API is available                                                # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                                  # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab named "Private Agent" # steps/confab_steps.py:87
+    When I try to get that confab                                             # steps/confab_steps.py:237
+    Then the response status should be 404                                    # steps/common_steps.py:63
+    And the response should contain error "Confab not found"                  # steps/common_steps.py:71
+
+  @negative
+  Scenario: List confabs only shows my own              # features/confab/read.feature:69
+    Given the API is available                          # steps/common_steps.py:16
+    And I am logged in as "user@example.com"            # steps/common_steps.py:32
+    Given another user "other@example.com" has confabs: # steps/confab_steps.py:105
+      | name          |
+      | Other Agent 1 |
+      | Other Agent 2 |
+    And I have created a confab named "My Agent"        # steps/confab_steps.py:15
+    When I list my confabs                              # steps/confab_steps.py:244
+    Then the response should contain 1 confab           # steps/confab_steps.py:418
+    And the confab should be named "My Agent"           # steps/confab_steps.py:486
+
+  @negative
+  Scenario: Get confab without authentication  # features/confab/read.feature:80
+    Given the API is available                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"   # steps/common_steps.py:32
+    Given I am not authenticated               # steps/common_steps.py:26
+    When I get confab with ID 1                # steps/confab_steps.py:231
+    Then the response status should be 401     # steps/common_steps.py:63
+
+@confab
+Feature: Confab Status Transitions # features/confab/status_transitions.feature:2
+  As an authenticated user
+  I want to manage confab status
+  So that I can track the lifecycle of my AI agents
+  @confab
+  Feature: Confab Status Transitions  # features/confab/status_transitions.feature:2
+
+  @positive
+  Scenario: New confab starts in building status  # features/confab/status_transitions.feature:12
+    Given the API is available                    # steps/common_steps.py:16
+    And I am logged in as "user@example.com"      # steps/common_steps.py:32
+    When I create a confab with:                  # steps/confab_steps.py:202
+      | name      |
+      | New Agent |
+    Then the confab status should be "building"   # steps/confab_steps.py:454
+
+  @positive
+  Scenario: Transition from building to draft  # features/confab/status_transitions.feature:19
+    Given the API is available                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"   # steps/common_steps.py:32
+    Given I have a confab in "building" status # steps/confab_steps.py:127
+    When I update the confab status to "draft" # steps/confab_steps.py:324
+    Then the response status should be 200     # steps/common_steps.py:63
+    And the confab status should be "draft"    # steps/confab_steps.py:454
+
+  @positive
+  Scenario: Transition from draft to published     # features/confab/status_transitions.feature:26
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    Given I have a confab in "draft" status        # steps/confab_steps.py:127
+    When I update the confab status to "published" # steps/confab_steps.py:324
+    Then the response status should be 200         # steps/common_steps.py:63
+    And the confab status should be "published"    # steps/confab_steps.py:454
+
+  @positive
+  Scenario: Transition from published to archived  # features/confab/status_transitions.feature:33
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    Given I have a confab in "published" status    # steps/confab_steps.py:127
+    When I update the confab status to "archived"  # steps/confab_steps.py:324
+    Then the response status should be 200         # steps/common_steps.py:63
+    And the confab status should be "archived"     # steps/confab_steps.py:454
+
+  @positive
+  Scenario: Transition from archived back to draft  # features/confab/status_transitions.feature:40
+    Given the API is available                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"        # steps/common_steps.py:32
+    Given I have a confab in "archived" status      # steps/confab_steps.py:127
+    When I update the confab status to "draft"      # steps/confab_steps.py:324
+    Then the response status should be 200          # steps/common_steps.py:63
+    And the confab status should be "draft"         # steps/confab_steps.py:454
+
+  @positive
+  Scenario: Transition directly from building to published  # features/confab/status_transitions.feature:47
+    Given the API is available                              # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                # steps/common_steps.py:32
+    Given I have a confab in "building" status              # steps/confab_steps.py:127
+    When I update the confab status to "published"          # steps/confab_steps.py:324
+    Then the response status should be 200                  # steps/common_steps.py:63
+    And the confab status should be "published"             # steps/confab_steps.py:454
+
+  @positive
+  Scenario: Transition from any status to archived  # features/confab/status_transitions.feature:54
+    Given the API is available                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"        # steps/common_steps.py:32
+    Given I have a confab in "building" status      # steps/confab_steps.py:127
+    When I update the confab status to "archived"   # steps/confab_steps.py:324
+    Then the response status should be 200          # steps/common_steps.py:63
+    And the confab status should be "archived"      # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.1   # features/confab/status_transitions.feature:69
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "building" status         # steps/confab_steps.py:127
+    When I update the confab status to "draft"         # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "draft"            # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.2   # features/confab/status_transitions.feature:70
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "building" status         # steps/confab_steps.py:127
+    When I update the confab status to "published"     # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "published"        # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.3   # features/confab/status_transitions.feature:71
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "building" status         # steps/confab_steps.py:127
+    When I update the confab status to "archived"      # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "archived"         # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.4   # features/confab/status_transitions.feature:72
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "draft" status            # steps/confab_steps.py:127
+    When I update the confab status to "building"      # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "building"         # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.5   # features/confab/status_transitions.feature:73
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "draft" status            # steps/confab_steps.py:127
+    When I update the confab status to "published"     # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "published"        # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.6   # features/confab/status_transitions.feature:74
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "draft" status            # steps/confab_steps.py:127
+    When I update the confab status to "archived"      # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "archived"         # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.7   # features/confab/status_transitions.feature:75
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "published" status        # steps/confab_steps.py:127
+    When I update the confab status to "draft"         # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "draft"            # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.8   # features/confab/status_transitions.feature:76
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "published" status        # steps/confab_steps.py:127
+    When I update the confab status to "archived"      # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "archived"         # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.9   # features/confab/status_transitions.feature:77
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    Given I have a confab in "archived" status         # steps/confab_steps.py:127
+    When I update the confab status to "draft"         # steps/confab_steps.py:324
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "draft"            # steps/confab_steps.py:454
+
+  @positive
+  Scenario Outline: Valid status transitions -- @1.10   # features/confab/status_transitions.feature:78
+    Given the API is available                          # steps/common_steps.py:16
+    And I am logged in as "user@example.com"            # steps/common_steps.py:32
+    Given I have a confab in "archived" status          # steps/confab_steps.py:127
+    When I update the confab status to "building"       # steps/confab_steps.py:324
+    Then the response status should be 200              # steps/common_steps.py:63
+    And the confab status should be "building"          # steps/confab_steps.py:454
+
+@confab
+Feature: Update Confab # features/confab/update.feature:2
+  As an authenticated user
+  I want to update my confabs
+  So that I can refine my AI agent configurations
+  @confab
+  Feature: Update Confab  # features/confab/update.feature:2
+
+  @positive
+  Scenario: Update confab name                         # features/confab/update.feature:13
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    And I have created a confab named "Original Agent" # steps/confab_steps.py:15
+    When I update the confab with:                     # steps/confab_steps.py:250
+      | name          |
+      | Renamed Agent |
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab name should be "Renamed Agent"      # steps/confab_steps.py:431
+
+  @positive
+  Scenario: Update confab description                          # features/confab/update.feature:21
+    Given the API is available                                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                   # steps/common_steps.py:32
+    And I have created a confab named "Original Agent"         # steps/confab_steps.py:15
+    When I update the confab with:                             # steps/confab_steps.py:250
+      | description         |
+      | Updated description |
+    Then the response status should be 200                     # steps/common_steps.py:63
+    And the confab description should be "Updated description" # steps/confab_steps.py:438
+
+  @positive
+  Scenario: Update confab purpose                                  # features/confab/update.feature:29
+    Given the API is available                                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                       # steps/common_steps.py:32
+    And I have created a confab named "Original Agent"             # steps/confab_steps.py:15
+    When I update the confab with:                                 # steps/confab_steps.py:250
+      | purpose                     |
+      | Help users accomplish tasks |
+    Then the response status should be 200                         # steps/common_steps.py:63
+    And the confab purpose should be "Help users accomplish tasks" # steps/confab_steps.py:446
+
+  @positive
+  Scenario: Update confab status                       # features/confab/update.feature:37
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    And I have created a confab named "Original Agent" # steps/confab_steps.py:15
+    When I update the confab with:                     # steps/confab_steps.py:250
+      | status |
+      | draft  |
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab status should be "draft"            # steps/confab_steps.py:454
+
+  @positive
+  Scenario: Update confab temperature                  # features/confab/update.feature:45
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    And I have created a confab named "Original Agent" # steps/confab_steps.py:15
+    When I update the confab with:                     # steps/confab_steps.py:250
+      | temperature |
+      | 1.5         |
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab temperature should be 1.5           # steps/confab_steps.py:394
+
+  @positive
+  Scenario: Update multiple fields at once             # features/confab/update.feature:53
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    And I have created a confab named "Original Agent" # steps/confab_steps.py:15
+    When I update the confab with:                     # steps/confab_steps.py:250
+      | name         | description     | status    | temperature |
+      | Multi Update | New description | published | 0.9         |
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the response should contain confab details:    # steps/confab_steps.py:363
+      | name         | description     | status    | temperature |
+      | Multi Update | New description | published | 0.9         |
+
+  @positive
+  Scenario: Partial update preserves unchanged fields           # features/confab/update.feature:63
+    Given the API is available                                  # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                    # steps/common_steps.py:32
+    And I have created a confab named "Original Agent"          # steps/confab_steps.py:15
+    Given the confab has description "Original description"     # steps/confab_steps.py:120
+    When I update the confab with:                              # steps/confab_steps.py:250
+      | name     |
+      | New Name |
+    Then the response status should be 200                      # steps/common_steps.py:63
+    And the confab name should be "New Name"                    # steps/confab_steps.py:431
+    And the confab description should be "Original description" # steps/confab_steps.py:438
+
+  @positive
+  Scenario: Update confab with guardrails              # features/confab/update.feature:73
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    And I have created a confab named "Original Agent" # steps/confab_steps.py:15
+    When I update the confab with guardrails:          # steps/confab_steps.py:289
+      | id | rule             | severity | enabled |
+      | g1 | Never share PII  | error    | true    |
+      | g2 | Be polite always | warning  | true    |
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab should have 2 guardrails            # steps/confab_steps.py:462
+
+  @positive
+  Scenario: Update confab with test scenarios          # features/confab/update.feature:82
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    And I have created a confab named "Original Agent" # steps/confab_steps.py:15
+    When I update the confab with tests:               # steps/confab_steps.py:306
+      | id | name         | input   | expected_behavior  |
+      | t1 | Greeting     | Hello   | Respond with hello |
+      | t2 | Help request | Help me | Offer assistance   |
+    Then the response status should be 200             # steps/common_steps.py:63
+    And the confab should have 2 test scenarios        # steps/confab_steps.py:470
+
+  @negative @validation
+  Scenario: Update fails with name exceeding 100 characters       # features/confab/update.feature:91
+    Given the API is available                                    # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                      # steps/common_steps.py:32
+    And I have created a confab named "Original Agent"            # steps/confab_steps.py:15
+    When I update the confab with a name of 101 characters        # steps/confab_steps.py:266
+    Then the response status should be 422                        # steps/common_steps.py:63
+    And the response should contain a validation error for "name" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Update fails with invalid status                        # features/confab/update.feature:97
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    And I have created a confab named "Original Agent"              # steps/confab_steps.py:15
+    When I update the confab with:                                  # steps/confab_steps.py:250
+      | status    |
+      | not-valid |
+    Then the response status should be 422                          # steps/common_steps.py:63
+    And the response should contain a validation error for "status" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Update fails with temperature out of range                   # features/confab/update.feature:105
+    Given the API is available                                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                             # steps/common_steps.py:32
+    And I have created a confab named "Original Agent"                   # steps/confab_steps.py:15
+    When I update the confab with:                                       # steps/confab_steps.py:250
+      | temperature |
+      | 3.0         |
+    Then the response status should be 422                               # steps/common_steps.py:63
+    And the response should contain a validation error for "temperature" # steps/common_steps.py:102
+
+  @negative
+  Scenario: Update confab that does not exist                # features/confab/update.feature:113
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    And I have created a confab named "Original Agent"       # steps/confab_steps.py:15
+    When I update confab with ID 99999 with:                 # steps/confab_steps.py:274
+      | name        |
+      | Ghost Agent |
+    Then the response status should be 404                   # steps/common_steps.py:63
+    And the response should contain error "Confab not found" # steps/common_steps.py:71
+
+  @negative
+  Scenario: Update another user's confab                                    # features/confab/update.feature:121
+    Given the API is available                                              # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                                # steps/common_steps.py:32
+    And I have created a confab named "Original Agent"                      # steps/confab_steps.py:15
+    Given another user "other@example.com" has a confab named "Other Agent" # steps/confab_steps.py:87
+    When I try to update that confab with:                                  # steps/confab_steps.py:281
+      | name     |
+      | Hijacked |
+    Then the response status should be 404                                  # steps/common_steps.py:63
+    And the response should contain error "Confab not found"                # steps/common_steps.py:71
+
+  @negative
+  Scenario: Update confab without authentication       # features/confab/update.feature:130
+    Given the API is available                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"           # steps/common_steps.py:32
+    And I have created a confab named "Original Agent" # steps/confab_steps.py:15
+    Given I am not authenticated                       # steps/common_steps.py:26
+    When I update confab with ID 1 with:               # steps/confab_steps.py:274
+      | name   |
+      | Unauth |
+    Then the response status should be 401             # steps/common_steps.py:63
+
+@documents
+Feature: Archive Documents # features/documents/archive.feature:2
+  As an authenticated user
+  I want to archive documents from my confabs
+  So that I can remove outdated reference materials
+  @documents
+  Feature: Archive Documents  # features/documents/archive.feature:2
+
+  @positive
+  Scenario: Archive a document                     # features/documents/archive.feature:14
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"      # steps/document_steps.py:43
+    When I archive the document "guide.pdf"        # steps/document_steps.py:434
+    Then the response status should be 200         # steps/common_steps.py:63
+    And the document status should be "archived"   # steps/document_steps.py:759
+
+  @positive
+  Scenario: Archived document no longer appears in list  # features/documents/archive.feature:20
+    Given the API is available                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"             # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"       # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"            # steps/document_steps.py:43
+    When I archive the document "guide.pdf"              # steps/document_steps.py:434
+    And I list documents for the confab                  # steps/document_steps.py:414
+    Then the response should contain 0 documents         # steps/document_steps.py:681
+
+  @positive
+  Scenario: Archive document preserves versions    # features/documents/archive.feature:26
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"      # steps/document_steps.py:43
+    Given the document has 3 versions              # steps/document_steps.py:111
+    When I archive the document "guide.pdf"        # steps/document_steps.py:434
+    Then the document should still have 3 versions # steps/document_steps.py:775
+    And the document status should be "archived"   # steps/document_steps.py:759
+
+  @negative @wip
+  Scenario: Archive already archived document                         # features/documents/archive.feature:33
+    Given the API is available                                        # None
+    And I am logged in as "user@example.com"                          # None
+    And I have created a confab named "Test Agent"                    # None
+    And the confab has a document "guide.pdf"                         # None
+    Given the document is already archived                            # None
+    When I archive the document "guide.pdf"                           # None
+    Then the response status should be 400                            # None
+    And the response should contain error "Document already archived" # None
+
+  @negative
+  Scenario: Archive non-existent document                      # features/documents/archive.feature:41
+    Given the API is available                                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                   # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"             # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"                  # steps/document_steps.py:43
+    When I archive document ID 99999                           # steps/document_steps.py:444
+    Then the response status should be 404                     # steps/common_steps.py:63
+    And the response should contain error "Document not found" # steps/common_steps.py:71
+
+  @negative
+  Scenario: Archive document from another user's confab                 # features/documents/archive.feature:47
+    Given the API is available                                          # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                            # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                      # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"                           # steps/document_steps.py:43
+    Given another user "other@example.com" has a confab with a document # steps/document_steps.py:215
+    When I try to archive that document                                 # steps/document_steps.py:464
+    Then the response status should be 404                              # steps/common_steps.py:63
+
+  @negative
+  Scenario: Archive document without authentication  # features/documents/archive.feature:53
+    Given the API is available                       # steps/common_steps.py:16
+    And I am logged in as "user@example.com"         # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"   # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"        # steps/document_steps.py:43
+    Given I am not authenticated                     # steps/common_steps.py:26
+    When I archive document ID 1 from confab ID 1    # steps/document_steps.py:451
+    Then the response status should be 401           # steps/common_steps.py:63
+
+@documents
+Feature: List Documents # features/documents/list.feature:2
+  As an authenticated user
+  I want to list documents attached to my confabs
+  So that I can see what reference materials are available
+  @documents
+  Feature: List Documents  # features/documents/list.feature:2
+
+  @positive
+  Scenario: List documents for confab              # features/documents/list.feature:13
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    Given the confab has documents:                # steps/document_steps.py:16
+      | filename    |
+      | guide.pdf   |
+      | readme.txt  |
+      | config.json |
+    When I list documents for the confab           # steps/document_steps.py:414
+    Then the response status should be 200         # steps/common_steps.py:63
+    And the response should contain 3 documents    # steps/document_steps.py:681
+    And the documents should include:              # steps/document_steps.py:695
+      | filename    |
+      | guide.pdf   |
+      | readme.txt  |
+      | config.json |
+
+  @positive
+  Scenario: List documents returns only active documents  # features/documents/list.feature:29
+    Given the API is available                            # steps/common_steps.py:16
+    And I am logged in as "user@example.com"              # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"        # steps/confab_steps.py:15
+    Given the confab has documents:                       # steps/document_steps.py:16
+      | filename     | status   |
+      | active.pdf   | active   |
+      | archived.pdf | archived |
+    When I list documents for the confab                  # steps/document_steps.py:414
+    Then the response status should be 200                # steps/common_steps.py:63
+    And the response should contain 1 document            # steps/document_steps.py:689
+    And the document should be "active.pdf"               # steps/document_steps.py:707
+
+  @positive
+  Scenario: List documents returns empty when none exist  # features/documents/list.feature:40
+    Given the API is available                            # steps/common_steps.py:16
+    And I am logged in as "user@example.com"              # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"        # steps/confab_steps.py:15
+    When I list documents for the confab                  # steps/document_steps.py:414
+    Then the response status should be 200                # steps/common_steps.py:63
+    And the response should contain 0 documents           # steps/document_steps.py:681
+
+  @positive
+  Scenario: List documents includes version count               # features/documents/list.feature:46
+    Given the API is available                                  # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                    # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"              # steps/confab_steps.py:15
+    Given the confab has a document "guide.pdf" with 3 versions # steps/document_steps.py:70
+    When I list documents for the confab                        # steps/document_steps.py:414
+    Then the response status should be 200                      # steps/common_steps.py:63
+    And the document "guide.pdf" should have version_count 3    # steps/document_steps.py:715
+
+  @positive
+  Scenario: List documents includes latest version info        # features/documents/list.feature:53
+    Given the API is available                                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                   # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"             # steps/confab_steps.py:15
+    Given the confab has a document "guide.pdf" with versions: # steps/document_steps.py:87
+      | version | size_kb |
+      | 1       | 100     |
+      | 2       | 150     |
+    When I list documents for the confab                       # steps/document_steps.py:414
+    Then the response should include latest_version with:      # steps/document_steps.py:730
+      | version_number | original_size |
+      | 2              | 153600        |
+
+  @positive
+  Scenario: List documents sorted by creation date descending  # features/documents/list.feature:64
+    Given the API is available                                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                   # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"             # steps/confab_steps.py:15
+    Given the confab has documents uploaded in order:          # steps/document_steps.py:183
+      | filename   | uploaded_at         |
+      | first.pdf  | 2024-01-01 10:00:00 |
+      | second.pdf | 2024-01-02 10:00:00 |
+      | third.pdf  | 2024-01-03 10:00:00 |
+    When I list documents for the confab                       # steps/document_steps.py:414
+    Then the first document should be "third.pdf"              # steps/document_steps.py:743
+    And the last document should be "first.pdf"                # steps/document_steps.py:751
+
+  @negative
+  Scenario: List documents for non-existent confab  # features/documents/list.feature:75
+    Given the API is available                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"        # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"  # steps/confab_steps.py:15
+    When I list documents for confab ID 99999       # steps/document_steps.py:421
+    Then the response status should be 404          # steps/common_steps.py:63
+
+  @negative
+  Scenario: List documents for another user's confab                   # features/documents/list.feature:80
+    Given the API is available                                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                           # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                     # steps/confab_steps.py:15
+    Given another user "other@example.com" has a confab with documents # steps/document_steps.py:189
+    When I list documents for that confab                              # steps/document_steps.py:427
+    Then the response status should be 404                             # steps/common_steps.py:63
+
+  @negative
+  Scenario: List documents without authentication  # features/documents/list.feature:86
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    Given I am not authenticated                   # steps/common_steps.py:26
+    When I list documents for confab ID 1          # steps/document_steps.py:421
+    Then the response status should be 401         # steps/common_steps.py:63
+
+@documents
+Feature: Document Retrieval # features/documents/retrieval.feature:2
+  As an authenticated user
+  I want to retrieve document content
+  So that I can view uploaded reference materials
+  @documents
+  Feature: Document Retrieval  # features/documents/retrieval.feature:2
+
+  @positive
+  Scenario: Get document metadata                          # features/documents/retrieval.feature:14
+    Given the API is available                             # steps/common_steps.py:16
+    And I am logged in as "user@example.com"               # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"         # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf" with content # steps/document_steps.py:64
+    When I get document metadata for "guide.pdf"           # steps/document_steps.py:539
+    Then the response status should be 200                 # steps/common_steps.py:63
+    And the response should contain:                       # steps/auth_steps.py:313
+      | field         |
+      | id            |
+      | document_uuid |
+      | filename      |
+      | content_type  |
+      | status        |
+      | version_count |
+      | created_at    |
+
+  @positive
+  Scenario: Get document content                           # features/documents/retrieval.feature:28
+    Given the API is available                             # steps/common_steps.py:16
+    And I am logged in as "user@example.com"               # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"         # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf" with content # steps/document_steps.py:64
+    When I get document content for "guide.pdf"            # steps/document_steps.py:549
+    Then the response status should be 200                 # steps/common_steps.py:63
+    And the response should contain:                       # steps/auth_steps.py:313
+      | field          |
+      | content_base64 |
+      | original_size  |
+      | filename       |
+      | content_type   |
+
+  @positive
+  Scenario: Document content is decompressed on retrieval     # features/documents/retrieval.feature:39
+    Given the API is available                                # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                  # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"            # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf" with content    # steps/document_steps.py:64
+    Given the document was uploaded with compression          # steps/document_steps.py:176
+    When I get document content for "guide.pdf"               # steps/document_steps.py:549
+    Then the content should be decompressed                   # steps/document_steps.py:892
+    And the original_size should match the original file size # steps/document_steps.py:899
+
+  @positive
+  Scenario: Get extracted text from document               # features/documents/retrieval.feature:46
+    Given the API is available                             # steps/common_steps.py:16
+    And I am logged in as "user@example.com"               # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"         # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf" with content # steps/document_steps.py:64
+    Given the document has extracted text                  # steps/document_steps.py:157
+    When I get document content for "guide.pdf"            # steps/document_steps.py:549
+    Then the response should include extracted_text        # steps/document_steps.py:906
+
+  @positive @wip
+  Scenario: Get document by UUID                           # features/documents/retrieval.feature:52
+    Given the API is available                             # None
+    And I am logged in as "user@example.com"               # None
+    And I have created a confab named "Test Agent"         # None
+    And the confab has a document "guide.pdf" with content # None
+    Given I have the document UUID                         # None
+    When I get document by UUID                            # None
+    Then the response status should be 200                 # None
+    And the response should contain the document details   # None
+
+  @negative
+  Scenario: Get non-existent document                          # features/documents/retrieval.feature:60
+    Given the API is available                                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                   # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"             # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf" with content     # steps/document_steps.py:64
+    When I get document ID 99999                               # steps/document_steps.py:559
+    Then the response status should be 404                     # steps/common_steps.py:63
+    And the response should contain error "Document not found" # steps/common_steps.py:71
+
+  @negative @wip
+  Scenario: Get archived document metadata                     # features/documents/retrieval.feature:66
+    Given the API is available                                 # None
+    And I am logged in as "user@example.com"                   # None
+    And I have created a confab named "Test Agent"             # None
+    And the confab has a document "guide.pdf" with content     # None
+    Given the document is archived                             # None
+    When I get document metadata for "guide.pdf"               # None
+    Then the response status should be 404                     # None
+    And the response should contain error "Document not found" # None
+
+  @negative
+  Scenario: Get document from another user's confab                     # features/documents/retrieval.feature:74
+    Given the API is available                                          # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                            # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                      # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf" with content              # steps/document_steps.py:64
+    Given another user "other@example.com" has a confab with a document # steps/document_steps.py:215
+    When I try to get that document                                     # steps/document_steps.py:588
+    Then the response status should be 404                              # steps/common_steps.py:63
+
+  @negative
+  Scenario: Get document without authentication            # features/documents/retrieval.feature:80
+    Given the API is available                             # steps/common_steps.py:16
+    And I am logged in as "user@example.com"               # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"         # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf" with content # steps/document_steps.py:64
+    Given I am not authenticated                           # steps/common_steps.py:26
+    When I get document ID 1                               # steps/document_steps.py:559
+    Then the response status should be 401                 # steps/common_steps.py:63
+
+  @positive @wip
+  Scenario: Document includes source information                             # features/documents/retrieval.feature:86
+    Given the API is available                                               # None
+    And I am logged in as "user@example.com"                                 # None
+    And I have created a confab named "Test Agent"                           # None
+    And the confab has a document "guide.pdf" with content                   # None
+    Given the document was uploaded from URL "https://example.com/guide.pdf" # None
+    When I get document metadata for "guide.pdf"                             # None
+    Then the response should contain:                                        # None
+      | source | source_url                    |
+      | url    | https://example.com/guide.pdf |
+
+@documents
+Feature: Document Upload # features/documents/upload.feature:2
+  As an authenticated user
+  I want to upload documents to my confabs
+  So that the AI agent can reference them
+  @documents
+  Feature: Document Upload  # features/documents/upload.feature:2
+
+  @positive
+  Scenario: Upload PDF document                       # features/documents/upload.feature:13
+    Given the API is available                        # steps/common_steps.py:16
+    And I am logged in as "user@example.com"          # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"    # steps/confab_steps.py:15
+    When I upload a document:                         # steps/document_steps.py:243
+      | filename  | content_type    |
+      | guide.pdf | application/pdf |
+    Then the response status should be 200            # steps/common_steps.py:63
+    And the response should contain document details: # steps/document_steps.py:599
+      | filename  | content_type    | status |
+      | guide.pdf | application/pdf | active |
+    And the document should have a UUID               # steps/document_steps.py:612
+    And the document should have version 1            # steps/document_steps.py:620
+
+  @positive
+  Scenario: Upload text file                         # features/documents/upload.feature:25
+    Given the API is available                       # steps/common_steps.py:16
+    And I am logged in as "user@example.com"         # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"   # steps/confab_steps.py:15
+    When I upload a document:                        # steps/document_steps.py:243
+      | filename   | content_type |
+      | readme.txt | text/plain   |
+    Then the response status should be 200           # steps/common_steps.py:63
+    And the document should be uploaded successfully # steps/document_steps.py:643
+
+  @positive
+  Scenario: Upload markdown file                   # features/documents/upload.feature:33
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document:                      # steps/document_steps.py:243
+      | filename | content_type  |
+      | notes.md | text/markdown |
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Upload JSON file                       # features/documents/upload.feature:40
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document:                      # steps/document_steps.py:243
+      | filename    | content_type     |
+      | config.json | application/json |
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Upload YAML file                       # features/documents/upload.feature:47
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document:                      # steps/document_steps.py:243
+      | filename  | content_type       |
+      | spec.yaml | application/x-yaml |
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Upload image file (PNG)                # features/documents/upload.feature:54
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document:                      # steps/document_steps.py:243
+      | filename    | content_type |
+      | diagram.png | image/png    |
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Upload image file (JPEG)               # features/documents/upload.feature:61
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document:                      # steps/document_steps.py:243
+      | filename  | content_type |
+      | photo.jpg | image/jpeg   |
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Upload CSV file                        # features/documents/upload.feature:68
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document:                      # steps/document_steps.py:243
+      | filename | content_type |
+      | data.csv | text/csv     |
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Upload Excel file                      # features/documents/upload.feature:75
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document:                      # steps/document_steps.py:243
+      | filename    | content_type                                                      |
+      | report.xlsx | application/vnd.openxmlformats-officedocument.spreadsheetml.sheet |
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Upload Word document                   # features/documents/upload.feature:82
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document:                      # steps/document_steps.py:243
+      | filename | content_type                                                            |
+      | doc.docx | application/vnd.openxmlformats-officedocument.wordprocessingml.document |
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Document content is compressed                        # features/documents/upload.feature:89
+    Given the API is available                                    # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                      # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                # steps/confab_steps.py:15
+    When I upload a large document:                               # steps/document_steps.py:259
+      | filename  | size_kb |
+      | large.txt | 100     |
+    Then the response status should be 200                        # steps/common_steps.py:63
+    And the compressed size should be less than the original size # steps/document_steps.py:649
+
+  @negative @validation
+  Scenario: Reject unsupported file format - executable            # features/documents/upload.feature:97
+    Given the API is available                                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                 # steps/confab_steps.py:15
+    When I upload a document:                                      # steps/document_steps.py:243
+      | filename    | content_type             |
+      | malware.exe | application/x-executable |
+    Then the response status should be 400                         # steps/common_steps.py:63
+    And the response should contain error about unsupported format # steps/document_steps.py:658
+
+  @negative @validation
+  Scenario: Reject unsupported file format - shell script  # features/documents/upload.feature:105
+    Given the API is available                             # steps/common_steps.py:16
+    And I am logged in as "user@example.com"               # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"         # steps/confab_steps.py:15
+    When I upload a document:                              # steps/document_steps.py:243
+      | filename  | content_type     |
+      | script.sh | application/x-sh |
+    Then the response status should be 400                 # steps/common_steps.py:63
+
+  @negative @validation
+  Scenario: Reject unsupported file format - binary  # features/documents/upload.feature:112
+    Given the API is available                       # steps/common_steps.py:16
+    And I am logged in as "user@example.com"         # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"   # steps/confab_steps.py:15
+    When I upload a document:                        # steps/document_steps.py:243
+      | filename | content_type             |
+      | data.bin | application/octet-stream |
+    Then the response status should be 400           # steps/common_steps.py:63
+
+  @negative @validation
+  Scenario: Reject file exceeding 50MB size limit         # features/documents/upload.feature:119
+    Given the API is available                            # steps/common_steps.py:16
+    And I am logged in as "user@example.com"              # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"        # steps/confab_steps.py:15
+    When I upload a document exceeding 50MB               # steps/document_steps.py:281
+    Then the response status should be 400                # steps/common_steps.py:63
+    And the response should contain error about file size # steps/document_steps.py:667
+
+  @positive @validation
+  Scenario: Accept file at exactly 50MB            # features/documents/upload.feature:125
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document of exactly 50MB       # steps/document_steps.py:296
+    Then the response status should be 200         # steps/common_steps.py:63
+
+  @negative @validation
+  Scenario: Reject upload with missing filename                       # features/documents/upload.feature:130
+    Given the API is available                                        # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                          # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                    # steps/confab_steps.py:15
+    When I upload a document without filename                         # steps/document_steps.py:310
+    Then the response status should be 422                            # steps/common_steps.py:63
+    And the response should contain a validation error for "filename" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Reject upload with missing content                              # features/documents/upload.feature:136
+    Given the API is available                                              # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                                # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                          # steps/confab_steps.py:15
+    When I upload a document without content                                # steps/document_steps.py:321
+    Then the response status should be 422                                  # steps/common_steps.py:63
+    And the response should contain a validation error for "content_base64" # steps/common_steps.py:102
+
+  @negative @validation
+  Scenario: Reject upload with invalid base64 content           # features/documents/upload.feature:142
+    Given the API is available                                  # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                    # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"              # steps/confab_steps.py:15
+    When I upload a document with invalid base64:               # steps/document_steps.py:338
+      | filename | content_base64 |
+      | test.txt | not-valid-b64! |
+    Then the response status should be 400                      # steps/common_steps.py:63
+    And the response should contain error about invalid content # steps/document_steps.py:674
+
+  @negative
+  Scenario: Upload to non-existent confab          # features/documents/upload.feature:150
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I upload a document to confab ID 99999:   # steps/document_steps.py:363
+      | filename |
+      | test.txt |
+    Then the response status should be 404         # steps/common_steps.py:63
+
+  @negative
+  Scenario: Upload to another user's confab                                 # features/documents/upload.feature:157
+    Given the API is available                                              # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                                # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                          # steps/confab_steps.py:15
+    Given another user "other@example.com" has a confab named "Other Agent" # steps/confab_steps.py:87
+    When I upload a document to that confab:                                # steps/document_steps.py:386
+      | filename |
+      | test.txt |
+    Then the response status should be 404                                  # steps/common_steps.py:63
+
+  @negative
+  Scenario: Upload without authentication          # features/documents/upload.feature:165
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    Given I am not authenticated                   # steps/common_steps.py:26
+    When I upload a document to my confab:         # steps/document_steps.py:400
+      | filename |
+      | test.txt |
+    Then the response status should be 401         # steps/common_steps.py:63
+
+  @positive
+  Scenario: Upload document with duplicate filename creates new document  # features/documents/upload.feature:173
+    Given the API is available                                            # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                              # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                        # steps/confab_steps.py:15
+    Given I have uploaded a document named "guide.pdf"                    # steps/document_steps.py:105
+    When I upload another document:                                       # steps/document_steps.py:275
+      | filename  |
+      | guide.pdf |
+    Then the response status should be 200                                # steps/common_steps.py:63
+    And the confab should have 2 documents                                # steps/document_steps.py:799
+
+@documents
+Feature: Document Versions # features/documents/versions.feature:2
+  As an authenticated user
+  I want to manage document versions
+  So that I can track changes to reference materials
+  @documents
+  Feature: Document Versions  # features/documents/versions.feature:2
+
+  @positive
+  Scenario: Upload new version of document         # features/documents/versions.feature:14
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"      # steps/document_steps.py:43
+    When I upload a new version of "guide.pdf"     # steps/document_steps.py:472
+    Then the response status should be 200         # steps/common_steps.py:63
+    And the document should have version 2         # steps/document_steps.py:620
+    And the latest version number should be 2      # steps/document_steps.py:825
+
+  @positive
+  Scenario: Upload multiple versions                  # features/documents/versions.feature:21
+    Given the API is available                        # steps/common_steps.py:16
+    And I am logged in as "user@example.com"          # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"    # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"         # steps/document_steps.py:43
+    When I upload new versions of "guide.pdf" 3 times # steps/document_steps.py:484
+    Then the document should have 4 versions total    # steps/document_steps.py:808
+    And the latest version number should be 4         # steps/document_steps.py:825
+
+  @positive
+  Scenario: List all versions of a document        # features/documents/versions.feature:27
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"      # steps/document_steps.py:43
+    Given the document has 3 versions              # steps/document_steps.py:111
+    When I list versions of "guide.pdf"            # steps/document_steps.py:500
+    Then the response status should be 200         # steps/common_steps.py:63
+    And the response should contain 3 versions     # steps/document_steps.py:844
+    And versions should be ordered newest first    # steps/document_steps.py:852
+
+  @positive
+  Scenario: Each version has unique content hash           # features/documents/versions.feature:35
+    Given the API is available                             # steps/common_steps.py:16
+    And I am logged in as "user@example.com"               # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"         # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"              # steps/document_steps.py:43
+    Given the document has versions with different content # steps/document_steps.py:130
+    When I list versions of "guide.pdf"                    # steps/document_steps.py:500
+    Then each version should have a unique content_hash    # steps/document_steps.py:861
+
+  @positive
+  Scenario: Version tracks original and compressed size  # features/documents/versions.feature:41
+    Given the API is available                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"             # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"       # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"            # steps/document_steps.py:43
+    When I upload a new version of "guide.pdf"           # steps/document_steps.py:472
+    Then the version should have:                        # steps/document_steps.py:870
+      | field             |
+      | original_size     |
+      | compressed_size   |
+      | compression_ratio |
+
+  @positive
+  Scenario: Get specific version content              # features/documents/versions.feature:50
+    Given the API is available                        # steps/common_steps.py:16
+    And I am logged in as "user@example.com"          # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"    # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"         # steps/document_steps.py:43
+    Given the document has 3 versions                 # steps/document_steps.py:111
+    When I get version 2 of "guide.pdf"               # steps/document_steps.py:510
+    Then the response status should be 200            # steps/common_steps.py:63
+    And the response should contain version 2 content # steps/document_steps.py:885
+
+  @positive
+  Scenario: Get latest version content                # features/documents/versions.feature:57
+    Given the API is available                        # steps/common_steps.py:16
+    And I am logged in as "user@example.com"          # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"    # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"         # steps/document_steps.py:43
+    Given the document has 3 versions                 # steps/document_steps.py:111
+    When I get the latest version of "guide.pdf"      # steps/document_steps.py:520
+    Then the response status should be 200            # steps/common_steps.py:63
+    And the response should contain version 3 content # steps/document_steps.py:885
+
+  @negative
+  Scenario: Get non-existent version                          # features/documents/versions.feature:64
+    Given the API is available                                # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                  # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"            # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"                 # steps/document_steps.py:43
+    Given the document has 2 versions                         # steps/document_steps.py:111
+    When I get version 5 of "guide.pdf"                       # steps/document_steps.py:510
+    Then the response status should be 404                    # steps/common_steps.py:63
+    And the response should contain error "Version not found" # steps/common_steps.py:71
+
+  @negative
+  Scenario: Upload version to archived document                # features/documents/versions.feature:71
+    Given the API is available                                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                   # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"             # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"                  # steps/document_steps.py:43
+    Given the document is archived                             # steps/document_steps.py:143
+    When I upload a new version of "guide.pdf"                 # steps/document_steps.py:472
+    Then the response status should be 404                     # steps/common_steps.py:63
+    And the response should contain error "Document not found" # steps/common_steps.py:71
+
+  @negative
+  Scenario: Upload version without authentication  # features/documents/versions.feature:78
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf"      # steps/document_steps.py:43
+    Given I am not authenticated                   # steps/common_steps.py:26
+    When I upload a new version of document ID 1   # steps/document_steps.py:491
+    Then the response status should be 401         # steps/common_steps.py:63
+
+@errors @security
+Feature: Forbidden Access (403/404) # features/errors/forbidden.feature:2
+  As the system
+  I want to prevent users from accessing other users' resources
+  So that data privacy is maintained
+  @errors @security
+  Feature: Forbidden Access (403/404)  # features/errors/forbidden.feature:2
+
+  @confab
+  Scenario: Cannot get another user's confab                        # features/errors/forbidden.feature:15
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100 # steps/common_steps.py:225
+    When I get confab with ID 100                                   # steps/confab_steps.py:231
+    Then the response status should be 404                          # steps/common_steps.py:63
+    And the response should contain error "Confab not found"        # steps/common_steps.py:71
+
+  @confab
+  Scenario: Cannot update another user's confab                     # features/errors/forbidden.feature:22
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100 # steps/common_steps.py:225
+    When I update confab with ID 100 with:                          # steps/confab_steps.py:274
+      | name     |
+      | Hijacked |
+    Then the response status should be 404                          # steps/common_steps.py:63
+
+  @confab
+  Scenario: Cannot delete another user's confab                     # features/errors/forbidden.feature:30
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100 # steps/common_steps.py:225
+    When I delete confab with ID 100                                # steps/confab_steps.py:338
+    Then the response status should be 404                          # steps/common_steps.py:63
+
+  @confab
+  Scenario: Listing confabs only returns own confabs     # features/errors/forbidden.feature:36
+    Given the API is available                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"             # steps/common_steps.py:32
+    Given another user "other@example.com" has 5 confabs # steps/common_steps.py:204
+    And I have created 2 confabs                         # steps/common_steps.py:218
+    When I list my confabs                               # steps/confab_steps.py:244
+    Then the response should contain 2 confabs           # steps/confab_steps.py:410
+    And all confabs should belong to me                  # steps/confab_steps.py:424
+
+  @documents
+  Scenario: Cannot list documents from another user's confab        # features/errors/forbidden.feature:44
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100 # steps/common_steps.py:225
+    When I list documents for confab ID 100                         # steps/document_steps.py:421
+    Then the response status should be 404                          # steps/common_steps.py:63
+
+  @documents
+  Scenario: Cannot upload document to another user's confab         # features/errors/forbidden.feature:50
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100 # steps/common_steps.py:225
+    When I upload a document to confab ID 100                       # steps/document_steps.py:376
+    Then the response status should be 404                          # steps/common_steps.py:63
+
+  @documents
+  Scenario: Cannot get document from another user's confab                  # features/errors/forbidden.feature:56
+    Given the API is available                                              # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                                # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with document ID 50 # steps/document_steps.py:221
+    When I get document ID 50 from confab ID 100                            # steps/document_steps.py:573
+    Then the response status should be 404                                  # steps/common_steps.py:63
+
+  @documents
+  Scenario: Cannot archive document from another user's confab              # features/errors/forbidden.feature:62
+    Given the API is available                                              # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                                # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with document ID 50 # steps/document_steps.py:221
+    When I archive document ID 50 from confab ID 100                        # steps/document_steps.py:451
+    Then the response status should be 404                                  # steps/common_steps.py:63
+
+  @github
+  Scenario: Cannot commit definition files for another user's confab  # features/errors/forbidden.feature:68
+    Given the API is available                                        # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                          # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100   # steps/common_steps.py:225
+    When I commit definition files for confab ID 100                  # steps/github_steps.py:201
+    Then the response status should be 404                            # steps/common_steps.py:63
+
+  @github
+  Scenario: Cannot refresh definition files for another user's confab  # features/errors/forbidden.feature:74
+    Given the API is available                                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                           # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100    # steps/common_steps.py:225
+    When I refresh definition files for confab ID 100                  # steps/github_steps.py:225
+    Then the response status should be 404                             # steps/common_steps.py:63
+
+  @conversations
+  Scenario: Cannot resume conversation for another user's confab    # features/errors/forbidden.feature:80
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100 # steps/common_steps.py:225
+    When I resume foreman conversation for confab ID 100            # steps/common_steps.py:276
+    Then the response status should be 404                          # steps/common_steps.py:63
+
+  @learnings
+  Scenario: Cannot view learnings for another user's confab            # features/errors/forbidden.feature:86
+    Given the API is available                                         # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                           # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with learnings # steps/common_steps.py:240
+    When I list learnings for that confab                              # steps/common_steps.py:260
+    Then the response status should be 404                             # steps/common_steps.py:63
+
+  @learnings
+  Scenario: Cannot add learnings to another user's confab           # features/errors/forbidden.feature:92
+    Given the API is available                                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    Given another user "other@example.com" has a confab with ID 100 # steps/common_steps.py:225
+    When I add a learning to confab ID 100                          # steps/common_steps.py:267
+    Then the response status should be 404                          # steps/common_steps.py:63
+
+@errors
+Feature: Not Found Errors (404) # features/errors/not_found.feature:2
+  As an authenticated user
+  I want to receive proper 404 errors
+  So that I know when resources don't exist
+  @errors
+  Feature: Not Found Errors (404)  # features/errors/not_found.feature:2
+
+  @confab
+  Scenario: Get non-existent confab                          # features/errors/not_found.feature:12
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    When I get confab with ID 99999                          # steps/confab_steps.py:231
+    Then the response status should be 404                   # steps/common_steps.py:63
+    And the response should contain error "Confab not found" # steps/common_steps.py:71
+
+  @confab
+  Scenario: Update non-existent confab                       # features/errors/not_found.feature:18
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    When I update confab with ID 99999 with:                 # steps/confab_steps.py:274
+      | name     |
+      | New Name |
+    Then the response status should be 404                   # steps/common_steps.py:63
+    And the response should contain error "Confab not found" # steps/common_steps.py:71
+
+  @confab
+  Scenario: Delete non-existent confab                       # features/errors/not_found.feature:26
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    When I delete confab with ID 99999                       # steps/confab_steps.py:338
+    Then the response status should be 404                   # steps/common_steps.py:63
+    And the response should contain error "Confab not found" # steps/common_steps.py:71
+
+  @documents
+  Scenario: Get documents for non-existent confab  # features/errors/not_found.feature:32
+    Given the API is available                     # steps/common_steps.py:16
+    And I am logged in as "user@example.com"       # steps/common_steps.py:32
+    When I list documents for confab ID 99999      # steps/document_steps.py:421
+    Then the response status should be 404         # steps/common_steps.py:63
+
+  @documents
+  Scenario: Upload document to non-existent confab  # features/errors/not_found.feature:37
+    Given the API is available                      # steps/common_steps.py:16
+    And I am logged in as "user@example.com"        # steps/common_steps.py:32
+    When I upload a document to confab ID 99999     # steps/document_steps.py:376
+    Then the response status should be 404          # steps/common_steps.py:63
+
+  @documents
+  Scenario: Get non-existent document                          # features/errors/not_found.feature:42
+    Given the API is available                                 # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                   # steps/common_steps.py:32
+    Given I have created a confab named "Test Agent"           # steps/confab_steps.py:15
+    When I get document ID 99999 from the confab               # steps/document_steps.py:566
+    Then the response status should be 404                     # steps/common_steps.py:63
+    And the response should contain error "Document not found" # steps/common_steps.py:71
+
+  @documents
+  Scenario: Archive non-existent document            # features/errors/not_found.feature:49
+    Given the API is available                       # steps/common_steps.py:16
+    And I am logged in as "user@example.com"         # steps/common_steps.py:32
+    Given I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I archive document ID 99999 from the confab # steps/document_steps.py:457
+    Then the response status should be 404           # steps/common_steps.py:63
+
+  @documents
+  Scenario: Get non-existent document version                 # features/errors/not_found.feature:55
+    Given the API is available                                # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                  # steps/common_steps.py:32
+    Given I have created a confab named "Test Agent"          # steps/confab_steps.py:15
+    And the confab has a document "guide.pdf" with 2 versions # steps/document_steps.py:70
+    When I get version 10 of the document                     # steps/document_steps.py:530
+    Then the response status should be 404                    # steps/common_steps.py:63
+    And the response should contain error "Version not found" # steps/common_steps.py:71
+
+  @github
+  Scenario: Refresh definition files for non-existent confab  # features/errors/not_found.feature:63
+    Given the API is available                                # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                  # steps/common_steps.py:32
+    When I refresh definition files for confab ID 99999       # steps/github_steps.py:225
+    Then the response status should be 404                    # steps/common_steps.py:63
+
+  @github
+  Scenario: Commit definition files for non-existent confab  # features/errors/not_found.feature:68
+    Given the API is available                               # steps/common_steps.py:16
+    And I am logged in as "user@example.com"                 # steps/common_steps.py:32
+    When I commit definition files for confab ID 99999       # steps/github_steps.py:201
+    Then the response status should be 404                   # steps/common_steps.py:63
+
+  @conversations
+  Scenario: Resume conversation for non-existent confab    # features/errors/not_found.feature:73
+    Given the API is available                             # steps/common_steps.py:16
+    And I am logged in as "user@example.com"               # steps/common_steps.py:32
+    When I resume foreman conversation for confab ID 99999 # steps/common_steps.py:276
+    Then the response status should be 404                 # steps/common_steps.py:63
+
+  @conversations
+  Scenario: Get non-existent thread          # features/errors/not_found.feature:78
+    Given the API is available               # steps/common_steps.py:16
+    And I am logged in as "user@example.com" # steps/common_steps.py:32
+    When I get thread with ID 99999          # steps/common_steps.py:282
+    Then the response status should be 404   # steps/common_steps.py:63
+
+  Scenario: Invalid endpoint returns 404                 # features/errors/not_found.feature:82
+    Given the API is available                           # steps/common_steps.py:16
+    And I am logged in as "user@example.com"             # steps/common_steps.py:32
+    When I make a GET request to "/nonexistent/endpoint" # steps/common_steps.py:163
+    Then the response status should be 404               # steps/common_steps.py:63
+
+@errors @security
+Feature: Unauthorized Access (401) # features/errors/unauthorized.feature:2
+  As the system
+  I want to reject unauthenticated requests
+  So that protected resources remain secure
+  @errors @security
+  Feature: Unauthorized Access (401)  # features/errors/unauthorized.feature:2
+
+  @auth
+  Scenario Outline: Protected auth endpoints require authentication -- @1.1   # features/errors/unauthorized.feature:19
+    Given the API is available                                                # steps/common_steps.py:16
+    And I am not authenticated                                                # steps/common_steps.py:26
+    When I make a GET request to "/auth/me"                                   # steps/common_steps.py:163
+    Then the response status should be 401                                    # steps/common_steps.py:63
+    And the response should contain error "Not authenticated"                 # steps/common_steps.py:71
+
+  @auth
+  Scenario Outline: Protected auth endpoints require authentication -- @1.2   # features/errors/unauthorized.feature:20
+    Given the API is available                                                # steps/common_steps.py:16
+    And I am not authenticated                                                # steps/common_steps.py:26
+    When I make a POST request to "/auth/github/connect"                      # steps/common_steps.py:163
+    Then the response status should be 401                                    # steps/common_steps.py:63
+    And the response should contain error "Not authenticated"                 # steps/common_steps.py:71
+
+  @auth
+  Scenario Outline: Protected auth endpoints require authentication -- @1.3   # features/errors/unauthorized.feature:21
+    Given the API is available                                                # steps/common_steps.py:16
+    And I am not authenticated                                                # steps/common_steps.py:26
+    When I make a GET request to "/auth/github/repos"                         # steps/common_steps.py:163
+    Then the response status should be 401                                    # steps/common_steps.py:63
+    And the response should contain error "Not authenticated"                 # steps/common_steps.py:71
+
+  @confab
+  Scenario Outline: Protected confab endpoints require authentication -- @1.1   # features/errors/unauthorized.feature:30
+    Given the API is available                                                  # steps/common_steps.py:16
+    And I am not authenticated                                                  # steps/common_steps.py:26
+    When I make a GET request to "/confabs"                                     # steps/common_steps.py:163
+    Then the response status should be 401                                      # steps/common_steps.py:63
+
+  @confab
+  Scenario Outline: Protected confab endpoints require authentication -- @1.2   # features/errors/unauthorized.feature:31
+    Given the API is available                                                  # steps/common_steps.py:16
+    And I am not authenticated                                                  # steps/common_steps.py:26
+    When I make a POST request to "/confabs"                                    # steps/common_steps.py:163
+    Then the response status should be 401                                      # steps/common_steps.py:63
+
+  @confab
+  Scenario Outline: Protected confab endpoints require authentication -- @1.3   # features/errors/unauthorized.feature:32
+    Given the API is available                                                  # steps/common_steps.py:16
+    And I am not authenticated                                                  # steps/common_steps.py:26
+    When I make a GET request to "/confabs/1"                                   # steps/common_steps.py:163
+    Then the response status should be 401                                      # steps/common_steps.py:63
+
+  @confab
+  Scenario Outline: Protected confab endpoints require authentication -- @1.4   # features/errors/unauthorized.feature:33
+    Given the API is available                                                  # steps/common_steps.py:16
+    And I am not authenticated                                                  # steps/common_steps.py:26
+    When I make a PUT request to "/confabs/1"                                   # steps/common_steps.py:163
+    Then the response status should be 401                                      # steps/common_steps.py:63
+
+  @confab
+  Scenario Outline: Protected confab endpoints require authentication -- @1.5   # features/errors/unauthorized.feature:34
+    Given the API is available                                                  # steps/common_steps.py:16
+    And I am not authenticated                                                  # steps/common_steps.py:26
+    When I make a DELETE request to "/confabs/1"                                # steps/common_steps.py:163
+    Then the response status should be 401                                      # steps/common_steps.py:63
+
+  @confab
+  Scenario Outline: Protected confab endpoints require authentication -- @1.6   # features/errors/unauthorized.feature:35
+    Given the API is available                                                  # steps/common_steps.py:16
+    And I am not authenticated                                                  # steps/common_steps.py:26
+    When I make a POST request to "/confabs/1/definition-files/refresh"         # steps/common_steps.py:163
+    Then the response status should be 401                                      # steps/common_steps.py:63
+
+  @confab
+  Scenario Outline: Protected confab endpoints require authentication -- @1.7     # features/errors/unauthorized.feature:36
+    Given the API is available                                                    # steps/common_steps.py:16
+    And I am not authenticated                                                    # steps/common_steps.py:26
+    When I make a POST request to "/confabs/1/definition-files/accept-and-commit" # steps/common_steps.py:163
+    Then the response status should be 401                                        # steps/common_steps.py:63
+
+  @documents
+  Scenario Outline: Protected document endpoints require authentication -- @1.1   # features/errors/unauthorized.feature:45
+    Given the API is available                                                    # steps/common_steps.py:16
+    And I am not authenticated                                                    # steps/common_steps.py:26
+    When I make a GET request to "/confabs/1/documents"                           # steps/common_steps.py:163
+    Then the response status should be 401                                        # steps/common_steps.py:63
+
+  @documents
+  Scenario Outline: Protected document endpoints require authentication -- @1.2   # features/errors/unauthorized.feature:46
+    Given the API is available                                                    # steps/common_steps.py:16
+    And I am not authenticated                                                    # steps/common_steps.py:26
+    When I make a POST request to "/confabs/1/documents"                          # steps/common_steps.py:163
+    Then the response status should be 401                                        # steps/common_steps.py:63
+
+  @documents
+  Scenario Outline: Protected document endpoints require authentication -- @1.3   # features/errors/unauthorized.feature:47
+    Given the API is available                                                    # steps/common_steps.py:16
+    And I am not authenticated                                                    # steps/common_steps.py:26
+    When I make a GET request to "/confabs/1/documents/1"                         # steps/common_steps.py:163
+    Then the response status should be 401                                        # steps/common_steps.py:63
+
+  @documents
+  Scenario Outline: Protected document endpoints require authentication -- @1.4   # features/errors/unauthorized.feature:48
+    Given the API is available                                                    # steps/common_steps.py:16
+    And I am not authenticated                                                    # steps/common_steps.py:26
+    When I make a DELETE request to "/confabs/1/documents/1"                      # steps/common_steps.py:163
+    Then the response status should be 401                                        # steps/common_steps.py:63
+
+  @documents
+  Scenario Outline: Protected document endpoints require authentication -- @1.5   # features/errors/unauthorized.feature:49
+    Given the API is available                                                    # steps/common_steps.py:16
+    And I am not authenticated                                                    # steps/common_steps.py:26
+    When I make a GET request to "/confabs/1/documents/1/versions/latest"         # steps/common_steps.py:163
+    Then the response status should be 401                                        # steps/common_steps.py:63
+
+  @conversations
+  Scenario Outline: Protected conversation endpoints require authentication -- @1.1   # features/errors/unauthorized.feature:58
+    Given the API is available                                                        # steps/common_steps.py:16
+    And I am not authenticated                                                        # steps/common_steps.py:26
+    When I make a POST request to "/conversations/foreman/1/resume"                   # steps/common_steps.py:163
+    Then the response status should be 401                                            # steps/common_steps.py:63
+
+  @conversations
+  Scenario Outline: Protected conversation endpoints require authentication -- @1.2   # features/errors/unauthorized.feature:59
+    Given the API is available                                                        # steps/common_steps.py:16
+    And I am not authenticated                                                        # steps/common_steps.py:26
+    When I make a GET request to "/threads/1"                                         # steps/common_steps.py:163
+    Then the response status should be 401                                            # steps/common_steps.py:63
+
+  @conversations
+  Scenario Outline: Protected conversation endpoints require authentication -- @1.3   # features/errors/unauthorized.feature:60
+    Given the API is available                                                        # steps/common_steps.py:16
+    And I am not authenticated                                                        # steps/common_steps.py:26
+    When I make a POST request to "/threads/1/chat"                                   # steps/common_steps.py:163
+    Then the response status should be 401                                            # steps/common_steps.py:63
+
+  Scenario: Invalid token returns 401                           # features/errors/unauthorized.feature:62
+    Given the API is available                                  # steps/common_steps.py:16
+    And I am not authenticated                                  # steps/common_steps.py:26
+    Given I have an invalid auth token "invalid.jwt.token"      # steps/auth_steps.py:77
+    When I make a GET request to "/confabs"                     # steps/common_steps.py:163
+    Then the response status should be 401                      # steps/common_steps.py:63
+    And the response should contain error "Invalid credentials" # steps/common_steps.py:71
+
+  Scenario: Malformed authorization header returns 401     # features/errors/unauthorized.feature:68
+    Given the API is available                             # steps/common_steps.py:16
+    And I am not authenticated                             # steps/common_steps.py:26
+    Given I have authorization header "NotBearer token123" # steps/auth_steps.py:93
+    When I make a GET request to "/confabs"                # steps/common_steps.py:163
+    Then the response status should be 401                 # steps/common_steps.py:63
+
+  Scenario: Empty authorization header returns 401  # features/errors/unauthorized.feature:73
+    Given the API is available                      # steps/common_steps.py:16
+    And I am not authenticated                      # steps/common_steps.py:26
+    Given I have authorization header ""            # steps/auth_steps.py:99
+    When I make a GET request to "/auth/me"         # steps/common_steps.py:163
+    Then the response status should be 401          # steps/common_steps.py:63
+
+  Scenario: Expired token returns 401                         # features/errors/unauthorized.feature:78
+    Given the API is available                                # steps/common_steps.py:16
+    And I am not authenticated                                # steps/common_steps.py:26
+    Given I have an expired auth token                        # steps/auth_steps.py:83
+    When I make a GET request to "/confabs"                   # steps/common_steps.py:163
+    Then the response status should be 401                    # steps/common_steps.py:63
+    And the response should contain error "Token has expired" # steps/common_steps.py:71
+
+@errors @validation
+Feature: Validation Errors (422) # features/errors/validation.feature:2
+  As the system
+  I want to reject invalid input
+  So that data integrity is maintained
+  @errors @validation
+  Feature: Validation Errors (422)  # features/errors/validation.feature:2
+
+  @auth
+  Scenario: Registration with invalid email format                 # features/errors/validation.feature:11
+    Given the API is available                                     # steps/common_steps.py:16
+    When I register with email "not-an-email"                      # steps/auth_steps.py:174
+    Then the response status should be 422                         # steps/common_steps.py:63
+    And the response should contain a validation error for "email" # steps/common_steps.py:102
+    And the error should mention "valid email"                     # steps/common_steps.py:142
+
+  @auth
+  Scenario: Registration with password too short                      # features/errors/validation.feature:18
+    Given the API is available                                        # steps/common_steps.py:16
+    When I register with password "Short1"                            # steps/auth_steps.py:186
+    Then the response status should be 422                            # steps/common_steps.py:63
+    And the response should contain a validation error for "password" # steps/common_steps.py:102
+    And the error should mention minimum length of 8 characters       # steps/auth_steps.py:348
+
+  @auth
+  Scenario: Registration with missing required fields      # features/errors/validation.feature:25
+    Given the API is available                             # steps/common_steps.py:16
+    When I register with only:                             # steps/auth_steps.py:198
+      | email            |
+      | test@example.com |
+    Then the response status should be 422                 # steps/common_steps.py:63
+    And the response should contain validation errors for: # steps/auth_steps.py:387
+      | field    |
+      | name     |
+      | password |
+      | country  |
+      | timezone |
+
+  @auth
+  Scenario: Login with invalid email format                            # features/errors/validation.feature:38
+    Given the API is available                                         # steps/common_steps.py:16
+    When I login with email "invalid-email" and password "password123" # steps/auth_steps.py:205
+    Then the response status should be 422                             # steps/common_steps.py:63
+    And the response should contain a validation error for "email"     # steps/common_steps.py:102
+
+  @confab
+  Scenario: Create confab with empty name                         # features/errors/validation.feature:44
+    Given the API is available                                    # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"                    # steps/common_steps.py:32
+    When I create a confab with:                                  # steps/confab_steps.py:202
+      | name |
+      |      |
+    Then the response status should be 422                        # steps/common_steps.py:63
+    And the response should contain a validation error for "name" # steps/common_steps.py:102
+
+  @confab
+  Scenario: Create confab with name exceeding 100 characters      # features/errors/validation.feature:53
+    Given the API is available                                    # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"                    # steps/common_steps.py:32
+    When I create a confab with a name of 101 characters          # steps/confab_steps.py:217
+    Then the response status should be 422                        # steps/common_steps.py:63
+    And the response should contain a validation error for "name" # steps/common_steps.py:102
+    And the error should mention maximum length of 100 characters # steps/auth_steps.py:356
+
+  @confab
+  Scenario: Create confab with temperature below 0                       # features/errors/validation.feature:61
+    Given the API is available                                           # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"                           # steps/common_steps.py:32
+    When I create a confab with:                                         # steps/confab_steps.py:202
+      | name | temperature |
+      | Test | -0.5        |
+    Then the response status should be 422                               # steps/common_steps.py:63
+    And the response should contain a validation error for "temperature" # steps/common_steps.py:102
+    And the error should mention "greater than or equal to 0"            # steps/common_steps.py:142
+
+  @confab
+  Scenario: Create confab with temperature above 2.0                     # features/errors/validation.feature:71
+    Given the API is available                                           # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"                           # steps/common_steps.py:32
+    When I create a confab with:                                         # steps/confab_steps.py:202
+      | name | temperature |
+      | Test | 2.5         |
+    Then the response status should be 422                               # steps/common_steps.py:63
+    And the response should contain a validation error for "temperature" # steps/common_steps.py:102
+    And the error should mention "less than or equal to 2"               # steps/common_steps.py:142
+
+  @confab
+  Scenario: Create confab with invalid status                       # features/errors/validation.feature:81
+    Given the API is available                                      # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"                      # steps/common_steps.py:32
+    When I create a confab with:                                    # steps/confab_steps.py:202
+      | name | status       |
+      | Test | not-a-status |
+    Then the response status should be 422                          # steps/common_steps.py:63
+    And the response should contain a validation error for "status" # steps/common_steps.py:102
+
+  @confab
+  Scenario: Update confab with invalid status      # features/errors/validation.feature:90
+    Given the API is available                     # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"     # steps/common_steps.py:32
+    And I have created a confab named "Test Agent" # steps/confab_steps.py:15
+    When I update the confab with:                 # steps/confab_steps.py:250
+      | status  |
+      | invalid |
+    Then the response status should be 422         # steps/common_steps.py:63
+
+  @documents
+  Scenario: Upload document without filename                          # features/errors/validation.feature:99
+    Given the API is available                                        # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"                        # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                    # steps/confab_steps.py:15
+    When I upload a document without filename                         # steps/document_steps.py:310
+    Then the response status should be 422                            # steps/common_steps.py:63
+    And the response should contain a validation error for "filename" # steps/common_steps.py:102
+
+  @documents
+  Scenario: Upload document without content                                 # features/errors/validation.feature:107
+    Given the API is available                                              # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"                              # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                          # steps/confab_steps.py:15
+    When I upload a document without content_base64                         # steps/document_steps.py:332
+    Then the response status should be 422                                  # steps/common_steps.py:63
+    And the response should contain a validation error for "content_base64" # steps/common_steps.py:102
+
+  @documents
+  Scenario: Upload document with invalid base64                     # features/errors/validation.feature:115
+    Given the API is available                                      # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"                      # steps/common_steps.py:32
+    And I have created a confab named "Test Agent"                  # steps/confab_steps.py:15
+    When I upload a document with content_base64 "!!!not-base64!!!" # steps/document_steps.py:351
+    Then the response status should be 400                          # steps/common_steps.py:63
+    And the response should contain error about invalid content     # steps/document_steps.py:674
+
+  Scenario: Invalid JSON body returns 422      # features/errors/validation.feature:122
+    Given the API is available                 # steps/common_steps.py:16
+    Given I am logged in as "user@example.com" # steps/common_steps.py:32
+    When I send invalid JSON to "/confabs"     # steps/common_steps.py:178
+    Then the response status should be 422     # steps/common_steps.py:63
+
+  Scenario: Wrong content type returns 422                   # features/errors/validation.feature:127
+    Given the API is available                               # steps/common_steps.py:16
+    Given I am logged in as "user@example.com"               # steps/common_steps.py:32
+    When I POST to "/confabs" with content-type "text/plain" # steps/common_steps.py:189
+    Then the response status should be 422                   # steps/common_steps.py:63
+
+@github @mock_github @wip
+Feature: Commit Definition Files to GitHub # features/github/commit_definition_files.feature:2
+  As an authenticated user with GitHub connected
+  I want to commit confab definition files to GitHub
+  So that my agent configurations are version controlled
+  @github @mock_github @wip
+  Feature: Commit Definition Files to GitHub  # features/github/commit_definition_files.feature:2
+
+  @positive
+  Scenario: Commit definition files successfully                 # features/github/commit_definition_files.feature:15
+    Given the API is available                                   # None
+    And I am logged in as "user@example.com"                     # None
+    And I have connected my GitHub account to repo "confabs"     # None
+    And GitHub API is mocked                                     # None
+    And I have created a confab named "Test Agent"               # None
+    Given the confab has purpose and guardrails defined          # None
+    When I commit definition files with message "Initial commit" # None
+    Then the response status should be 200                       # None
+    And the response should contain:                             # None
+      | field  | value     |
+      | status | committed |
+    And the response should include commit_sha                   # None
+    And the response should include committed_files              # None
+
+  @positive
+  Scenario: Commit creates PURPOSE.md and GUARDRAILS.md      # features/github/commit_definition_files.feature:26
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given the confab has:                                    # None
+      | purpose         | guardrails          |
+      | Help users code | Never share secrets |
+    When I commit definition files                           # None
+    Then the committed_files should include "PURPOSE.md"     # None
+    And the committed_files should include "GUARDRAILS.md"   # None
+
+  @positive
+  Scenario: Commit only PURPOSE.md                             # features/github/commit_definition_files.feature:35
+    Given the API is available                                 # None
+    And I am logged in as "user@example.com"                   # None
+    And I have connected my GitHub account to repo "confabs"   # None
+    And GitHub API is mocked                                   # None
+    And I have created a confab named "Test Agent"             # None
+    Given the confab has purpose defined                       # None
+    When I commit definition files with:                       # None
+      | include_purpose | include_guardrails |
+      | true            | false              |
+    Then the response status should be 200                     # None
+    And the committed_files should include "PURPOSE.md"        # None
+    And the committed_files should not include "GUARDRAILS.md" # None
+
+  @positive
+  Scenario: Commit only GUARDRAILS.md                        # features/github/commit_definition_files.feature:45
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given the confab has guardrails defined                  # None
+    When I commit definition files with:                     # None
+      | include_purpose | include_guardrails |
+      | false           | true               |
+    Then the response status should be 200                   # None
+    And the committed_files should not include "PURPOSE.md"  # None
+    And the committed_files should include "GUARDRAILS.md"   # None
+
+  @positive
+  Scenario: Commit updates synced_at timestamp               # features/github/commit_definition_files.feature:55
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    When I commit definition files                           # None
+    Then the confab github_synced_at should be updated       # None
+
+  @positive
+  Scenario: Commit with custom message                                          # features/github/commit_definition_files.feature:60
+    Given the API is available                                                  # None
+    And I am logged in as "user@example.com"                                    # None
+    And I have connected my GitHub account to repo "confabs"                    # None
+    And GitHub API is mocked                                                    # None
+    And I have created a confab named "Test Agent"                              # None
+    When I commit definition files with message "Updated agent configuration"   # None
+    Then the GitHub commit message should contain "Updated agent configuration" # None
+
+  @positive
+  Scenario: Commit creates folder structure in repo          # features/github/commit_definition_files.feature:65
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    When I commit definition files                           # None
+    Then the response should include folder_path             # None
+    And the folder should be created in the GitHub repo      # None
+
+  @negative
+  Scenario: Commit fails when no GitHub account connected            # features/github/commit_definition_files.feature:71
+    Given the API is available                                       # None
+    And I am logged in as "user@example.com"                         # None
+    And I have connected my GitHub account to repo "confabs"         # None
+    And GitHub API is mocked                                         # None
+    And I have created a confab named "Test Agent"                   # None
+    Given I have not connected my GitHub account                     # None
+    When I commit definition files                                   # None
+    Then the response status should be 400                           # None
+    And the response should contain error about GitHub not connected # None
+
+  @negative
+  Scenario: Commit fails when repo not configured            # features/github/commit_definition_files.feature:78
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given my GitHub account has no selected repo             # None
+    When I commit definition files                           # None
+    Then the response status should be 400                   # None
+
+  @negative
+  Scenario: Commit returns no-op when nothing to commit      # features/github/commit_definition_files.feature:84
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given the confab has no purpose or guardrails            # None
+    When I commit definition files                           # None
+    Then the response status should be 200                   # None
+    And the response should contain:                         # None
+      | status |
+      | no-op  |
+
+  @negative
+  Scenario: Commit fails for non-existent confab             # features/github/commit_definition_files.feature:93
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    When I commit definition files for confab ID 99999       # None
+    Then the response status should be 404                   # None
+
+  @negative
+  Scenario: Commit another user's confab fails               # features/github/commit_definition_files.feature:98
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given another user "other@example.com" has a confab      # None
+    When I try to commit definition files for that confab    # None
+    Then the response status should be 404                   # None
+
+  @negative
+  Scenario: Commit without authentication                    # features/github/commit_definition_files.feature:104
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given I am not authenticated                             # None
+    When I commit definition files for confab ID 1           # None
+    Then the response status should be 401                   # None
+
+  @positive
+  Scenario: GitHub API error is handled gracefully           # features/github/commit_definition_files.feature:110
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given GitHub API will return an error                    # None
+    When I commit definition files                           # None
+    Then the response status should be 500                   # None
+    And the response should contain a GitHub error message   # None
+
+@github @mock_github @wip
+Feature: Delete GitHub Folder on Confab Deletion # features/github/delete_folder.feature:2
+  As an authenticated user with GitHub connected
+  I want GitHub folders to be deleted when I delete confabs
+  So that my GitHub repo stays clean
+  @github @mock_github @wip
+  Feature: Delete GitHub Folder on Confab Deletion  # features/github/delete_folder.feature:2
+
+  @positive
+  Scenario: Deleting confab removes GitHub folder                        # features/github/delete_folder.feature:14
+    Given the API is available                                           # None
+    And I am logged in as "user@example.com"                             # None
+    And I have connected my GitHub account to repo "confabs"             # None
+    And GitHub API is mocked                                             # None
+    Given I have created a confab named "Test Agent"                     # None
+    And the confab has been synced to GitHub at path "test-agent-abc123" # None
+    When I delete the confab                                             # None
+    Then the response status should be 200                               # None
+    And the response should indicate:                                    # None
+      | github_folder_deleted |
+      | true                  |
+    And GitHub delete_folder should have been called                     # None
+
+  @positive
+  Scenario: Delete tries multiple path formats                             # features/github/delete_folder.feature:25
+    Given the API is available                                             # None
+    And I am logged in as "user@example.com"                               # None
+    And I have connected my GitHub account to repo "confabs"               # None
+    And GitHub API is mocked                                               # None
+    Given I have created a confab named "Legacy Agent"                     # None
+    And the confab has github_path "legacy-agent-xyz789"                   # None
+    When I delete the confab                                               # None
+    Then GitHub should attempt to delete path "legacy-agent-xyz789"        # None
+    And GitHub should attempt to delete legacy path "confabs/legacy-agent" # None
+
+  @positive
+  Scenario: Confab deleted even if GitHub folder deletion fails  # features/github/delete_folder.feature:33
+    Given the API is available                                   # None
+    And I am logged in as "user@example.com"                     # None
+    And I have connected my GitHub account to repo "confabs"     # None
+    And GitHub API is mocked                                     # None
+    Given I have created a confab named "Test Agent"             # None
+    And the confab has been synced to GitHub                     # None
+    And GitHub folder deletion will fail                         # None
+    When I delete the confab                                     # None
+    Then the response status should be 200                       # None
+    And the confab should be deleted from database               # None
+    And the response should indicate:                            # None
+      | github_folder_deleted |
+      | false                 |
+
+  @positive
+  Scenario: Delete confab without GitHub connection skips folder deletion  # features/github/delete_folder.feature:45
+    Given the API is available                                             # None
+    And I am logged in as "user@example.com"                               # None
+    And I have connected my GitHub account to repo "confabs"               # None
+    And GitHub API is mocked                                               # None
+    Given I have not connected my GitHub account                           # None
+    And I have created a confab named "Local Agent"                        # None
+    When I delete the confab                                               # None
+    Then the response status should be 200                                 # None
+    And GitHub delete_folder should not have been called                   # None
+    And the response should indicate:                                      # None
+      | github_folder_deleted |
+      | false                 |
+
+  @positive
+  Scenario: Delete confab never synced to GitHub             # features/github/delete_folder.feature:56
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    Given I have created a confab named "Unsynced Agent"     # None
+    And the confab has no github_path                        # None
+    When I delete the confab                                 # None
+    Then the response status should be 200                   # None
+    And the confab should be deleted                         # None
+    And the response should indicate:                        # None
+      | github_folder_deleted |
+      | false                 |
+
+  @positive
+  Scenario: GitHub folder deletion error is logged but not fatal  # features/github/delete_folder.feature:67
+    Given the API is available                                    # None
+    And I am logged in as "user@example.com"                      # None
+    And I have connected my GitHub account to repo "confabs"      # None
+    And GitHub API is mocked                                      # None
+    Given I have created a confab named "Test Agent"              # None
+    And the confab has been synced to GitHub                      # None
+    And GitHub will throw an exception on delete                  # None
+    When I delete the confab                                      # None
+    Then the response status should be 200                        # None
+    And the confab should be deleted from database                # None
+    And the error should be logged                                # None
+
+@github @mock_github @wip
+Feature: Sync Confab with GitHub # features/github/sync.feature:2
+  As an authenticated user with GitHub connected
+  I want to sync my confabs with GitHub
+  So that I can keep my agent configurations up to date
+  @github @mock_github @wip
+  Feature: Sync Confab with GitHub  # features/github/sync.feature:2
+
+  @positive
+  Scenario: Refresh definition files from GitHub              # features/github/sync.feature:15
+    Given the API is available                                # None
+    And I am logged in as "user@example.com"                  # None
+    And I have connected my GitHub account to repo "confabs"  # None
+    And GitHub API is mocked                                  # None
+    And I have created a confab named "Test Agent"            # None
+    Given the confab has been synced to GitHub                # None
+    And GitHub has updated PURPOSE.md content                 # None
+    When I refresh definition files for the confab            # None
+    Then the response status should be 200                    # None
+    And the response should contain refreshed purpose content # None
+    And the response should include refreshed_at timestamp    # None
+
+  @positive
+  Scenario: Refresh fetches both PURPOSE.md and GUARDRAILS.md  # features/github/sync.feature:24
+    Given the API is available                                 # None
+    And I am logged in as "user@example.com"                   # None
+    And I have connected my GitHub account to repo "confabs"   # None
+    And GitHub API is mocked                                   # None
+    And I have created a confab named "Test Agent"             # None
+    Given GitHub has definition files:                         # None
+      | file          | content            |
+      | PURPOSE.md    | Updated purpose    |
+      | GUARDRAILS.md | Updated guardrails |
+    When I refresh definition files for the confab             # None
+    Then the response should contain:                          # None
+      | purpose         | guardrails_markdown |
+      | Updated purpose | Updated guardrails  |
+
+  @positive
+  Scenario: Refresh indicates remote branch source           # features/github/sync.feature:35
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given the confab is synced to branch "main"              # None
+    When I refresh definition files for the confab           # None
+    Then the response should include:                        # None
+      | remote_branch | remote_source |
+      | main          | branch        |
+
+  @positive
+  Scenario: Refresh returns none when files don't exist      # features/github/sync.feature:43
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given GitHub has no definition files for the confab      # None
+    When I refresh definition files for the confab           # None
+    Then the response status should be 200                   # None
+    And the response should contain:                         # None
+      | remote_source |
+      | none          |
+
+  @negative
+  Scenario: Refresh fails when GitHub not connected          # features/github/sync.feature:52
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given I have not connected my GitHub account             # None
+    When I refresh definition files for the confab           # None
+    Then the response status should be 400                   # None
+
+  @negative
+  Scenario: Refresh fails for non-existent confab            # features/github/sync.feature:58
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    When I refresh definition files for confab ID 99999      # None
+    Then the response status should be 404                   # None
+
+  @negative
+  Scenario: Refresh another user's confab fails              # features/github/sync.feature:63
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given another user "other@example.com" has a confab      # None
+    When I try to refresh definition files for that confab   # None
+    Then the response status should be 404                   # None
+
+  @positive
+  Scenario: GitHub API error during refresh is handled       # features/github/sync.feature:69
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given GitHub API will return an error on file fetch      # None
+    When I refresh definition files for the confab           # None
+    Then the response status should be 200                   # None
+    And the response should indicate files not found         # None
+
+  @positive
+  Scenario: Admin sync all confabs to GitHub                 # features/github/sync.feature:76
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given I am an admin user                                 # None
+    And there are 3 confabs to sync                          # None
+    When I trigger admin sync to GitHub                      # None
+    Then the response status should be 200                   # None
+    And the response should indicate 3 synced                # None
+
+  @positive
+  Scenario: Admin sync specific confabs                      # features/github/sync.feature:84
+    Given the API is available                               # None
+    And I am logged in as "user@example.com"                 # None
+    And I have connected my GitHub account to repo "confabs" # None
+    And GitHub API is mocked                                 # None
+    And I have created a confab named "Test Agent"           # None
+    Given I am an admin user                                 # None
+    And there are confabs with IDs 1, 2, 3                   # None
+    When I trigger admin sync for confabs [1, 2]             # None
+    Then the response status should be 200                   # None
+    And the response should indicate 2 synced                # None
+

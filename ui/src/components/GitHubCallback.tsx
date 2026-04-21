@@ -80,7 +80,7 @@ export function GitHubCallback() {
           <div className="w-16 h-16 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <MessageSquare className="w-8 h-8 text-white" />
           </div>
-          <h2 className="text-slate-900 mb-2">GitHub Connection</h2>
+          <h2 className="mb-2 text-slate-900 dark:text-white">GitHub Connection</h2>
         </div>
 
         <Card className="p-6 sm:p-8">
@@ -98,8 +98,8 @@ export function GitHubCallback() {
             </div>
 
             <div className="mb-6">
-              <Github className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-600">{message}</p>
+              <Github className="mx-auto mb-2 h-8 w-8 text-slate-600 dark:text-slate-300" />
+              <p className="text-slate-600 dark:text-slate-300">{message}</p>
             </div>
 
             {status === 'success' && (
@@ -120,7 +120,7 @@ export function GitHubCallback() {
             )}
 
             {status === 'loading' && (
-              <p className="text-sm text-slate-500">Please wait while we connect your account...</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Please wait while we connect your account...</p>
             )}
           </div>
         </Card>

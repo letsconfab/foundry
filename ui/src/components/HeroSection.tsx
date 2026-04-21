@@ -36,20 +36,20 @@ export function HeroSection({ onNavigate }: HeroSectionProps) {
   ];
 
   return (
-    <div className="relative overflow-hidden">
+    <div className="relative overflow-hidden text-slate-950 dark:text-slate-50">
       {/* Hero Section */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
         <div className="text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-full mb-8">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-full mb-8">
             <Zap className="w-4 h-4" />
-            <span className="text-sm">Transform Your Knowledge into Collaborative AI Agents</span>
+            <span className="text-sm font-medium">Transform Your Knowledge into Collaborative AI Agents</span>
           </div>
           
-          <h1 className="text-slate-900 mb-6 max-w-4xl mx-auto">
+          <h1 className="text-slate-900 dark:text-white mb-6 max-w-4xl mx-auto">
             Your Confab Helps You Build Powerful Agents
           </h1>
           
-          <p className="text-slate-600 mb-8 max-w-2xl mx-auto text-lg">
+          <p className="text-slate-600 dark:text-slate-300 mb-8 max-w-2xl mx-auto text-lg">
             A <strong>Confab</strong> is your intelligent agent builder. Chat with your Confab to define, configure, and deploy custom agents. 
             Each Confab you create becomes a reusable agent that can help others build even more agents—creating an ecosystem of collaborative AI.
           </p>
@@ -79,12 +79,15 @@ export function HeroSection({ onNavigate }: HeroSectionProps) {
           {features.map((feature, index) => {
             const Icon = feature.icon;
             return (
-              <Card key={index} className="p-6 hover:shadow-lg transition-shadow">
+              <Card
+                key={index}
+                className="p-6 border-slate-200/70 bg-white/80 shadow-sm backdrop-blur-sm transition-all hover:-translate-y-1 hover:shadow-xl dark:border-slate-800 dark:bg-slate-950/70"
+              >
                 <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center mb-4">
                   <Icon className="w-6 h-6 text-white" />
                 </div>
-                <h3 className="text-slate-900 mb-2">{feature.title}</h3>
-                <p className="text-slate-600 text-sm">{feature.description}</p>
+                <h3 className="text-slate-900 dark:text-white mb-2">{feature.title}</h3>
+                <p className="text-slate-600 dark:text-slate-400 text-sm">{feature.description}</p>
               </Card>
             );
           })}
@@ -93,8 +96,8 @@ export function HeroSection({ onNavigate }: HeroSectionProps) {
         {/* How It Works Section */}
         <div className="mt-32">
           <div className="text-center mb-12">
-            <h2 className="text-slate-900 mb-4">How Confabs Work</h2>
-            <p className="text-slate-600 max-w-2xl mx-auto">
+            <h2 className="text-slate-900 dark:text-white mb-4">How Confabs Work</h2>
+            <p className="text-slate-600 dark:text-slate-300 max-w-2xl mx-auto">
               Think of a Confab as an AI agent that specializes in building other AI agents. 
               Each one you create can be shared and reused to build more.
             </p>
@@ -102,31 +105,31 @@ export function HeroSection({ onNavigate }: HeroSectionProps) {
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="text-center">
-              <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/50 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <Bot className="w-8 h-8 text-indigo-600" />
               </div>
-              <h3 className="text-slate-900 mb-2">1. Chat with Your Confab</h3>
-              <p className="text-slate-600 text-sm">
+              <h3 className="text-slate-900 dark:text-white mb-2">1. Chat with Your Confab</h3>
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
                 Describe what you want your agent to do. Your Confab guides you through 8 simple steps to define purpose, tools, guardrails, and more.
               </p>
             </div>
             
             <div className="text-center">
-              <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/50 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <Users className="w-8 h-8 text-purple-600" />
               </div>
-              <h3 className="text-slate-900 mb-2">2. Collaborate & Configure</h3>
-              <p className="text-slate-600 text-sm">
+              <h3 className="text-slate-900 dark:text-white mb-2">2. Collaborate & Configure</h3>
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
                 Invite team members and even other Confabs to participate. Configure memory, LLM providers, APIs, and deployment settings together.
               </p>
             </div>
             
             <div className="text-center">
-              <div className="w-16 h-16 bg-green-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <div className="w-16 h-16 bg-green-100 dark:bg-green-900/50 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <Rocket className="w-8 h-8 text-green-600" />
               </div>
-              <h3 className="text-slate-900 mb-2">3. Deploy & Reuse</h3>
-              <p className="text-slate-600 text-sm">
+              <h3 className="text-slate-900 dark:text-white mb-2">3. Deploy & Reuse</h3>
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
                 Deploy your new Confab to any cloud. It becomes a reusable agent that you—and others—can use to build even more specialized agents.
               </p>
             </div>

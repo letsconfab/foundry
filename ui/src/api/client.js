@@ -175,7 +175,7 @@ class ApiClient {
 
   // REMOVED: testRepoInitialization - endpoint no longer exists
 
-  // Threads & messages (review chats) — tables: users, threads, messages
+  // === Low-level Thread/Message APIs (for review/admin tooling) ===
   async getThreads() {
     return this.request('/threads');
   }
@@ -206,18 +206,8 @@ class ApiClient {
     });
   }
 
-  // === [CLAUDE: Unified chat endpoint - replaces all previous LLM/agent endpoints] ===
-
-  /**
-   * Send a chat message to a thread.
-   * This is the unified chat endpoint that handles all messaging.
-   * @param {number} threadId - The thread ID
-   * @param {string} content - The message content
-   * @param {Array<{type: string, id?: number, name?: string}>} addressedTo - Optional array of recipients
-   * @param {number} inReplyTo - Optional message ID this is replying to
-   */
+  // Legacy unified chat — prefer sendConversationMessage for new code
   async chat(threadId, content, addressedTo = null, inReplyTo = null) {
-    console.log('API Client: Sending chat message to thread:', threadId);
     const body = { content };
     if (addressedTo) body.addressed_to = addressedTo;
     if (inReplyTo) body.in_reply_to = inReplyTo;
@@ -227,7 +217,7 @@ class ApiClient {
     });
   }
 
-  // === [CLAUDE: Thread participant endpoints] ===
+  // === Low-level Participant APIs (for review/admin tooling) ===
 
   async getThreadParticipants(threadId) {
     return this.request(`/threads/${threadId}/participants`);
@@ -277,32 +267,32 @@ class ApiClient {
     });
   }
 
-  // === Document Store endpoints ===
+  // === Document Store endpoints (V2 - Versioned) ===
 
   async uploadDocument(confabId, file, metadata = null) {
-    const url = `${this.baseURL}/confabs/${confabId}/documents`;
-    const formData = new FormData();
-    formData.append('file', file);
-    if (metadata) {
-      formData.append('metadata', JSON.stringify(metadata));
+    // Convert file to base64 for V2 API
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+      binary += String.fromCharCode(uint8Array[i]);
     }
+    const base64 = btoa(binary);
 
-    const token = localStorage.getItem('access_token');
-    const response = await fetch(url, {
+    return this.request(`/confabs/${confabId}/documents`, {
       method: 'POST',
-      body: formData,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: JSON.stringify({
+        filename: file.name,
+        content_base64: base64,
+        content_type: file.type || 'application/octet-stream',
+        metadata: metadata,
+      }),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || `Upload failed: ${response.status}`);
-    }
-    return response.json();
   }
 
   async listDocuments(confabId) {
-    return this.request(`/confabs/${confabId}/documents`);
+    const response = await this.request(`/confabs/${confabId}/documents`);
+    return response.documents; // V2 returns { documents: [...], total: N }
   }
 
   async getDocument(confabId, documentId) {
@@ -315,15 +305,47 @@ class ApiClient {
     });
   }
 
-  async searchDocuments(confabId, query, topK = 5, filterType = null) {
-    return this.request(`/confabs/${confabId}/documents/search`, {
-      method: 'POST',
-      body: JSON.stringify({ query, top_k: topK, filter_type: filterType }),
-    });
+  // === High-level Conversation API (Phase 6) ===
+
+  /**
+   * Start a new foreman build conversation.
+   * Creates confab, thread, participants, and welcome message in one call.
+   */
+  async startForemanConversation() {
+    return this.request('/conversations/foreman/start', { method: 'POST' });
   }
 
-  async getDocumentStats(confabId) {
-    return this.request(`/confabs/${confabId}/documents/stats`);
+  /**
+   * Resume an existing foreman build conversation.
+   * @param {number} confabId
+   */
+  async resumeForemanConversation(confabId) {
+    return this.request(`/conversations/foreman/${confabId}/resume`, { method: 'POST' });
+  }
+
+  /**
+   * Start a runtime conversation with a published confab.
+   * @param {number} confabId
+   */
+  async startRuntimeConversation(confabId) {
+    return this.request(`/conversations/runtime/${confabId}/start`, { method: 'POST' });
+  }
+
+  /**
+   * Send a message using the high-level conversation endpoint.
+   * Routes to the correct orchestrator automatically.
+   * @param {number} threadId
+   * @param {string} content
+   * @param {object} options - { addressedTo, inReplyTo }
+   */
+  async sendConversationMessage(threadId, content, options = {}) {
+    const body = { content };
+    if (options.addressedTo) body.addressed_to = options.addressedTo;
+    if (options.inReplyTo) body.in_reply_to = options.inReplyTo;
+    return this.request(`/conversations/${threadId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
   }
 
   // REMOVED: chatWithLangGraphAgent - use chat() instead
@@ -337,6 +359,22 @@ class ApiClient {
 
   clearToken() {
     localStorage.removeItem('access_token');
+  }
+
+  // Version endpoint (no auth required)
+  async getApiVersion() {
+    const url = `${this.baseURL}/`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return { version: 'unknown' };
+      }
+      const data = await response.json();
+      return { version: data.version || 'unknown' };
+    } catch (error) {
+      console.error('API Client: Failed to fetch API version:', error);
+      return { version: 'unavailable' };
+    }
   }
 
 }

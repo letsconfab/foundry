@@ -22,7 +22,7 @@ import {
 } from './ui/alert-dialog';
 import { apiClient } from '../api/client.js';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
 interface AgentDashboardProps {
   onNavigate: (view: View, confabName?: string, version?: string, confabId?: number) => void;
@@ -86,15 +86,15 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'published':
-        return 'bg-green-100 text-green-700';
+        return 'border-green-200 bg-green-100 text-green-800 dark:border-green-900 dark:bg-green-950/60 dark:text-green-300';
       case 'building':
-        return 'bg-amber-100 text-amber-700';
+        return 'border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-300';
       case 'draft':
-        return 'bg-blue-100 text-blue-700';
+        return 'border-blue-200 bg-blue-100 text-blue-800 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300';
       case 'archived':
-        return 'bg-slate-100 text-slate-700';
+        return 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300';
       default:
-        return 'bg-slate-100 text-slate-700';
+        return 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300';
     }
   };
 
@@ -113,8 +113,8 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
         <div>
-          <h2 className="text-slate-900 mb-1">Confab Dashboard</h2>
-          <p className="text-slate-600">Manage and monitor your AI confabs</p>
+          <h2 className="text-slate-900 dark:text-white mb-1">Confab Dashboard</h2>
+          <p className="text-slate-600 dark:text-slate-400">Manage and monitor your AI confabs</p>
         </div>
         <Button onClick={() => onNavigate('create')} className="gap-2">
           <Plus className="w-4 h-4" />
@@ -125,13 +125,13 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
       {loading ? (
         <div className="text-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className="text-slate-600">Loading confabs...</p>
+          <p className="text-slate-600 dark:text-slate-400">Loading confabs...</p>
         </div>
       ) : confabs.length === 0 ? (
         <div className="text-center py-12">
           <Bot className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-          <h3 className="text-slate-900 mb-2">No confabs yet</h3>
-          <p className="text-slate-600 mb-4">Create your first confab to get started</p>
+          <h3 className="text-slate-900 dark:text-white mb-2">No confabs yet</h3>
+          <p className="text-slate-600 dark:text-slate-400 mb-4">Create your first confab to get started</p>
           <Button onClick={() => onNavigate('create')} className="gap-2">
             <Plus className="w-4 h-4" />
             Create Confab
@@ -140,7 +140,10 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {confabs.map((confab) => (
-            <Card key={confab.id} className="p-6 hover:shadow-lg transition-shadow">
+            <Card
+              key={confab.id}
+              className="p-6 border-slate-200/70 bg-white/80 shadow-sm backdrop-blur-sm transition-all hover:-translate-y-1 hover:shadow-xl dark:border-slate-800 dark:bg-slate-950/70"
+            >
               <div className="flex items-start justify-between mb-4">
                 <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
                   confab.status === 'building'
@@ -175,18 +178,18 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                 </DropdownMenu>
               </div>
 
-              <h3 className="text-slate-900 mb-2">{confab.name}</h3>
+              <h3 className="text-slate-900 dark:text-white mb-2">{confab.name}</h3>
               <Badge className={`${getStatusColor(confab.status)} mb-2`}>
                 {getStatusLabel(confab.status)}
               </Badge>
-              <p className="text-slate-600 text-sm mb-4">{confab.description || 'No description'}</p>
+              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">{confab.description || 'No description'}</p>
 
               <div className="space-y-2 mb-4">
-                <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-200">
-                  <span className="text-xs text-slate-500">
+                <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
                     {confab.updated_at ? new Date(confab.updated_at).toLocaleDateString() : 'Just now'}
                   </span>
-                  <span className="text-xs text-slate-500">v{confab.version}</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">v{confab.version}</span>
                 </div>
               </div>
 
@@ -209,7 +212,7 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                     variant="outline"
                     size="sm"
                     className="flex-1 gap-2"
-                    onClick={() => onNavigate('confab-chat', confab.name, confab.version)}
+                    onClick={() => onNavigate('confab-chat', confab.name, confab.version, confab.id)}
                   >
                     <MessageSquare className="w-3 h-3" />
                     Chat

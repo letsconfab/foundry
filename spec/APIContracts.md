@@ -156,79 +156,93 @@ Tests the GitHub integration by creating a dummy confab structure. For users wit
 
 ---
 
-## Document Store Endpoints
+## Document Store Endpoints (V2)
 
 ### Upload Document
 
-`POST /confabs/{confab_id}/documents` (authenticated, multipart/form-data)
+`POST /confabs/{confab_id}/documents` (authenticated)
 
-Uploads and indexes a document for RAG retrieval.
+Uploads a new document with base64-encoded content. Validates via magic bytes, compresses with zstd, and creates version 1.
 
-- **Request body:**
-  - `file` - File upload (required)
-  - `metadata` - JSON string with optional metadata
-- **Response:**
-  - `document_id` - Assigned document ID
-  - `filename` - Original filename
-  - `chunk_count` - Number of chunks created
-  - `status` - `indexed`, `duplicate`, or `failed`
-  - `error_message` - Error details if failed
-- **Errors:** 400 if processing fails, 404 if confab not found
+- **Request body (JSON):**
+  - `filename` - Original filename (required)
+  - `content_base64` - Base64-encoded file content (required)
+  - `content_type` - Declared content type (optional, verified via magic bytes)
+  - `metadata` - Optional metadata dict (author, tags, etc.)
+- **Response:** `DocumentUploadResponse` with document metadata and first version
+- **Errors:** 400 if validation fails (size, type, empty), 404 if confab not found
 
 ### List Documents
 
 `GET /confabs/{confab_id}/documents` (authenticated)
 
-Lists all documents in a confab's document store.
+Lists all active documents for a confab (excludes archived).
 
-- **Response:** Array of documents with id, filename, content_type, chunk_count, status, created_at
+- **Response:** Array of documents with id, document_uuid, filename, content_type, source, status, version_count, latest_version, created_at
 
 ### Get Document
 
 `GET /confabs/{confab_id}/documents/{document_id}` (authenticated)
 
-Gets details for a specific document.
+Gets metadata for a specific document.
 
-- **Response:** Full document object including raw_content for text files
+- **Response:** Document metadata with version summary
 - **Errors:** 404 if not found
 
-### Delete Document
+### Archive Document
 
 `DELETE /confabs/{confab_id}/documents/{document_id}` (authenticated)
 
-Deletes a document and its chunks from the store.
+Soft-deletes a document by setting status to `archived`. Data is preserved.
 
 - **Response:** Success message
 - **Errors:** 404 if not found
 
-### Search Documents
+### List Versions
 
-`POST /confabs/{confab_id}/documents/search` (authenticated)
+`GET /confabs/{confab_id}/documents/{document_id}/versions` (authenticated)
 
-Performs semantic search across documents and learnings.
+Lists all versions of a document, ordered by version number descending.
 
-- **Request body:**
-  - `query` - Search query (natural language)
-  - `top_k` - Number of results (default: 5, max: 20)
-  - `filter_type` - Optional: `document` or `learning`
-- **Response:**
-  - `results` - Array of search results with chunk_id, document_id, filename, content, score, chunk_index, source_type, metadata
-  - `query` - Original query
-  - `total_results` - Number of results returned
+- **Response:** Array of versions with id, version_number, content_hash, original_size, compressed_size, compression_ratio, text_extraction_status, created_at
 
-### Get Document Store Stats
+### Get Latest Version Content
 
-`GET /confabs/{confab_id}/documents/stats` (authenticated)
+`GET /confabs/{confab_id}/documents/{document_id}/versions/latest` (authenticated)
 
-Gets statistics for the document store.
+Gets the decompressed content of the latest version as base64.
 
-- **Response:**
-  - `document_count` - Number of documents
-  - `total_chunks` - Total chunks across all documents
-  - `total_size_bytes` - Total content size
-  - `embedding_model` - Current embedding model
-  - `embedding_provider` - Current embedding provider
-  - `vector_store` - ChromaDB collection stats
+- **Response:** document_id, document_uuid, version_number, filename, content_type, content_base64, original_size, extracted_text
+- **Errors:** 404 if document not found or has no versions
+
+### Get Specific Version Content
+
+`GET /confabs/{confab_id}/documents/{document_id}/versions/{version_number}` (authenticated)
+
+Gets the decompressed content of a specific version as base64.
+
+- **Response:** Same as latest version endpoint
+- **Errors:** 404 if document or version not found
+
+### Create New Version
+
+`POST /confabs/{confab_id}/documents/{document_id}/versions` (authenticated)
+
+Creates a new version of an existing document. Auto-increments version number.
+
+- **Request body (JSON):**
+  - `content_base64` - Base64-encoded file content (required)
+  - `metadata` - Optional metadata for this version
+- **Response:** Version metadata
+- **Errors:** 400 if validation fails, 404 if document not found or archived
+
+### Get Accepted Formats
+
+`GET /documents/accepted-formats`
+
+Returns the list of accepted file formats and UI hints for the document upload dialog.
+
+- **Response:** Accepted file extensions, max file size, and UI hint metadata
 
 ---
 
@@ -355,6 +369,8 @@ Unified chat endpoint that saves user messages and generates responses from thre
 2. Initializes the Foreman agent with that confab's context
 3. Returns the Foreman's response (not the confab's)
 
+When `FOREMAN_V3_ENABLED=true`, uses the `ForemanV3` class (LangGraph StateGraph) instead of V2's `Foreman` class. The response shape is identical (V2-compatible) with additional flags: `is_v3: true`, `is_langgraph: true`. The response also includes `v2_metadata.ui_hint` (e.g., `"show_upload_panel"` for the documents stage).
+
 **Confab Routing:** For confab participants:
 - Confabs with `status='building'` do NOT respond (Foreman handles the conversation)
 - Confabs with other statuses respond using their configured purpose and guardrails
@@ -374,6 +390,8 @@ Unified chat endpoint that saves user messages and generates responses from thre
 | `review_and_save` | Finalize confab, set status to `draft` |
 | `update_purpose` | Modify existing purpose |
 
+**V3 Documents Stage:** V3 adds an 8th stage (`documents`) that sends `ui_hint: "show_upload_panel"` to trigger the frontend's `DocumentUploadDialog`. Document uploads use the V2 Document Store API (`POST /confabs/{id}/documents`).
+
 ---
 
 ## Utility Endpoints
@@ -382,7 +400,7 @@ Unified chat endpoint that saves user messages and generates responses from thre
 
 `GET /`
 
-- **Response:** `{"message": "Let's Confab API"}`
+- **Response:** `{"message": "Let's Confab API", "version": "2.0.5"}`
 
 ---
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useRef, useEffect } from 'react';
-import { Send, ThumbsUp, ThumbsDown, ArrowLeft, Bot, User, Users, Save, Loader2 } from 'lucide-react';
+import { Send, ThumbsUp, ThumbsDown, ArrowLeft, Bot, User, Users, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -18,12 +18,14 @@ import { apiClient } from '../api/client.js';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageContent } from './MessageContent';
 
-type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat' | 'configure' | 'review-chats';
+type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
 interface ConfabChatProps {
   onNavigate: (view: View) => void;
   confabName: string;
   version: string;
+  /** Confab ID for starting a runtime conversation */
+  confabId?: number;
   /** When set, load messages from this thread and persist new messages to DB */
   threadId?: number | null;
 }
@@ -45,7 +47,7 @@ interface Participant {
   isCurrentUser?: boolean;
 }
 
-export function ConfabChat({ onNavigate, confabName, version, threadId: threadIdProp }: ConfabChatProps) {
+export function ConfabChat({ onNavigate, confabName, version, confabId, threadId: threadIdProp }: ConfabChatProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -60,7 +62,6 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
-  const [savingToChats, setSavingToChats] = useState(false);
   /** Thread id from API: either passed in (review) or auto-created on first send. Used to persist every message. */
   const [currentThreadId, setCurrentThreadId] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -135,59 +136,59 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
     setInput('');
     setIsTyping(true);
 
+    // Bootstrap runtime conversation on first message using high-level API
     let tid = effectiveThreadId;
-    if (tid == null) {
+    if (tid == null && confabId != null) {
       try {
-        const name = `${confabName} – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
-        const thread = await apiClient.createThread(name);
-        tid = thread?.id ?? null;
-        if (tid != null) setCurrentThreadId(tid);
-        if (tid != null && messages[0]?.role === 'assistant') {
-          await apiClient.addMessage(tid, messages[0].content, 'assistant');
-        }
-      } catch {
+        const conversation = await apiClient.startRuntimeConversation(confabId);
+        tid = conversation.thread_id;
+        setCurrentThreadId(tid);
+        console.log('Started runtime conversation:', { tid, confabId });
+      } catch (error) {
+        console.error('Failed to start runtime conversation:', error);
         tid = null;
       }
     }
-    if (tid != null) {
-      apiClient.addMessage(tid, content, 'user').catch(() => {});
-    }
 
-    const assistantContent = `I understand you're asking about "${content}". Let me help you with that. This is a demo response to show how the chat interface works with feedback buttons.`;
-    setTimeout(() => {
-      const assistantMessage: Message = {
+    // Send message via high-level conversation endpoint
+    try {
+      if (tid != null) {
+        const response = await apiClient.sendConversationMessage(tid, content);
+
+        if (response.agent_responses && response.agent_responses.length > 0) {
+          const agentReply = response.agent_responses[0];
+          const assistantMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: agentReply.content,
+            timestamp: new Date(),
+            feedback: null,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        }
+      } else {
+        // Fallback when no confabId or thread — show placeholder
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: `I understand you're asking about "${content}". This confab doesn't have a runtime conversation configured yet.`,
+          timestamp: new Date(),
+          feedback: null,
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: assistantContent,
+        content: 'Sorry, something went wrong. Please try again.',
         timestamp: new Date(),
         feedback: null,
       };
-      setMessages((prev) => [...prev, assistantMessage]);
-      setIsTyping(false);
-      if (tid != null) {
-        apiClient.addMessage(tid, assistantContent, 'assistant').catch(() => {});
-      }
-    }, 1500);
-  };
-
-  const handleSaveToMyChats = async () => {
-    if (messages.length === 0) return;
-    setSavingToChats(true);
-    try {
-      const name = `${confabName} – ${new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`;
-      const thread = await apiClient.createThread(name);
-      const tid = thread?.id;
-      if (tid) {
-        for (const m of messages) {
-          if (m.role === 'assistant' && m.content === `Hello! I'm ${confabName}. How can I help you today?`) continue;
-          await apiClient.addMessage(tid, m.content, m.role);
-        }
-        onNavigate('review-chats');
-      }
-    } catch {
-      // ignore
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
-      setSavingToChats(false);
+      setIsTyping(false);
     }
   };
 
@@ -222,7 +223,7 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col">
         {/* Chat Header */}
-        <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-4">
+        <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 px-4 sm:px-6 py-4">
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
@@ -237,26 +238,14 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-slate-900">{confabName}</h2>
+                  <h2 className="text-slate-900 dark:text-white">{confabName}</h2>
                   <Badge variant="outline" className="text-xs">
                     v{version}
                   </Badge>
                 </div>
-                <p className="text-sm text-slate-500">Online</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Online</p>
               </div>
             </div>
-            {!effectiveThreadId && messages.length > 1 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                disabled={savingToChats}
-                onClick={handleSaveToMyChats}
-              >
-                {savingToChats ? <span className="animate-pulse">Saving…</span> : <Save className="w-4 h-4" />}
-                Save to my chats
-              </Button>
-            )}
           </div>
         </div>
 
@@ -280,7 +269,7 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
                   className={`p-4 ${
                     message.role === 'user'
                       ? 'bg-indigo-600 text-white'
-                      : 'bg-white text-slate-900'
+                      : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200'
                   }`}
                 >
                   <MessageContent content={message.content} variant={message.role} />
@@ -316,7 +305,7 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
                     >
                       <ThumbsDown className="w-4 h-4" />
                     </Button>
-                    <span className="text-xs text-slate-400 ml-2">
+                    <span className="text-xs text-slate-400 dark:text-slate-500 ml-2">
                       {message.timestamp.toLocaleTimeString([], {
                         hour: '2-digit',
                         minute: '2-digit',
@@ -327,7 +316,7 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
 
                 {/* Timestamp for user messages */}
                 {message.role === 'user' && (
-                  <span className="text-xs text-slate-400">
+                  <span className="text-xs text-slate-400 dark:text-slate-500">
                     {message.timestamp.toLocaleTimeString([], {
                       hour: '2-digit',
                       minute: '2-digit',
@@ -337,8 +326,8 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
               </div>
 
               {message.role === 'user' && (
-                <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center flex-shrink-0">
-                  <User className="w-4 h-4 text-slate-600" />
+                <div className="w-8 h-8 bg-slate-200 dark:bg-slate-700 rounded-full flex items-center justify-center flex-shrink-0">
+                  <User className="w-4 h-4 text-slate-600 dark:text-slate-300" />
                 </div>
               )}
             </div>
@@ -349,7 +338,7 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
               <div className="w-8 h-8 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
                 <Bot className="w-4 h-4 text-white" />
               </div>
-              <Card className="p-4 bg-white">
+              <Card className="p-4 bg-white dark:bg-slate-800">
                 <div className="flex gap-1">
                   <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                   <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -363,7 +352,7 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
         </div>
 
         {/* Input Area */}
-        <div className="bg-white border-t border-slate-200 p-4 sm:p-6">
+        <div className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 p-4 sm:p-6">
           <div className="flex gap-3 items-end">
             <Textarea
               value={input}
@@ -385,39 +374,39 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
               <Send className="w-4 h-4" />
             </Button>
           </div>
-          <p className="text-xs text-slate-500 mt-2">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
             Press Enter to send, Shift+Enter for new line
           </p>
         </div>
       </div>
 
       {/* Participants Sidebar — loaded from users table */}
-      <div className="hidden lg:block w-80 bg-white border-l border-slate-200 overflow-y-auto">
+      <div className="hidden lg:block w-80 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 overflow-y-auto">
         <div className="p-6">
           <div className="flex items-center gap-2 mb-6">
-            <Users className="w-5 h-5 text-slate-600" />
-            <h3 className="text-slate-900">Participants</h3>
+            <Users className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+            <h3 className="text-slate-900 dark:text-white">Participants</h3>
             {!participantsLoading && (
-              <span className="ml-auto text-sm text-slate-500">
+              <span className="ml-auto text-sm text-slate-500 dark:text-slate-400">
                 {participants.length} user{participants.length !== 1 ? 's' : ''}
               </span>
             )}
           </div>
 
           {participantsLoading ? (
-            <div className="flex items-center gap-2 text-slate-500 py-4">
+            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 py-4">
               <Loader2 className="w-4 h-4 animate-spin" />
               Loading…
             </div>
           ) : participants.length === 0 ? (
-            <p className="text-sm text-slate-500 py-4">No users yet.</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 py-4">No users yet.</p>
           ) : (
             <div className="space-y-3">
               {participants.map((participant) => (
                 <div
                   key={participant.id}
                   className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
-                    participant.isCurrentUser ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'hover:bg-slate-50'
+                    participant.isCurrentUser ? 'bg-indigo-50 dark:bg-indigo-900/30 ring-1 ring-indigo-200 dark:ring-indigo-700' : 'hover:bg-slate-50 dark:hover:bg-slate-800'
                   }`}
                 >
                   <div className="relative">
@@ -428,14 +417,14 @@ export function ConfabChat({ onNavigate, confabName, version, threadId: threadId
                     </Avatar>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-slate-900 truncate flex items-center gap-1.5">
+                    <p className="text-sm text-slate-900 dark:text-white truncate flex items-center gap-1.5">
                       {participant.name}
                       {participant.isCurrentUser && (
                         <span className="text-xs text-indigo-600 font-medium">(you)</span>
                       )}
                     </p>
                     {participant.email && (
-                      <p className="text-xs text-slate-500 truncate">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                         {participant.email}
                       </p>
                     )}

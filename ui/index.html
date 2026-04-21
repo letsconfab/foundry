@@ -5,6 +5,22 @@
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>Let's Confab Website</title>
+      <script>
+        (function () {
+          const key = 'foundry-theme-v2';
+          const stored = localStorage.getItem(key);
+          const theme = stored || 'dark';
+          const resolved =
+            theme === 'system'
+              ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+              : theme;
+          document.documentElement.classList.toggle('dark', resolved === 'dark');
+          document.documentElement.style.colorScheme = resolved;
+          if (!stored) {
+            localStorage.setItem(key, 'dark');
+          }
+        })();
+      </script>
     </head>
 
     <body>
