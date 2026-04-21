@@ -20,6 +20,7 @@ from schemas import (
 from deps import get_current_user
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
+from services.hermes_webhook import notify_hermes_agents
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["confabs"])
@@ -172,6 +173,10 @@ async def update_confab(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
+    # Track if this is a publish/republish event
+    old_status = confab.status
+    is_publish = False
+
     # Update fields if provided
     if update.name is not None:
         confab.name = update.name
@@ -179,6 +184,9 @@ async def update_confab(
         confab.description = update.description
     if update.status is not None:
         confab.status = update.status
+        # Detect publish events (transition to published, or update while published)
+        if update.status == "published":
+            is_publish = True
     if update.purpose is not None:
         confab.purpose = update.purpose
     if update.guardrails is not None:
@@ -209,6 +217,11 @@ async def update_confab(
 
     db.commit()
     db.refresh(confab)
+
+    # Notify hermes-agents on publish/republish
+    if is_publish:
+        await notify_hermes_agents(confab)
+
     return ConfabResponse.model_validate(confab)
 
 
