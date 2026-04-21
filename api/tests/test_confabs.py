@@ -164,15 +164,18 @@ class TestDeployConfab:
         assert response.status_code == 400
         assert "published" in response.json()["detail"].lower()
 
+    @patch("routes.confab_routes.sync_knowledge_on_deploy", new_callable=AsyncMock)
     @patch("routes.confab_routes.deploy_confab", new_callable=AsyncMock)
-    def test_deploy_success(self, mock_deploy, client: TestClient, auth_headers: dict, test_confab: Confab, db: Session):
+    def test_deploy_success(self, mock_deploy, mock_sync, client: TestClient, auth_headers: dict, test_confab: Confab, db: Session):
         test_confab.status = "published"
         db.commit()
         mock_deploy.return_value = {"status": "running", "port": 8642, "api_url": "http://localhost:8642/v1"}
+        mock_sync.return_value = "fake-kb-id"
 
         response = client.post(f"/confabs/{test_confab.id}/deploy", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["message"] == "Deployed"
+        assert response.json()["knowledge_synced"] is True
         mock_deploy.assert_called_once_with(test_confab.name)
 
     @patch("routes.confab_routes.deploy_confab", new_callable=AsyncMock)
@@ -184,9 +187,11 @@ class TestDeployConfab:
         response = client.post(f"/confabs/{test_confab.id}/deploy", headers=auth_headers)
         assert response.status_code == 502
 
+    @patch("routes.confab_routes.cleanup_knowledge_on_undeploy", new_callable=AsyncMock)
     @patch("routes.confab_routes.undeploy_confab", new_callable=AsyncMock)
-    def test_undeploy_success(self, mock_undeploy, client: TestClient, auth_headers: dict, test_confab: Confab):
+    def test_undeploy_success(self, mock_undeploy, mock_cleanup, client: TestClient, auth_headers: dict, test_confab: Confab):
         mock_undeploy.return_value = True
+        mock_cleanup.return_value = True
         response = client.post(f"/confabs/{test_confab.id}/undeploy", headers=auth_headers)
         assert response.status_code == 200
 
