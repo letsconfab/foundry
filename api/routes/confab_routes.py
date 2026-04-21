@@ -21,6 +21,7 @@ from deps import get_current_user
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
 from services.hermes_webhook import notify_hermes_agents
+from services.hermes_deploy import deploy_confab, undeploy_confab, get_deploy_status
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["confabs"])
@@ -582,3 +583,57 @@ async def delete_confab(
         "message": "Confab deleted",
         "github_folder_deleted": github_folder_deleted
     }
+
+
+# =============================================================================
+# Deploy / undeploy endpoints
+# =============================================================================
+
+@router.post("/confabs/{confab_id}/deploy")
+async def deploy_confab_endpoint(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    if confab.status != "published":
+        raise HTTPException(status_code=400, detail="Confab must be published before deploying")
+
+    result = await deploy_confab(confab.name)
+    if not result:
+        raise HTTPException(status_code=502, detail="Failed to deploy — hermes-agents may be unavailable")
+    return {"message": "Deployed", "deployment": result}
+
+
+@router.post("/confabs/{confab_id}/undeploy")
+async def undeploy_confab_endpoint(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    success = await undeploy_confab(confab.name)
+    if not success:
+        raise HTTPException(status_code=502, detail="Failed to undeploy — hermes-agents may be unavailable")
+    return {"message": "Undeployed"}
+
+
+@router.get("/confabs/{confab_id}/deploy-status")
+async def deploy_status_endpoint(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    result = await get_deploy_status(confab.name)
+    if result is None:
+        return {"status": "not_deployed", "realizations": []}
+    return result

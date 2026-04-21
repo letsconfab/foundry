@@ -160,6 +160,18 @@ class ApiClient {
     });
   }
 
+  async deployConfab(id) {
+    return this.request(`/confabs/${id}/deploy`, { method: 'POST' });
+  }
+
+  async undeployConfab(id) {
+    return this.request(`/confabs/${id}/undeploy`, { method: 'POST' });
+  }
+
+  async getDeployStatus(id) {
+    return this.request(`/confabs/${id}/deploy-status`);
+  }
+
   async refreshDefinitionFiles(confabId) {
     return this.request(`/confabs/${confabId}/definition-files/refresh`, {
       method: 'POST',

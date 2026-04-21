@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { Plus, Bot, MoreVertical, Share2, StopCircle, Trash2, Cloud, MessageSquare, Settings, Wrench } from 'lucide-react';
+import { Plus, Bot, MoreVertical, Share2, StopCircle, Trash2, Cloud, CloudOff, MessageSquare, Settings, Wrench, Loader2, Rocket } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
@@ -54,12 +54,22 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [confabToDelete, setConfabToDelete] = useState<Confab | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deployingId, setDeployingId] = useState<number | null>(null);
+  const [publishingId, setPublishingId] = useState<number | null>(null);
+  const [deployStatus, setDeployStatus] = useState<Record<number, {status: string; api_url?: string | null}>>({});
 
   useEffect(() => {
     const fetchConfabs = async () => {
       try {
         const data = await apiClient.getConfabs();
         setConfabs(data);
+        // Check deploy status for published confabs
+        for (const c of data.filter((c: Confab) => c.status === 'published')) {
+          try {
+            const ds = await apiClient.getDeployStatus(c.id);
+            setDeployStatus(prev => ({ ...prev, [c.id]: ds }));
+          } catch { /* ignore */ }
+        }
       } catch (error) {
         console.error('Failed to fetch confabs:', error);
       } finally {
@@ -68,6 +78,43 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
     };
     fetchConfabs();
   }, []);
+
+  const handlePublish = async (confab: Confab) => {
+    setPublishingId(confab.id);
+    try {
+      const updated = await apiClient.updateConfab(confab.id, { status: 'published' });
+      setConfabs(prev => prev.map(c => c.id === confab.id ? { ...c, ...updated } : c));
+    } catch (error) {
+      console.error('Failed to publish:', error);
+    } finally {
+      setPublishingId(null);
+    }
+  };
+
+  const handleDeploy = async (confab: Confab) => {
+    setDeployingId(confab.id);
+    try {
+      await apiClient.deployConfab(confab.id);
+      const ds = await apiClient.getDeployStatus(confab.id);
+      setDeployStatus(prev => ({ ...prev, [confab.id]: ds }));
+    } catch (error) {
+      console.error('Failed to deploy:', error);
+    } finally {
+      setDeployingId(null);
+    }
+  };
+
+  const handleUndeploy = async (confab: Confab) => {
+    setDeployingId(confab.id);
+    try {
+      await apiClient.undeployConfab(confab.id);
+      setDeployStatus(prev => ({ ...prev, [confab.id]: { status: 'not_deployed' } }));
+    } catch (error) {
+      console.error('Failed to undeploy:', error);
+    } finally {
+      setDeployingId(null);
+    }
+  };
 
   const handleDeleteConfab = async () => {
     if (!confabToDelete) return;
@@ -163,10 +210,16 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem className="gap-2">
-                      <Share2 className="w-4 h-4" />
-                      Publish
-                    </DropdownMenuItem>
+                    {confab.status !== 'published' && (
+                      <DropdownMenuItem
+                        className="gap-2"
+                        disabled={publishingId === confab.id}
+                        onClick={() => handlePublish(confab)}
+                      >
+                        <Share2 className="w-4 h-4" />
+                        {publishingId === confab.id ? 'Publishing...' : 'Publish'}
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem
                       className="gap-2 text-red-600"
                       onClick={() => setConfabToDelete(confab)}
@@ -208,25 +261,50 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                   </Button>
                 ) : null}
                 {confab.status === 'published' && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 gap-2"
-                    onClick={() => onNavigate('confab-chat', confab.name, confab.version, confab.id)}
-                  >
-                    <MessageSquare className="w-3 h-3" />
-                    Chat
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 gap-2"
+                      onClick={() => onNavigate('confab-chat', confab.name, confab.version, confab.id)}
+                    >
+                      <MessageSquare className="w-3 h-3" />
+                      Chat
+                    </Button>
+                    {deployStatus[confab.id]?.status === 'running' ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 gap-2 border-red-300 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                        disabled={deployingId === confab.id}
+                        onClick={() => handleUndeploy(confab)}
+                      >
+                        {deployingId === confab.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CloudOff className="w-3 h-3" />}
+                        Undeploy
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 gap-2 border-green-300 text-green-700 hover:bg-green-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950"
+                        disabled={deployingId === confab.id}
+                        onClick={() => handleDeploy(confab)}
+                      >
+                        {deployingId === confab.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Rocket className="w-3 h-3" />}
+                        Deploy
+                      </Button>
+                    )}
+                  </>
                 )}
                 {confab.status === 'draft' && (
                   <Button
                     variant="outline"
                     size="sm"
                     className="flex-1 gap-2"
-                    onClick={() => onNavigate('deploy')}
+                    onClick={() => onNavigate('create', confab.name, confab.version, confab.id)}
                   >
-                    <Cloud className="w-3 h-3" />
-                    Deploy
+                    <Settings className="w-3 h-3" />
+                    Configure
                   </Button>
                 )}
                 {/* Fallback for any status */}
