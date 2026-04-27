@@ -3,6 +3,7 @@ Service for deploying/undeploying confabs to hermes-agents.
 """
 
 import os
+import re
 import logging
 import aiohttp
 from typing import Optional
@@ -13,8 +14,12 @@ HERMES_AGENTS_URL = os.getenv("HERMES_AGENTS_URL", "http://localhost:8022")
 HERMES_WEBHOOK_SECRET = os.getenv("HERMES_WEBHOOK_SECRET", "")
 
 
-def _normalize_name(name: str) -> str:
-    return name.lower().replace(" ", "-").replace("_", "-")
+def normalize_agent_name(name: str) -> str:
+    """Normalize a confab name to a URL-safe agent slug."""
+    slug = name.lower().replace(" ", "-").replace("_", "-")
+    slug = re.sub(r'[^a-z0-9-]', '', slug)
+    slug = re.sub(r'-+', '-', slug).strip('-')
+    return slug or "unnamed"
 
 
 async def deploy_confab(confab_name: str) -> Optional[dict]:
@@ -22,7 +27,7 @@ async def deploy_confab(confab_name: str) -> Optional[dict]:
     Deploy a confab by creating and starting a realization in hermes-agents.
     Returns the realization details or None on failure.
     """
-    agent_name = _normalize_name(confab_name)
+    agent_name = normalize_agent_name(confab_name)
     headers = {
         "Content-Type": "application/json",
         "X-Webhook-Secret": HERMES_WEBHOOK_SECRET,
@@ -70,7 +75,7 @@ async def undeploy_confab(confab_name: str) -> bool:
     Undeploy a confab by stopping and deleting all realizations.
     Returns True on success.
     """
-    agent_name = _normalize_name(confab_name)
+    agent_name = normalize_agent_name(confab_name)
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -81,6 +86,7 @@ async def undeploy_confab(confab_name: str) -> bool:
                     return False
                 data = await resp.json()
 
+            all_succeeded = True
             for r in data.get("realizations", []):
                 instance_id = r["instance_id"]
 
@@ -88,15 +94,24 @@ async def undeploy_confab(confab_name: str) -> bool:
                 if r["status"] == "running":
                     stop_url = f"{HERMES_AGENTS_URL}/agents/{agent_name}/realizations/{instance_id}/stop"
                     async with session.post(stop_url, timeout=15) as resp:
-                        pass
+                        if resp.status not in (200, 204):
+                            error = await resp.text()
+                            logger.error(f"Failed to stop realization {instance_id}: {resp.status} {error}")
+                            all_succeeded = False
 
                 # Delete
                 del_url = f"{HERMES_AGENTS_URL}/agents/{agent_name}/realizations/{instance_id}"
                 async with session.delete(del_url, timeout=10) as resp:
-                    pass
+                    if resp.status not in (200, 204):
+                        error = await resp.text()
+                        logger.error(f"Failed to delete realization {instance_id}: {resp.status} {error}")
+                        all_succeeded = False
 
-            logger.info(f"Undeployed all realizations for {agent_name}")
-            return True
+            if all_succeeded:
+                logger.info(f"Undeployed all realizations for {agent_name}")
+            else:
+                logger.error(f"Some realizations failed to undeploy for {agent_name}")
+            return all_succeeded
 
     except Exception as e:
         logger.error(f"Undeploy error: {e}")
@@ -108,7 +123,7 @@ async def get_deploy_status(confab_name: str) -> Optional[dict]:
     Get deployment status for a confab.
     Returns dict with status info or None if not deployed.
     """
-    agent_name = _normalize_name(confab_name)
+    agent_name = normalize_agent_name(confab_name)
 
     try:
         async with aiohttp.ClientSession() as session:

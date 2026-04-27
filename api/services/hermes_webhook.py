@@ -41,7 +41,7 @@ def _format_tests(tests: list) -> str:
         if isinstance(t, dict):
             scenario = t.get("scenario", t.get("name", f"Test {i}"))
             input_val = t.get("input", t.get("user_input", ""))
-            output_val = t.get("expected_output", t.get("output", ""))
+            output_val = t.get("expected_behavior", t.get("expected_output", t.get("output", "")))
             lines.append(f"## Scenario {i}: {scenario}")
             if input_val:
                 lines.append(f"**User:** {input_val}")

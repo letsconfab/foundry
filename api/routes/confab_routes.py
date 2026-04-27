@@ -21,7 +21,7 @@ from deps import get_current_user
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
 from services.hermes_webhook import notify_hermes_agents
-from services.hermes_deploy import deploy_confab, undeploy_confab, get_deploy_status
+from services.hermes_deploy import deploy_confab, undeploy_confab, get_deploy_status, normalize_agent_name
 from services.openwebui_knowledge import sync_knowledge_on_deploy, cleanup_knowledge_on_undeploy
 
 logger = logging.getLogger(__name__)
@@ -606,7 +606,7 @@ async def deploy_confab_endpoint(
     if not result:
         raise HTTPException(status_code=502, detail="Failed to deploy — hermes-agents may be unavailable")
 
-    agent_name = confab.name.lower().replace(" ", "-").replace("_", "-")
+    agent_name = normalize_agent_name(confab.name)
     kb_id = await sync_knowledge_on_deploy(db, confab, agent_name)
 
     return {"message": "Deployed", "deployment": result, "knowledge_synced": kb_id is not None}
@@ -622,7 +622,7 @@ async def undeploy_confab_endpoint(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
-    agent_name = confab.name.lower().replace(" ", "-").replace("_", "-")
+    agent_name = normalize_agent_name(confab.name)
     await cleanup_knowledge_on_undeploy(agent_name)
 
     success = await undeploy_confab(confab.name)

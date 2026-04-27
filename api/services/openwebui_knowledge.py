@@ -28,17 +28,24 @@ OPENWEBUI_ADMIN_PASSWORD = os.getenv("OPENWEBUI_ADMIN_PASSWORD", "admin123")
 
 
 async def _get_admin_token() -> Optional[str]:
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{OPENWEBUI_URL}/api/v1/auths/signin",
-            json={"email": OPENWEBUI_ADMIN_EMAIL, "password": OPENWEBUI_ADMIN_PASSWORD},
-            timeout=10,
-        ) as resp:
-            if resp.status != 200:
-                logger.error(f"OpenWebUI auth failed: {resp.status}")
-                return None
-            data = await resp.json()
-            return data.get("token")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{OPENWEBUI_URL}/api/v1/auths/signin",
+                json={"email": OPENWEBUI_ADMIN_EMAIL, "password": OPENWEBUI_ADMIN_PASSWORD},
+                timeout=10,
+            ) as resp:
+                if resp.status != 200:
+                    logger.error(f"OpenWebUI auth failed: {resp.status}")
+                    return None
+                data = await resp.json()
+                return data.get("token")
+    except aiohttp.ClientError as e:
+        logger.warning(f"Could not connect to OpenWebUI: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"OpenWebUI auth error: {e}")
+        return None
 
 
 async def _upload_file(
