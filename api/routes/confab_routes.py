@@ -23,6 +23,7 @@ from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
 from services.hermes_webhook import notify_hermes_agents
 from services.hermes_deploy import deploy_confab, undeploy_confab, get_deploy_status, normalize_agent_name
 from services.openwebui_knowledge import sync_knowledge_on_deploy, cleanup_knowledge_on_undeploy
+from services.rag_sync import sync_documents_to_rag, cleanup_rag_on_undeploy
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["confabs"])
@@ -609,7 +610,15 @@ async def deploy_confab_endpoint(
     agent_name = normalize_agent_name(confab.name)
     kb_id = await sync_knowledge_on_deploy(db, confab, agent_name)
 
-    return {"message": "Deployed", "deployment": result, "knowledge_synced": kb_id is not None}
+    # Sync documents to confab-rag (LightRAG-based RAG service)
+    rag_result = await sync_documents_to_rag(db, confab)
+
+    return {
+        "message": "Deployed",
+        "deployment": result,
+        "knowledge_synced": kb_id is not None,
+        "rag_indexed": rag_result.get("total_indexed", 0) if rag_result else 0,
+    }
 
 
 @router.post("/confabs/{confab_id}/undeploy")
@@ -624,6 +633,9 @@ async def undeploy_confab_endpoint(
 
     agent_name = normalize_agent_name(confab.name)
     await cleanup_knowledge_on_undeploy(agent_name)
+
+    # Clean up confab-rag index
+    await cleanup_rag_on_undeploy(confab.id)
 
     success = await undeploy_confab(confab.name)
     if not success:

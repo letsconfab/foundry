@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from './ui/alert-dialog';
 import { apiClient } from '../api/client.js';
+import { toast } from 'sonner';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
@@ -97,8 +98,17 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
       await apiClient.deployConfab(confab.id);
       const ds = await apiClient.getDeployStatus(confab.id);
       setDeployStatus(prev => ({ ...prev, [confab.id]: ds }));
-    } catch (error) {
+      toast.success(`"${confab.name}" deployed successfully`);
+    } catch (error: any) {
       console.error('Failed to deploy:', error);
+      const msg = error?.message || 'Unknown error';
+      if (msg.includes('502') || msg.toLowerCase().includes('unavailable')) {
+        toast.error('Deploy failed: hermes-agents service is not running', {
+          description: 'Start hermes-agents on port 8022 and try again.',
+        });
+      } else {
+        toast.error(`Deploy failed: ${msg}`);
+      }
     } finally {
       setDeployingId(null);
     }
@@ -109,8 +119,10 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
     try {
       await apiClient.undeployConfab(confab.id);
       setDeployStatus(prev => ({ ...prev, [confab.id]: { status: 'not_deployed' } }));
-    } catch (error) {
+      toast.success(`"${confab.name}" undeployed`);
+    } catch (error: any) {
       console.error('Failed to undeploy:', error);
+      toast.error(`Undeploy failed: ${error?.message || 'Unknown error'}`);
     } finally {
       setDeployingId(null);
     }

@@ -14,6 +14,7 @@ import { ConfabChat } from './components/ConfabChat';
 import { GitHubCallback } from './components/GitHubCallback';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { Toaster } from './components/ui/sonner';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'login' | 'register' | 'confab-chat';
 
@@ -91,6 +92,7 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <AppContent />
+        <Toaster richColors position="bottom-right" />
       </AuthProvider>
     </ThemeProvider>
   );
