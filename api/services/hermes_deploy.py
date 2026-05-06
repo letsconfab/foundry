@@ -1,5 +1,9 @@
 """
-Deploy published Foundry confabs as Open WebUI model wrappers.
+Legacy Open WebUI wrapper deploy service.
+
+The active Foundry deploy path now provisions a dedicated Hermes profile runtime
+through services.deploy_orchestrator. Keep this module only for legacy callers
+and compatibility tests.
 """
 
 import logging

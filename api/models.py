@@ -93,6 +93,52 @@ class Confab(Base):
     # Relationships
     user = relationship("User", back_populates="confabs")
     learnings = relationship("ConfabLearning", back_populates="confab", cascade="all, delete-orphan")
+    deployment = relationship("ConfabDeployment", back_populates="confab", uselist=False, cascade="all, delete-orphan")
+
+
+class ConfabDeployment(Base):
+    """Runtime deployment metadata for a published confab."""
+    __tablename__ = "confab_deployments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    confab_id = Column(Integer, ForeignKey("confabs.id"), unique=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    runtime = Column(String(50), nullable=False, default="hermes_profile")
+    status = Column(String(50), nullable=False, default="not_deployed")
+    status_detail = Column(Text, nullable=True)
+
+    profile_name = Column(String(255), unique=True, nullable=False)
+    model_id = Column(String(255), unique=True, nullable=False)
+    container_name = Column(String(255), unique=True, nullable=False)
+
+    profile_host_path = Column(Text, nullable=False)
+    api_port = Column(Integer, unique=True, nullable=False)
+    api_server_key_hash = Column(String(255), nullable=False)
+    api_base_url_external = Column(Text, nullable=False)
+    api_base_url_internal = Column(Text, nullable=False)
+
+    rag_workspace = Column(String(255), nullable=False)
+    rag_prefix = Column(String(255), nullable=False)
+
+    openwebui_model_id = Column(String(255), nullable=True)
+    router_registered = Column(Boolean, nullable=False, default=False)
+
+    last_sync_result = Column(JSON, nullable=True)
+    last_health = Column(JSON, nullable=True)
+    last_error = Column(Text, nullable=True)
+
+    llm_provider = Column(String(100), nullable=True)
+    llm_model = Column(String(255), nullable=True)
+    llm_config_source = Column(String(50), nullable=False, default="platform_default")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    deployed_at = Column(DateTime(timezone=True), nullable=True)
+    stopped_at = Column(DateTime(timezone=True), nullable=True)
+
+    confab = relationship("Confab", back_populates="deployment")
+    user = relationship("User")
 
 
 class ConfabLearning(Base):

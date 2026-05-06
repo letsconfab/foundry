@@ -59,9 +59,18 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
   const [publishingId, setPublishingId] = useState<number | null>(null);
   const [deployStatus, setDeployStatus] = useState<Record<number, {
     status: string;
+    runtime?: string | null;
+    profile_name?: string | null;
     model_id?: string | null;
+    container_name?: string | null;
     openwebui_url?: string | null;
     rag_workspace?: string | null;
+    runtime_health?: {
+      healthy?: boolean;
+      models_ok?: boolean;
+      error?: string;
+    } | null;
+    last_error?: string | null;
   }>>({});
 
   useEffect(() => {
@@ -106,14 +115,21 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
       const modelId = deployment?.deployment?.model_id || ds?.model_id;
       const openWebuiUrl = deployment?.deployment?.openwebui_url || ds?.openwebui_url;
       toast.success(`"${confab.name}" deployed${modelId ? ` as ${modelId}` : ''}`, {
-        description: openWebuiUrl ? `Open WebUI: ${openWebuiUrl}` : undefined,
+        description: openWebuiUrl
+          ? 'Open WebUI model is backed by a dedicated Hermes profile'
+          : modelId ? `Model ID: ${modelId}` : undefined,
       });
     } catch (error: any) {
       console.error('Failed to deploy:', error);
       const msg = error?.message || 'Unknown error';
+      let latestStatus: any = null;
+      try {
+        latestStatus = await apiClient.getDeployStatus(confab.id);
+        setDeployStatus(prev => ({ ...prev, [confab.id]: latestStatus }));
+      } catch { /* ignore */ }
       if (msg.includes('502') || msg.toLowerCase().includes('unavailable')) {
-        toast.error('Deploy failed: Open WebUI or RAGAnything is unavailable', {
-          description: 'Check Open WebUI on port 3001 and RAGAnything on port 8001.',
+        toast.error('Deploy failed: Hermes runtime or RAGAnything is unavailable', {
+          description: latestStatus?.last_error || 'Check Docker, RAGAnything, and the model router configuration.',
         });
       } else {
         toast.error(`Deploy failed: ${msg}`);
@@ -264,7 +280,14 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
               <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">{confab.description || 'No description'}</p>
               {deployStatus[confab.id]?.status === 'running' && (
                 <div className="mb-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                  <div className="truncate">{deployStatus[confab.id]?.model_id}</div>
+                  <div className="truncate font-medium text-slate-800 dark:text-slate-100">{deployStatus[confab.id]?.model_id}</div>
+                  <div className="mt-1 truncate">Profile: {deployStatus[confab.id]?.profile_name || 'unknown'}</div>
+                  <div className="truncate">Container: {deployStatus[confab.id]?.container_name || 'unknown'}</div>
+                  <div>
+                    Health: {deployStatus[confab.id]?.runtime_health?.healthy && deployStatus[confab.id]?.runtime_health?.models_ok
+                      ? 'healthy'
+                      : 'checking'}
+                  </div>
                   {deployStatus[confab.id]?.openwebui_url && (
                     <a
                       href={deployStatus[confab.id]?.openwebui_url || '#'}
@@ -275,6 +298,11 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                       Open WebUI
                     </a>
                   )}
+                </div>
+              )}
+              {deployStatus[confab.id]?.status === 'failed' && (
+                <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300">
+                  {deployStatus[confab.id]?.last_error || 'Deployment failed'}
                 </div>
               )}
 

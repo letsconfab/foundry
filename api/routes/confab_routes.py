@@ -20,15 +20,10 @@ from schemas import (
 from deps import get_current_user
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
-from services.hermes_deploy import (
-    deploy_confab_to_openwebui,
-    undeploy_confab_from_openwebui,
-    get_openwebui_deploy_status,
-)
-from services.rag_sync import (
-    sync_documents_to_raganything,
-    cleanup_raganything_on_undeploy,
-    get_raganything_workspace,
+from services.deploy_orchestrator import (
+    deploy_confab,
+    undeploy_confab,
+    get_deploy_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -598,19 +593,11 @@ async def deploy_confab_endpoint(
     if confab.status != "published":
         raise HTTPException(status_code=400, detail="Confab must be published before deploying")
 
-    rag_result = await sync_documents_to_raganything(db, confab)
-    deployment = await deploy_confab_to_openwebui(confab, rag_result["workspace"])
-    if not deployment:
-        raise HTTPException(status_code=502, detail="Failed to deploy — Open WebUI may be unavailable")
-
-    return {
-        "message": "Deployed",
-        "deployment": deployment,
-        "knowledge_synced": rag_result["indexed"] or rag_result["classical_indexed"],
-        "rag_indexed": rag_result["uploaded"],
-        "rag_workspace": rag_result["workspace"],
-        "rag_errors": rag_result["errors"],
-    }
+    try:
+        return await deploy_confab(db, confab)
+    except Exception as e:
+        logger.error("Confab deploy failed for %s: %s", confab.id, e)
+        raise HTTPException(status_code=502, detail=f"Failed to deploy: {e}")
 
 
 @router.post("/confabs/{confab_id}/undeploy")
@@ -623,11 +610,7 @@ async def undeploy_confab_endpoint(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
-    success = await undeploy_confab_from_openwebui(confab)
-    if not success:
-        raise HTTPException(status_code=502, detail="Failed to undeploy — Open WebUI may be unavailable")
-    await cleanup_raganything_on_undeploy(confab.id)
-    return {"message": "Undeployed"}
+    return await undeploy_confab(db, confab)
 
 
 @router.get("/confabs/{confab_id}/deploy-status")
@@ -640,12 +623,4 @@ async def deploy_status_endpoint(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
-    result = await get_openwebui_deploy_status(confab)
-    if result is None:
-        return {
-            "status": "not_deployed",
-            "model_id": None,
-            "openwebui_url": None,
-            "rag_workspace": get_raganything_workspace(confab),
-        }
-    return result
+    return await get_deploy_status(db, confab)

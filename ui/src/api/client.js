@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8011';
 console.log('API Client: API_BASE_URL set to:', API_BASE_URL);
 
 class ApiClient {
