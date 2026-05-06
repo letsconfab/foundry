@@ -1,5 +1,8 @@
 """
-Service for sending confab publications to hermes-agents.
+Legacy webhook notifier for the old hermes-agents bridge.
+
+The current deploy path does not call this module. Keep it only for a future
+intentional webhook receiver reintroduction.
 """
 
 import os
@@ -11,7 +14,7 @@ from models import Confab
 
 logger = logging.getLogger(__name__)
 
-HERMES_AGENTS_URL = os.getenv("HERMES_AGENTS_URL", "http://localhost:8022")
+HERMES_AGENTS_URL = os.getenv("HERMES_AGENTS_URL", "")
 HERMES_WEBHOOK_SECRET = os.getenv("HERMES_WEBHOOK_SECRET", "")
 
 
@@ -60,8 +63,8 @@ async def notify_hermes_agents(confab: Confab) -> bool:
 
     Returns True if successful, False otherwise.
     """
-    if not HERMES_WEBHOOK_SECRET:
-        logger.info("HERMES_WEBHOOK_SECRET not set, skipping webhook")
+    if not HERMES_AGENTS_URL or not HERMES_WEBHOOK_SECRET:
+        logger.info("Legacy hermes webhook is not configured, skipping webhook")
         return False
 
     url = f"{HERMES_AGENTS_URL}/webhook/confab-published"

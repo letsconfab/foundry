@@ -1,148 +1,239 @@
 """
-Service for deploying/undeploying confabs to hermes-agents.
+Deploy published Foundry confabs as Open WebUI model wrappers.
 """
 
+import logging
 import os
 import re
-import logging
+from typing import Any, Optional
+
 import aiohttp
-from typing import Optional
+
+from models import Confab
 
 logger = logging.getLogger(__name__)
 
-HERMES_AGENTS_URL = os.getenv("HERMES_AGENTS_URL", "http://localhost:8022")
-HERMES_WEBHOOK_SECRET = os.getenv("HERMES_WEBHOOK_SECRET", "")
+OPENWEBUI_URL = os.getenv("OPENWEBUI_URL", "http://localhost:3001").rstrip("/")
+OPENWEBUI_ADMIN_EMAIL = os.getenv("OPENWEBUI_ADMIN_EMAIL", "")
+OPENWEBUI_ADMIN_PASSWORD = os.getenv("OPENWEBUI_ADMIN_PASSWORD", "")
+HERMES_OPENWEBUI_BASE_MODEL = os.getenv("HERMES_OPENWEBUI_BASE_MODEL", "hermes-agent")
 
 
 def normalize_agent_name(name: str) -> str:
-    """Normalize a confab name to a URL-safe agent slug."""
-    slug = name.lower().replace(" ", "-").replace("_", "-")
-    slug = re.sub(r'[^a-z0-9-]', '', slug)
-    slug = re.sub(r'-+', '-', slug).strip('-')
+    """Normalize a confab name to a deterministic URL-safe slug."""
+    slug = (name or "").lower().replace("_", "-")
+    slug = re.sub(r"[^a-z0-9-]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
     return slug or "unnamed"
 
 
-async def deploy_confab(confab_name: str) -> Optional[dict]:
-    """
-    Deploy a confab by creating and starting a realization in hermes-agents.
-    Returns the realization details or None on failure.
-    """
-    agent_name = normalize_agent_name(confab_name)
-    headers = {
-        "Content-Type": "application/json",
-        "X-Webhook-Secret": HERMES_WEBHOOK_SECRET,
+def _model_id(confab: Confab) -> str:
+    return f"confab-{confab.id}-{normalize_agent_name(confab.name)}"
+
+
+def _format_structured_list(value: Any, empty: str) -> str:
+    if not value:
+        return empty
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, dict):
+                text = (
+                    item.get("rule")
+                    or item.get("expected_behavior")
+                    or item.get("input")
+                    or item.get("name")
+                    or str(item)
+                )
+                if item.get("input") and item.get("expected_behavior"):
+                    text = f"{item.get('name') or 'Sample'}: input={item.get('input')} expected={item.get('expected_behavior')}"
+                enabled = item.get("enabled", True)
+                if enabled is False:
+                    continue
+                lines.append(f"- {text}")
+            else:
+                lines.append(f"- {item}")
+        return "\n".join(lines) if lines else empty
+    return str(value)
+
+
+def render_confab_system_prompt(confab: Confab, rag_workspace: str) -> str:
+    """Render the Open WebUI system prompt for a deployed confab."""
+    description = confab.description or "No description provided."
+    purpose = confab.purpose or "No purpose provided."
+    guardrails = _format_structured_list(confab.guardrails, "No guardrails defined.")
+    tests = _format_structured_list(confab.tests, "No sample I/O expectations defined.")
+
+    return "\n".join([
+        f"You are {confab.name}.",
+        "",
+        "Description:",
+        description,
+        "",
+        "Purpose:",
+        purpose,
+        "",
+        "Guardrails:",
+        guardrails,
+        "",
+        "Sample and test expectations:",
+        tests,
+        "",
+        f"Ground answers in the deployed RAGAnything workspace `{rag_workspace}` whenever relevant.",
+        "If deployed knowledge has no relevant result, say that clearly instead of inventing supporting facts.",
+    ])
+
+
+async def _get_admin_token(session: aiohttp.ClientSession) -> Optional[str]:
+    try:
+        async with session.post(
+            f"{OPENWEBUI_URL}/api/v1/auths/signin",
+            json={"email": OPENWEBUI_ADMIN_EMAIL, "password": OPENWEBUI_ADMIN_PASSWORD},
+            timeout=10,
+        ) as resp:
+            if resp.status != 200:
+                logger.error("Open WebUI auth failed: %s %s", resp.status, await resp.text())
+                return None
+            data = await resp.json()
+            return data.get("token")
+    except aiohttp.ClientError as e:
+        logger.warning("Could not connect to Open WebUI at %s: %s", OPENWEBUI_URL, e)
+        return None
+
+
+def _model_payload(confab: Confab, rag_workspace: str) -> dict:
+    return {
+        "id": _model_id(confab),
+        "name": confab.name,
+        "base_model_id": HERMES_OPENWEBUI_BASE_MODEL,
+        "meta": {
+            "description": confab.description or f"Confab model wrapper for {confab.name}",
+            "rag_workspace": rag_workspace,
+        },
+        "params": {
+            "system": render_confab_system_prompt(confab, rag_workspace),
+        },
     }
 
+
+async def deploy_confab_to_openwebui(confab: Confab, rag_workspace: str) -> Optional[dict]:
+    """Create or update an Open WebUI model wrapper for a confab."""
+    payload = _model_payload(confab, rag_workspace)
+
     try:
         async with aiohttp.ClientSession() as session:
-            # Create a realization
-            create_url = f"{HERMES_AGENTS_URL}/agents/{agent_name}/realizations"
+            token = await _get_admin_token(session)
+            if not token:
+                return None
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
             async with session.post(
-                create_url,
-                json={"name": f"{agent_name}-default"},
+                f"{OPENWEBUI_URL}/api/v1/models/model/update",
+                headers=headers,
+                json={"id": payload["id"], **payload},
                 timeout=10,
             ) as resp:
-                if resp.status not in (200, 201):
-                    error = await resp.text()
-                    logger.error(f"Failed to create realization: {resp.status} {error}")
-                    return None
-                realization = await resp.json()
+                if resp.status == 200:
+                    logger.info("Updated Open WebUI model %s", payload["id"])
+                    return {
+                        "status": "running",
+                        "model_id": payload["id"],
+                        "openwebui_url": OPENWEBUI_URL,
+                        "workspace": rag_workspace,
+                    }
+                update_error = await resp.text()
 
-            instance_id = realization["instance_id"]
-
-            # Start the realization
-            start_url = f"{HERMES_AGENTS_URL}/agents/{agent_name}/realizations/{instance_id}/start"
-            async with session.post(start_url, timeout=30) as resp:
-                if resp.status != 200:
-                    error = await resp.text()
-                    logger.error(f"Failed to start realization: {resp.status} {error}")
-                    return None
-                started = await resp.json()
-
-            logger.info(f"Deployed {agent_name} on port {started.get('port')}")
-            return started
-
-    except aiohttp.ClientConnectorError as e:
-        logger.warning(f"Could not connect to hermes-agents: {e}")
-        return None
+            async with session.post(
+                f"{OPENWEBUI_URL}/api/v1/models/create",
+                headers=headers,
+                json=payload,
+                timeout=10,
+            ) as resp:
+                if resp.status in (200, 201):
+                    logger.info("Created Open WebUI model %s", payload["id"])
+                    return {
+                        "status": "running",
+                        "model_id": payload["id"],
+                        "openwebui_url": OPENWEBUI_URL,
+                        "workspace": rag_workspace,
+                    }
+                logger.error(
+                    "Open WebUI model create failed for %s after update failed (%s): %s %s",
+                    payload["id"],
+                    update_error,
+                    resp.status,
+                    await resp.text(),
+                )
+                return None
     except Exception as e:
-        logger.error(f"Deploy error: {e}")
+        logger.error("Open WebUI deploy error for confab %s: %s", confab.id, e)
         return None
 
 
-async def undeploy_confab(confab_name: str) -> bool:
-    """
-    Undeploy a confab by stopping and deleting all realizations.
-    Returns True on success.
-    """
-    agent_name = normalize_agent_name(confab_name)
-
+async def undeploy_confab_from_openwebui(confab: Confab) -> bool:
+    """Delete the Open WebUI model wrapper for a confab."""
+    model_id = _model_id(confab)
     try:
         async with aiohttp.ClientSession() as session:
-            # List realizations
-            list_url = f"{HERMES_AGENTS_URL}/agents/{agent_name}/realizations"
-            async with session.get(list_url, timeout=10) as resp:
-                if resp.status != 200:
-                    return False
-                data = await resp.json()
-
-            all_succeeded = True
-            for r in data.get("realizations", []):
-                instance_id = r["instance_id"]
-
-                # Stop if running
-                if r["status"] == "running":
-                    stop_url = f"{HERMES_AGENTS_URL}/agents/{agent_name}/realizations/{instance_id}/stop"
-                    async with session.post(stop_url, timeout=15) as resp:
-                        if resp.status not in (200, 204):
-                            error = await resp.text()
-                            logger.error(f"Failed to stop realization {instance_id}: {resp.status} {error}")
-                            all_succeeded = False
-
-                # Delete
-                del_url = f"{HERMES_AGENTS_URL}/agents/{agent_name}/realizations/{instance_id}"
-                async with session.delete(del_url, timeout=10) as resp:
-                    if resp.status not in (200, 204):
-                        error = await resp.text()
-                        logger.error(f"Failed to delete realization {instance_id}: {resp.status} {error}")
-                        all_succeeded = False
-
-            if all_succeeded:
-                logger.info(f"Undeployed all realizations for {agent_name}")
-            else:
-                logger.error(f"Some realizations failed to undeploy for {agent_name}")
-            return all_succeeded
-
+            token = await _get_admin_token(session)
+            if not token:
+                return False
+            async with session.post(
+                f"{OPENWEBUI_URL}/api/v1/models/model/delete",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={"id": model_id},
+                timeout=10,
+            ) as resp:
+                if resp.status in (200, 204, 404):
+                    logger.info("Deleted Open WebUI model wrapper %s", model_id)
+                    return True
+                logger.error("Open WebUI model delete failed: %s %s", resp.status, await resp.text())
+                return False
     except Exception as e:
-        logger.error(f"Undeploy error: {e}")
+        logger.error("Open WebUI undeploy error for confab %s: %s", confab.id, e)
         return False
 
 
-async def get_deploy_status(confab_name: str) -> Optional[dict]:
-    """
-    Get deployment status for a confab.
-    Returns dict with status info or None if not deployed.
-    """
-    agent_name = normalize_agent_name(confab_name)
+def _find_model(models: Any, model_id: str) -> Optional[dict]:
+    if isinstance(models, dict):
+        for key in ("data", "models"):
+            found = _find_model(models.get(key), model_id)
+            if found:
+                return found
+        if models.get("id") == model_id:
+            return models
+    if isinstance(models, list):
+        for model in models:
+            if isinstance(model, dict) and model.get("id") == model_id:
+                return model
+    return None
 
+
+async def get_openwebui_deploy_status(confab: Confab) -> Optional[dict]:
+    """Return running status if the Open WebUI model wrapper exists."""
+    model_id = _model_id(confab)
     try:
         async with aiohttp.ClientSession() as session:
-            list_url = f"{HERMES_AGENTS_URL}/agents/{agent_name}/realizations"
-            async with session.get(list_url, timeout=10) as resp:
+            token = await _get_admin_token(session)
+            if not token:
+                return None
+            headers = {"Authorization": f"Bearer {token}"}
+            async with session.get(f"{OPENWEBUI_URL}/api/v1/models", headers=headers, timeout=10) as resp:
                 if resp.status != 200:
+                    logger.warning("Open WebUI model list failed: %s %s", resp.status, await resp.text())
                     return None
-                data = await resp.json()
-
-            realizations = data.get("realizations", [])
-            if not realizations:
-                return {"status": "not_deployed", "realizations": []}
-
-            running = [r for r in realizations if r["status"] == "running"]
-            return {
-                "status": "running" if running else "stopped",
-                "realizations": realizations,
-                "api_url": running[0].get("api_url") if running else None,
-            }
-
-    except Exception:
+                model = _find_model(await resp.json(), model_id)
+                if not model:
+                    return None
+                workspace = (model.get("meta") or {}).get("rag_workspace")
+                return {
+                    "status": "running",
+                    "model_id": model_id,
+                    "openwebui_url": OPENWEBUI_URL,
+                    "rag_workspace": workspace,
+                }
+    except Exception as e:
+        logger.error("Open WebUI status error for confab %s: %s", confab.id, e)
         return None

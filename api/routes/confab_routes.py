@@ -20,10 +20,16 @@ from schemas import (
 from deps import get_current_user
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
-from services.hermes_webhook import notify_hermes_agents
-from services.hermes_deploy import deploy_confab, undeploy_confab, get_deploy_status, normalize_agent_name
-from services.openwebui_knowledge import sync_knowledge_on_deploy, cleanup_knowledge_on_undeploy
-from services.rag_sync import sync_documents_to_rag, cleanup_rag_on_undeploy
+from services.hermes_deploy import (
+    deploy_confab_to_openwebui,
+    undeploy_confab_from_openwebui,
+    get_openwebui_deploy_status,
+)
+from services.rag_sync import (
+    sync_documents_to_raganything,
+    cleanup_raganything_on_undeploy,
+    get_raganything_workspace,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["confabs"])
@@ -176,10 +182,6 @@ async def update_confab(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
-    # Track if this is a publish/republish event
-    old_status = confab.status
-    is_publish = False
-
     # Update fields if provided
     if update.name is not None:
         confab.name = update.name
@@ -187,9 +189,6 @@ async def update_confab(
         confab.description = update.description
     if update.status is not None:
         confab.status = update.status
-        # Detect publish events (transition to published, or update while published)
-        if update.status == "published":
-            is_publish = True
     if update.purpose is not None:
         confab.purpose = update.purpose
     if update.guardrails is not None:
@@ -220,10 +219,6 @@ async def update_confab(
 
     db.commit()
     db.refresh(confab)
-
-    # Notify hermes-agents on publish/republish
-    if is_publish:
-        await notify_hermes_agents(confab)
 
     return ConfabResponse.model_validate(confab)
 
@@ -603,21 +598,18 @@ async def deploy_confab_endpoint(
     if confab.status != "published":
         raise HTTPException(status_code=400, detail="Confab must be published before deploying")
 
-    result = await deploy_confab(confab.name)
-    if not result:
-        raise HTTPException(status_code=502, detail="Failed to deploy — hermes-agents may be unavailable")
-
-    agent_name = normalize_agent_name(confab.name)
-    kb_id = await sync_knowledge_on_deploy(db, confab, agent_name)
-
-    # Sync documents to confab-rag (LightRAG-based RAG service)
-    rag_result = await sync_documents_to_rag(db, confab)
+    rag_result = await sync_documents_to_raganything(db, confab)
+    deployment = await deploy_confab_to_openwebui(confab, rag_result["workspace"])
+    if not deployment:
+        raise HTTPException(status_code=502, detail="Failed to deploy — Open WebUI may be unavailable")
 
     return {
         "message": "Deployed",
-        "deployment": result,
-        "knowledge_synced": kb_id is not None,
-        "rag_indexed": rag_result.get("total_indexed", 0) if rag_result else 0,
+        "deployment": deployment,
+        "knowledge_synced": rag_result["indexed"] or rag_result["classical_indexed"],
+        "rag_indexed": rag_result["uploaded"],
+        "rag_workspace": rag_result["workspace"],
+        "rag_errors": rag_result["errors"],
     }
 
 
@@ -631,15 +623,10 @@ async def undeploy_confab_endpoint(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
-    agent_name = normalize_agent_name(confab.name)
-    await cleanup_knowledge_on_undeploy(agent_name)
-
-    # Clean up confab-rag index
-    await cleanup_rag_on_undeploy(confab.id)
-
-    success = await undeploy_confab(confab.name)
+    success = await undeploy_confab_from_openwebui(confab)
     if not success:
-        raise HTTPException(status_code=502, detail="Failed to undeploy — hermes-agents may be unavailable")
+        raise HTTPException(status_code=502, detail="Failed to undeploy — Open WebUI may be unavailable")
+    await cleanup_raganything_on_undeploy(confab.id)
     return {"message": "Undeployed"}
 
 
@@ -653,7 +640,12 @@ async def deploy_status_endpoint(
     if not confab:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
-    result = await get_deploy_status(confab.name)
+    result = await get_openwebui_deploy_status(confab)
     if result is None:
-        return {"status": "not_deployed", "realizations": []}
+        return {
+            "status": "not_deployed",
+            "model_id": None,
+            "openwebui_url": None,
+            "rag_workspace": get_raganything_workspace(confab),
+        }
     return result

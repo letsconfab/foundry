@@ -1,5 +1,9 @@
 """
-Service for syncing confab documents and learnings to OpenWebUI's knowledge base.
+Legacy service for syncing confab documents and learnings to OpenWebUI's knowledge base.
+
+The current Foundry deploy bridge uses RAGAnything as the deployed knowledge
+source and creates only an Open WebUI model wrapper. Keep this module for older
+internal callers, but do not call it from the confab deploy path.
 
 On deploy, this service:
 1. Authenticates with OpenWebUI as admin

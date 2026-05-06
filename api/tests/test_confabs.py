@@ -164,54 +164,81 @@ class TestDeployConfab:
         assert response.status_code == 400
         assert "published" in response.json()["detail"].lower()
 
-    @patch("routes.confab_routes.sync_knowledge_on_deploy", new_callable=AsyncMock)
-    @patch("routes.confab_routes.deploy_confab", new_callable=AsyncMock)
-    def test_deploy_success(self, mock_deploy, mock_sync, client: TestClient, auth_headers: dict, test_confab: Confab, db: Session):
+    @patch("routes.confab_routes.deploy_confab_to_openwebui", new_callable=AsyncMock)
+    @patch("routes.confab_routes.sync_documents_to_raganything", new_callable=AsyncMock)
+    def test_deploy_success(self, mock_rag_sync, mock_deploy, client: TestClient, auth_headers: dict, test_confab: Confab, db: Session):
         test_confab.status = "published"
         db.commit()
-        mock_deploy.return_value = {"status": "running", "port": 8642, "api_url": "http://localhost:8642/v1"}
-        mock_sync.return_value = "fake-kb-id"
+        mock_rag_sync.return_value = {
+            "workspace": f"confabs/{test_confab.id}",
+            "uploaded": 5,
+            "indexed": True,
+            "classical_indexed": True,
+            "errors": [],
+        }
+        mock_deploy.return_value = {
+            "status": "running",
+            "model_id": f"confab-{test_confab.id}-test-confab",
+            "openwebui_url": "http://localhost:3001",
+            "workspace": f"confabs/{test_confab.id}",
+        }
 
         response = client.post(f"/confabs/{test_confab.id}/deploy", headers=auth_headers)
         assert response.status_code == 200
-        assert response.json()["message"] == "Deployed"
-        assert response.json()["knowledge_synced"] is True
-        mock_deploy.assert_called_once_with(test_confab.name)
+        data = response.json()
+        assert data["message"] == "Deployed"
+        assert data["deployment"]["model_id"] == f"confab-{test_confab.id}-test-confab"
+        assert data["rag_workspace"] == f"confabs/{test_confab.id}"
+        assert data["knowledge_synced"] is True
+        assert data["rag_indexed"] == 5
+        mock_rag_sync.assert_awaited_once()
+        mock_deploy.assert_awaited_once_with(test_confab, f"confabs/{test_confab.id}")
 
-    @patch("routes.confab_routes.deploy_confab", new_callable=AsyncMock)
-    def test_deploy_hermes_unavailable(self, mock_deploy, client: TestClient, auth_headers: dict, test_confab: Confab, db: Session):
+    @patch("routes.confab_routes.deploy_confab_to_openwebui", new_callable=AsyncMock)
+    @patch("routes.confab_routes.sync_documents_to_raganything", new_callable=AsyncMock)
+    def test_deploy_openwebui_unavailable(self, mock_rag_sync, mock_deploy, client: TestClient, auth_headers: dict, test_confab: Confab, db: Session):
         test_confab.status = "published"
         db.commit()
+        mock_rag_sync.return_value = {
+            "workspace": f"confabs/{test_confab.id}",
+            "uploaded": 0,
+            "indexed": False,
+            "classical_indexed": False,
+            "errors": [],
+        }
         mock_deploy.return_value = None
 
         response = client.post(f"/confabs/{test_confab.id}/deploy", headers=auth_headers)
         assert response.status_code == 502
 
-    @patch("routes.confab_routes.cleanup_knowledge_on_undeploy", new_callable=AsyncMock)
-    @patch("routes.confab_routes.undeploy_confab", new_callable=AsyncMock)
+    @patch("routes.confab_routes.cleanup_raganything_on_undeploy", new_callable=AsyncMock)
+    @patch("routes.confab_routes.undeploy_confab_from_openwebui", new_callable=AsyncMock)
     def test_undeploy_success(self, mock_undeploy, mock_cleanup, client: TestClient, auth_headers: dict, test_confab: Confab):
         mock_undeploy.return_value = True
         mock_cleanup.return_value = True
         response = client.post(f"/confabs/{test_confab.id}/undeploy", headers=auth_headers)
         assert response.status_code == 200
+        mock_undeploy.assert_awaited_once_with(test_confab)
 
-    @patch("routes.confab_routes.get_deploy_status", new_callable=AsyncMock)
+    @patch("routes.confab_routes.get_openwebui_deploy_status", new_callable=AsyncMock)
     def test_deploy_status_not_deployed(self, mock_status, client: TestClient, auth_headers: dict, test_confab: Confab):
         mock_status.return_value = None
         response = client.get(f"/confabs/{test_confab.id}/deploy-status", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "not_deployed"
 
-    @patch("routes.confab_routes.get_deploy_status", new_callable=AsyncMock)
+    @patch("routes.confab_routes.get_openwebui_deploy_status", new_callable=AsyncMock)
     def test_deploy_status_running(self, mock_status, client: TestClient, auth_headers: dict, test_confab: Confab):
         mock_status.return_value = {
             "status": "running",
-            "realizations": [{"instance_id": "abc", "status": "running", "port": 8642}],
-            "api_url": "http://localhost:8642/v1",
+            "model_id": f"confab-{test_confab.id}-test-confab",
+            "openwebui_url": "http://localhost:3001",
+            "rag_workspace": f"confabs/{test_confab.id}",
         }
         response = client.get(f"/confabs/{test_confab.id}/deploy-status", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "running"
+        assert response.json()["model_id"] == f"confab-{test_confab.id}-test-confab"
 
     def test_deploy_not_found(self, client: TestClient, auth_headers: dict):
         response = client.post("/confabs/99999/deploy", headers=auth_headers)

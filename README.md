@@ -7,6 +7,7 @@ A full-stack platform for building, configuring, and managing AI agents (confabs
 - **Guided Agent Creation** - 7-step interview process led by the Foreman system agent
 - **GitHub Sync** - Automatic version control of agent configurations as markdown files
 - **Document Store** - Upload documents for RAG-enabled knowledge bases (ChromaDB)
+- **Hermes Platform Deploy** - Published confabs deploy into Open WebUI with RAGAnything-backed knowledge
 - **Chat Interface** - Conversation threading with message history
 - **OASF Export** - Open Agent Specification Format for portability
 
@@ -164,6 +165,18 @@ To enable GitHub sync:
 | `GITHUB_REDIRECT_URI` | OAuth callback URL |
 | `ALLOWED_ORIGINS` | CORS whitelist |
 | `FOREMAN_V2_ENABLED` | Enable V2 deterministic interview flow |
+| `OPENWEBUI_URL` | Open WebUI URL for deployed confab model wrappers, default `http://localhost:3001` |
+| `OPENWEBUI_ADMIN_EMAIL` | Open WebUI admin email used for model wrapper management |
+| `OPENWEBUI_ADMIN_PASSWORD` | Open WebUI admin password used for model wrapper management |
+| `RAGANYTHING_URL` | RAGAnything REST API URL, default `http://localhost:8001` |
+| `RAGANYTHING_WORKSPACE_PREFIX` | Workspace/prefix root for deployed confabs, default `confabs` |
+| `HERMES_OPENWEBUI_BASE_MODEL` | Open WebUI base model for confab wrappers, default `hermes-agent` |
+
+## Deployment Bridge
+
+Foundry remains the source of truth for confab definitions, uploaded documents, and approved learnings. Deploying a published confab now syncs deployable knowledge into RAGAnything under `confabs/{confab_id}/`, indexes that folder, and creates or updates an Open WebUI model wrapper named `confab-{confab_id}-{slug}`.
+
+Open WebUI is expected at `http://localhost:3001` and RAGAnything at `http://localhost:8001` for the local Hermes platform. The old hermes-agents realization API on `:8022` and the old confab-rag API on `:8099` are deprecated for the Foundry deploy path. RAG workspace cleanup is currently a no-op because the observed RAGAnything REST API does not expose a safe delete-workspace endpoint.
 
 ## License
 

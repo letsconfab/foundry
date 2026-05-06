@@ -57,7 +57,16 @@
 - **Confab grid** — Responsive card layout (1-3 columns) displaying all user confabs.
 - **Agent cards** — Show status badge (building/deployed/active/draft), LLM provider, cloud provider, last modified date, and version.
 - **Continue Building** — Button on `building` status confabs to resume the Foreman conversation.
+- **Deploy status** — Published confabs show Open WebUI running status, model ID, and a link to Open WebUI when deployed.
 - **Actions menu** — Per-card dropdown with Publish, Stop, and Delete options.
+
+### Hermes Platform Deployment
+
+- **Published confab deploy** — Deploying a published confab uploads active documents, generated definition files, and approved learnings into RAGAnything.
+- **RAGAnything workspace** — Deployed knowledge is scoped to `confabs/{confab_id}` and indexed through both folder and classical indexing endpoints.
+- **Open WebUI model wrapper** — Foundry creates or updates an Open WebUI model named `confab-{confab_id}-{slug}` using base model `hermes-agent`.
+- **Undeploy** — Removes the Open WebUI model wrapper. RAGAnything workspace cleanup is skipped because no safe delete endpoint is available.
+- **Legacy bridge deprecated** — The old `localhost:8022` hermes-agents realization API and `localhost:8099` confab-rag API are no longer used by the deploy path.
 
 ### Deployment Configuration (Frontend)
 
@@ -125,7 +134,7 @@
 ### Agent Execution
 
 - Multi-agent orchestration for deployed confabs (confab-to-confab communication).
-- Runtime execution of deployed confabs against live LLM APIs (building flow works, deployment flow does not).
+- Automatic runtime answer grounding through Open WebUI -> Hermes -> RAGAnything MCP remains unproven. A follow-up explicit RAG query layer may be required before model generation.
 
 ### Deployment Pipeline
 
