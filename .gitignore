@@ -3,3 +3,4 @@ ui/build/
 .claude/
 .env
 .DS_Store
+api/data/

@@ -10,6 +10,7 @@ from github import Github
 from mcp.server import Server
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+from agent_naming import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,6 @@ def get_purpose(confab_id: int) -> Optional[str]:
         if confab.github_path:
             folder_path = confab.github_path
         else:
-            from agent_runner import slugify
             folder_path = f"{slugify(confab_name)}-c{confab_id}"
 
         # Try to get from GitHub first
@@ -615,7 +615,6 @@ def ensure_repo_and_purpose(confab_id: int, purpose_markdown: str) -> bool:
     try:
         from database import get_db
         from confab_manager import create_github_repository
-        from agent_runner import slugify
         db = next(get_db())
 
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
@@ -765,7 +764,6 @@ def update_file_tool(confab_id: int, file_path: str, content: str) -> str:
     """
     try:
         from database import get_db
-        from agent_runner import slugify
         db = next(get_db())
 
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
@@ -1062,5 +1060,4 @@ def review_and_save(db: Session, confab_id: int) -> str:
     db.commit()
     mark_step_complete(db, confab_id, 7)
     return "Review complete; confab marked ready."
-
 
