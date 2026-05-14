@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import socket
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,10 @@ HERMES_PROFILE_IMAGE = os.getenv("HERMES_PROFILE_IMAGE", "nousresearch/hermes-ag
 HERMES_PROFILE_NETWORK = os.getenv("HERMES_PROFILE_NETWORK", "hermes-agents_hermes-net")
 HERMES_PROFILE_PORT_START = int(os.getenv("HERMES_PROFILE_PORT_START", "8700"))
 HERMES_PROFILE_PORT_END = int(os.getenv("HERMES_PROFILE_PORT_END", "8799"))
+HERMES_PROFILE_DASHBOARD_ENABLED = os.getenv("HERMES_PROFILE_DASHBOARD_ENABLED", "false").lower() == "true"
+HERMES_PROFILE_DASHBOARD_PORT_START = int(os.getenv("HERMES_PROFILE_DASHBOARD_PORT_START", "9100"))
+HERMES_PROFILE_DASHBOARD_PORT_END = int(os.getenv("HERMES_PROFILE_DASHBOARD_PORT_END", "9199"))
+HERMES_PROFILE_DASHBOARD_CONTAINER_PORT = int(os.getenv("HERMES_PROFILE_DASHBOARD_CONTAINER_PORT", "9119"))
 
 
 @dataclass
@@ -32,6 +37,25 @@ async def allocate_port(db: Session) -> int:
         if port not in used:
             return port
     raise RuntimeError("No Hermes profile ports available in configured range")
+
+
+def _is_host_port_listening(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+async def allocate_dashboard_port(db: Session) -> int:
+    used = {
+        row[0]
+        for row in db.query(ConfabDeployment.dashboard_port)
+        .filter(ConfabDeployment.dashboard_port.isnot(None))
+        .all()
+    }
+    for port in range(HERMES_PROFILE_DASHBOARD_PORT_START, HERMES_PROFILE_DASHBOARD_PORT_END + 1):
+        if port not in used and not _is_host_port_listening(port):
+            return port
+    raise RuntimeError("No Hermes dashboard ports available in configured range")
 
 
 def _docker_client():
@@ -62,11 +86,31 @@ async def create_or_replace_container(deployment: ConfabDeployment) -> RuntimeRe
     def _create() -> RuntimeResult:
         client = _docker_client()
         try:
+            dashboard_active = (
+                HERMES_PROFILE_DASHBOARD_ENABLED
+                and deployment.dashboard_enabled
+                and deployment.dashboard_port is not None
+            )
+            ports = {"8642/tcp": deployment.api_port}
+            command = "exec /opt/hermes/.venv/bin/hermes gateway run"
+            if dashboard_active:
+                ports[f"{HERMES_PROFILE_DASHBOARD_CONTAINER_PORT}/tcp"] = (
+                    "127.0.0.1",
+                    deployment.dashboard_port,
+                )
+                command = (
+                    f"/opt/hermes/.venv/bin/hermes dashboard "
+                    f"--host 0.0.0.0 "
+                    f"--port {HERMES_PROFILE_DASHBOARD_CONTAINER_PORT} "
+                    "--no-open "
+                    "--insecure "
+                    "& exec /opt/hermes/.venv/bin/hermes gateway run"
+                )
             container = client.containers.create(
                 image=HERMES_PROFILE_IMAGE,
                 name=deployment.container_name,
                 network=HERMES_PROFILE_NETWORK,
-                ports={"8642/tcp": deployment.api_port},
+                ports=ports,
                 environment=load_profile_env(deployment),
                 volumes={
                     deployment.profile_host_path: {
@@ -75,7 +119,7 @@ async def create_or_replace_container(deployment: ConfabDeployment) -> RuntimeRe
                     }
                 },
                 entrypoint=["/bin/sh", "-c"],
-                command=["exec /opt/hermes/.venv/bin/hermes gateway run"],
+                command=[command],
                 restart_policy={"Name": "unless-stopped"},
                 detach=True,
             )
@@ -148,7 +192,17 @@ def load_profile_env(deployment: ConfabDeployment) -> dict[str, str]:
 
 async def get_runtime_health(deployment: ConfabDeployment) -> dict | None:
     api_key = load_profile_api_key(deployment)
-    health = {"healthy": False, "models_ok": False}
+    dashboard_active = (
+        HERMES_PROFILE_DASHBOARD_ENABLED
+        and deployment.dashboard_enabled
+        and deployment.dashboard_port is not None
+    )
+    health = {
+        "healthy": False,
+        "models_ok": False,
+        "dashboard_enabled": dashboard_active,
+        "dashboard_ok": None if not dashboard_active else False,
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(f"http://localhost:{deployment.api_port}/health", timeout=5) as resp:
@@ -168,6 +222,14 @@ async def get_runtime_health(deployment: ConfabDeployment) -> dict | None:
                     ids = [m.get("id") for m in data.get("data", []) if isinstance(m, dict)]
                     health["models_ok"] = deployment.model_id in ids
                     health["model_ids"] = ids
+            if dashboard_active:
+                try:
+                    async with session.get(f"http://localhost:{deployment.dashboard_port}/", timeout=5) as resp:
+                        health["dashboard_status"] = resp.status
+                        health["dashboard_ok"] = resp.status == 200
+                except Exception as e:
+                    health["dashboard_ok"] = False
+                    health["dashboard_error"] = str(e)
         return health
     except Exception as e:
         health["error"] = str(e)

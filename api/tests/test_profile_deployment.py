@@ -1,7 +1,9 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from models import Confab, ConfabDeployment
+from services import deploy_orchestrator, hermes_runtime
 from services.deployment_naming import (
     container_name,
     deployment_model_id,
@@ -10,7 +12,7 @@ from services.deployment_naming import (
     rag_workspace,
 )
 from services.hermes_profile import render_profile_config, render_profile_env, render_soul_md, write_profile_files
-from services.hermes_runtime import allocate_port, load_profile_env
+from services.hermes_runtime import allocate_dashboard_port, allocate_port, create_or_replace_container, get_runtime_health, load_profile_env
 
 
 def test_deployment_naming_rules(test_confab: Confab):
@@ -111,3 +113,234 @@ def test_allocate_port_skips_existing(db):
     )
     db.commit()
     assert asyncio.run(allocate_port(db)) == 8701
+
+
+def test_allocate_dashboard_port_skips_existing(db, monkeypatch):
+    monkeypatch.setattr(hermes_runtime, "HERMES_PROFILE_DASHBOARD_PORT_START", 9100)
+    monkeypatch.setattr(hermes_runtime, "HERMES_PROFILE_DASHBOARD_PORT_END", 9101)
+    monkeypatch.setattr(hermes_runtime, "_is_host_port_listening", lambda _port: False)
+    db.add(
+        ConfabDeployment(
+            confab_id=999,
+            user_id=1,
+            profile_name="confab-999-used",
+            model_id="confab-999-used",
+            container_name="hermes-confab-999-used",
+            profile_host_path="/tmp/confab-999-used",
+            api_port=8700,
+            api_server_key_hash="hash",
+            api_base_url_external="http://localhost:8700/v1",
+            api_base_url_internal="http://hermes-confab-999-used:8642/v1",
+            dashboard_port=9100,
+            rag_workspace="confabs/999",
+            rag_prefix="confabs/999/",
+        )
+    )
+    db.commit()
+
+    assert asyncio.run(allocate_dashboard_port(db)) == 9101
+
+
+def test_allocate_dashboard_port_ignores_nulls(db, monkeypatch):
+    monkeypatch.setattr(hermes_runtime, "HERMES_PROFILE_DASHBOARD_PORT_START", 9100)
+    monkeypatch.setattr(hermes_runtime, "HERMES_PROFILE_DASHBOARD_PORT_END", 9100)
+    monkeypatch.setattr(hermes_runtime, "_is_host_port_listening", lambda _port: False)
+    db.add(
+        ConfabDeployment(
+            confab_id=999,
+            user_id=1,
+            profile_name="confab-999-used",
+            model_id="confab-999-used",
+            container_name="hermes-confab-999-used",
+            profile_host_path="/tmp/confab-999-used",
+            api_port=8700,
+            api_server_key_hash="hash",
+            api_base_url_external="http://localhost:8700/v1",
+            api_base_url_internal="http://hermes-confab-999-used:8642/v1",
+            dashboard_port=None,
+            rag_workspace="confabs/999",
+            rag_prefix="confabs/999/",
+        )
+    )
+    db.commit()
+
+    assert asyncio.run(allocate_dashboard_port(db)) == 9100
+
+
+def test_deployment_payload_includes_dashboard_fields(monkeypatch):
+    monkeypatch.setattr(deploy_orchestrator, "HERMES_PROFILE_DASHBOARD_ENABLED", True)
+    deployment = ConfabDeployment(
+        confab_id=1,
+        user_id=1,
+        status="running",
+        profile_name="confab-1-test-confab",
+        model_id="confab-1-test-confab",
+        container_name="hermes-confab-1-test-confab",
+        profile_host_path="/tmp/confab-1-test-confab",
+        api_port=8700,
+        api_server_key_hash="hash",
+        api_base_url_external="http://localhost:8700/v1",
+        api_base_url_internal="http://hermes-confab-1-test-confab:8642/v1",
+        dashboard_enabled=True,
+        dashboard_port=9100,
+        dashboard_url_external="http://localhost:9100",
+        dashboard_url_internal="http://hermes-confab-1-test-confab:9119",
+        rag_workspace="confabs/1",
+        rag_prefix="confabs/1/",
+    )
+
+    payload = deploy_orchestrator._deployment_payload(deployment)
+    assert payload["dashboard_enabled"] is True
+    assert payload["dashboard_url"] == "http://localhost:9100"
+    assert payload["dashboard_port"] == 9100
+
+    deployment.dashboard_enabled = False
+    deployment.dashboard_url_external = None
+    payload = deploy_orchestrator._deployment_payload(deployment)
+    assert payload["dashboard_enabled"] is False
+    assert payload["dashboard_url"] is None
+    assert payload["dashboard_port"] is None
+
+
+def test_runtime_health_includes_dashboard_state(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(hermes_runtime, "HERMES_PROFILE_DASHBOARD_ENABLED", True)
+    profile_path = tmp_path / "profile"
+    profile_path.mkdir()
+    (profile_path / ".env").write_text("API_SERVER_KEY=secret\n", encoding="utf-8")
+    deployment = ConfabDeployment(
+        confab_id=1,
+        user_id=1,
+        profile_name="confab-1-test-confab",
+        model_id="confab-1-test-confab",
+        container_name="hermes-confab-1-test-confab",
+        profile_host_path=str(profile_path),
+        api_port=8700,
+        api_server_key_hash="hash",
+        api_base_url_external="http://localhost:8700/v1",
+        api_base_url_internal="http://hermes-confab-1-test-confab:8642/v1",
+        dashboard_enabled=True,
+        dashboard_port=9100,
+        rag_workspace="confabs/1",
+        rag_prefix="confabs/1/",
+    )
+
+    class FakeResponse:
+        def __init__(self, status: int, data: dict | None = None):
+            self.status = status
+            self._data = data or {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def json(self):
+            return self._data
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def get(self, url, **_kwargs):
+            if url.endswith("/health"):
+                return FakeResponse(200)
+            if url.endswith("/v1/models"):
+                return FakeResponse(200, {"data": [{"id": "confab-1-test-confab"}]})
+            if url == "http://localhost:9100/":
+                return FakeResponse(200)
+            return FakeResponse(404)
+
+    monkeypatch.setattr(hermes_runtime.aiohttp, "ClientSession", FakeSession)
+
+    health = asyncio.run(get_runtime_health(deployment))
+    assert health["healthy"] is True
+    assert health["models_ok"] is True
+    assert health["dashboard_enabled"] is True
+    assert health["dashboard_ok"] is True
+    assert health["dashboard_status"] == 200
+
+
+def test_container_spec_publishes_dashboard_when_enabled(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(hermes_runtime, "HERMES_PROFILE_DASHBOARD_ENABLED", True)
+    monkeypatch.setattr(hermes_runtime, "HERMES_PROFILE_DASHBOARD_CONTAINER_PORT", 9119)
+    monkeypatch.setattr(hermes_runtime, "remove_container", lambda _deployment: asyncio.sleep(0))
+    created = {}
+
+    class FakeContainers:
+        def create(self, **kwargs):
+            created.update(kwargs)
+            return SimpleNamespace(id="container-id")
+
+    class FakeClient:
+        containers = FakeContainers()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(hermes_runtime, "_docker_client", lambda: FakeClient())
+    deployment = ConfabDeployment(
+        confab_id=1,
+        user_id=1,
+        profile_name="confab-1-test-confab",
+        model_id="confab-1-test-confab",
+        container_name="hermes-confab-1-test-confab",
+        profile_host_path=str(tmp_path),
+        api_port=8700,
+        api_server_key_hash="hash",
+        api_base_url_external="http://localhost:8700/v1",
+        api_base_url_internal="http://hermes-confab-1-test-confab:8642/v1",
+        dashboard_enabled=True,
+        dashboard_port=9100,
+        rag_workspace="confabs/1",
+        rag_prefix="confabs/1/",
+    )
+
+    result = asyncio.run(create_or_replace_container(deployment))
+    assert result.ok is True
+    assert created["ports"]["8642/tcp"] == 8700
+    assert created["ports"]["9119/tcp"] == ("127.0.0.1", 9100)
+    assert "hermes dashboard" in created["command"][0]
+
+
+def test_container_spec_omits_dashboard_when_disabled(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(hermes_runtime, "HERMES_PROFILE_DASHBOARD_ENABLED", False)
+    monkeypatch.setattr(hermes_runtime, "remove_container", lambda _deployment: asyncio.sleep(0))
+    created = {}
+
+    class FakeContainers:
+        def create(self, **kwargs):
+            created.update(kwargs)
+            return SimpleNamespace(id="container-id")
+
+    class FakeClient:
+        containers = FakeContainers()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(hermes_runtime, "_docker_client", lambda: FakeClient())
+    deployment = ConfabDeployment(
+        confab_id=1,
+        user_id=1,
+        profile_name="confab-1-test-confab",
+        model_id="confab-1-test-confab",
+        container_name="hermes-confab-1-test-confab",
+        profile_host_path=str(tmp_path),
+        api_port=8700,
+        api_server_key_hash="hash",
+        api_base_url_external="http://localhost:8700/v1",
+        api_base_url_internal="http://hermes-confab-1-test-confab:8642/v1",
+        dashboard_enabled=False,
+        dashboard_port=9100,
+        rag_workspace="confabs/1",
+        rag_prefix="confabs/1/",
+    )
+
+    result = asyncio.run(create_or_replace_container(deployment))
+    assert result.ok is True
+    assert created["ports"] == {"8642/tcp": 8700}
+    assert "hermes dashboard" not in created["command"][0]

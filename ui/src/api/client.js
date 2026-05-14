@@ -317,6 +317,28 @@ class ApiClient {
     });
   }
 
+  async createDocumentVersion(confabId, documentId, file, metadata = null) {
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+      binary += String.fromCharCode(uint8Array[i]);
+    }
+    const base64 = btoa(binary);
+
+    return this.request(`/confabs/${confabId}/documents/${documentId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        content_base64: base64,
+        metadata: metadata,
+      }),
+    });
+  }
+
+  async listDocumentVersions(confabId, documentId) {
+    return this.request(`/confabs/${confabId}/documents/${documentId}/versions`);
+  }
+
   // === High-level Conversation API (Phase 6) ===
 
   /**

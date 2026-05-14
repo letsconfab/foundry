@@ -16,6 +16,9 @@ from services.deployment_naming import (
 )
 from services.hermes_profile import write_profile_files
 from services.hermes_runtime import (
+    HERMES_PROFILE_DASHBOARD_CONTAINER_PORT,
+    HERMES_PROFILE_DASHBOARD_ENABLED,
+    allocate_dashboard_port,
     allocate_port,
     create_or_replace_container,
     get_runtime_health,
@@ -39,6 +42,11 @@ def _hash_key(key: str) -> str:
 
 
 def _deployment_payload(deployment: ConfabDeployment) -> dict:
+    dashboard_available = bool(
+        HERMES_PROFILE_DASHBOARD_ENABLED
+        and deployment.dashboard_enabled
+        and deployment.dashboard_url_external
+    )
     return {
         "status": deployment.status,
         "runtime": deployment.runtime,
@@ -46,9 +54,28 @@ def _deployment_payload(deployment: ConfabDeployment) -> dict:
         "model_id": deployment.model_id,
         "container_name": deployment.container_name,
         "api_base_url": deployment.api_base_url_external,
+        "dashboard_enabled": dashboard_available,
+        "dashboard_url": deployment.dashboard_url_external if dashboard_available else None,
+        "dashboard_port": deployment.dashboard_port if dashboard_available else None,
         "openwebui_url": OPENWEBUI_URL,
         "rag_workspace": deployment.rag_workspace,
     }
+
+
+async def _apply_dashboard_metadata(db: Session, deployment: ConfabDeployment) -> None:
+    if HERMES_PROFILE_DASHBOARD_ENABLED:
+        if deployment.dashboard_port is None:
+            deployment.dashboard_port = await allocate_dashboard_port(db)
+        deployment.dashboard_enabled = True
+        deployment.dashboard_url_external = f"http://localhost:{deployment.dashboard_port}"
+        deployment.dashboard_url_internal = (
+            f"http://{deployment.container_name}:{HERMES_PROFILE_DASHBOARD_CONTAINER_PORT}"
+        )
+        return
+
+    deployment.dashboard_enabled = False
+    deployment.dashboard_url_external = None
+    deployment.dashboard_url_internal = None
 
 
 async def get_or_create_deployment(db: Session, confab: Confab) -> tuple[ConfabDeployment, str]:
@@ -65,9 +92,11 @@ async def get_or_create_deployment(db: Session, confab: Confab) -> tuple[ConfabD
         deployment.api_base_url_external = f"http://localhost:{deployment.api_port}/v1"
         deployment.api_base_url_internal = f"http://{deployment.container_name}:8642/v1"
         deployment.api_server_key_hash = _hash_key(api_key)
+        await _apply_dashboard_metadata(db, deployment)
         return deployment, api_key
 
     port = await allocate_port(db)
+    dashboard_port = await allocate_dashboard_port(db) if HERMES_PROFILE_DASHBOARD_ENABLED else None
     profile = profile_name(confab)
     deployment = ConfabDeployment(
         confab_id=confab.id,
@@ -82,6 +111,14 @@ async def get_or_create_deployment(db: Session, confab: Confab) -> tuple[ConfabD
         api_server_key_hash=_hash_key(api_key),
         api_base_url_external=f"http://localhost:{port}/v1",
         api_base_url_internal=f"http://{container_name(confab)}:8642/v1",
+        dashboard_enabled=HERMES_PROFILE_DASHBOARD_ENABLED,
+        dashboard_port=dashboard_port,
+        dashboard_url_external=f"http://localhost:{dashboard_port}" if dashboard_port is not None else None,
+        dashboard_url_internal=(
+            f"http://{container_name(confab)}:{HERMES_PROFILE_DASHBOARD_CONTAINER_PORT}"
+            if dashboard_port is not None
+            else None
+        ),
         rag_workspace=rag_workspace(confab),
         rag_prefix=f"{rag_workspace(confab)}/",
         llm_provider=confab.model_provider,
@@ -185,6 +222,9 @@ async def get_deploy_status(db: Session, confab: Confab) -> dict:
             "runtime": "hermes_profile",
             "model_id": None,
             "rag_workspace": rag_workspace(confab),
+            "dashboard_enabled": False,
+            "dashboard_url": None,
+            "dashboard_port": None,
         }
     health = deployment.last_health
     if deployment.status == "running":
@@ -194,6 +234,11 @@ async def get_deploy_status(db: Session, confab: Confab) -> dict:
             deployment.last_health = latest_health
             db.commit()
     sync = deployment.last_sync_result or {}
+    dashboard_available = bool(
+        HERMES_PROFILE_DASHBOARD_ENABLED
+        and deployment.dashboard_enabled
+        and deployment.dashboard_url_external
+    )
     return {
         "status": deployment.status,
         "runtime": deployment.runtime,
@@ -201,6 +246,9 @@ async def get_deploy_status(db: Session, confab: Confab) -> dict:
         "model_id": deployment.model_id,
         "container_name": deployment.container_name,
         "api_base_url": deployment.api_base_url_external,
+        "dashboard_enabled": dashboard_available,
+        "dashboard_url": deployment.dashboard_url_external if dashboard_available else None,
+        "dashboard_port": deployment.dashboard_port if dashboard_available else None,
         "openwebui_url": OPENWEBUI_URL,
         "rag_workspace": deployment.rag_workspace,
         "runtime_health": health,

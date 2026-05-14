@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { Plus, Bot, MoreVertical, Share2, StopCircle, Trash2, Cloud, CloudOff, MessageSquare, Settings, Wrench, Loader2, Rocket } from 'lucide-react';
+import { Plus, Bot, MoreVertical, Share2, StopCircle, Trash2, Cloud, CloudOff, MessageSquare, Settings, Wrench, Loader2, Rocket, FileText } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
@@ -22,6 +22,7 @@ import {
 } from './ui/alert-dialog';
 import { apiClient } from '../api/client.js';
 import { toast } from 'sonner';
+import { DocumentManagementDialog } from './DocumentManagementDialog';
 
 type View = 'home' | 'create' | 'dashboard' | 'deploy' | 'multi-agent' | 'confab-chat';
 
@@ -56,6 +57,7 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
   const [confabToDelete, setConfabToDelete] = useState<Confab | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deployingId, setDeployingId] = useState<number | null>(null);
+  const [docManageConfab, setDocManageConfab] = useState<Confab | null>(null);
   const [publishingId, setPublishingId] = useState<number | null>(null);
   const [deployStatus, setDeployStatus] = useState<Record<number, {
     status: string;
@@ -64,10 +66,17 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
     model_id?: string | null;
     container_name?: string | null;
     openwebui_url?: string | null;
+    dashboard_enabled?: boolean;
+    dashboard_url?: string | null;
+    dashboard_port?: number | null;
     rag_workspace?: string | null;
     runtime_health?: {
       healthy?: boolean;
       models_ok?: boolean;
+      dashboard_enabled?: boolean;
+      dashboard_ok?: boolean | null;
+      dashboard_status?: number;
+      dashboard_error?: string;
       error?: string;
     } | null;
     last_error?: string | null;
@@ -114,10 +123,15 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
       setDeployStatus(prev => ({ ...prev, [confab.id]: ds }));
       const modelId = deployment?.deployment?.model_id || ds?.model_id;
       const openWebuiUrl = deployment?.deployment?.openwebui_url || ds?.openwebui_url;
-      toast.success(`"${confab.name}" deployed${modelId ? ` as ${modelId}` : ''}`, {
-        description: openWebuiUrl
+      const dashboardUrl = deployment?.deployment?.dashboard_url || ds?.dashboard_url;
+      const dashboardPort = deployment?.deployment?.dashboard_port || ds?.dashboard_port;
+      const description = dashboardUrl && dashboardPort
+        ? `Open WebUI model is backed by a dedicated Hermes profile. Hermes dashboard available at localhost:${dashboardPort}`
+        : openWebuiUrl
           ? 'Open WebUI model is backed by a dedicated Hermes profile'
-          : modelId ? `Model ID: ${modelId}` : undefined,
+          : modelId ? `Model ID: ${modelId}` : undefined;
+      toast.success(`"${confab.name}" deployed${modelId ? ` as ${modelId}` : ''}`, {
+        description,
       });
     } catch (error: any) {
       console.error('Failed to deploy:', error);
@@ -298,6 +312,25 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                       Open WebUI
                     </a>
                   )}
+                  {deployStatus[confab.id]?.dashboard_url && (
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <Settings className="h-3 w-3 text-slate-500 dark:text-slate-400" />
+                      <a
+                        href={deployStatus[confab.id]?.dashboard_url || '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-600 hover:underline dark:text-indigo-400"
+                      >
+                        Hermes Dashboard
+                      </a>
+                    </div>
+                  )}
+                  {deployStatus[confab.id]?.dashboard_url && deployStatus[confab.id]?.runtime_health?.dashboard_ok === true && (
+                    <div>Dashboard: available</div>
+                  )}
+                  {deployStatus[confab.id]?.dashboard_url && deployStatus[confab.id]?.runtime_health?.dashboard_ok === false && (
+                    <div>Dashboard: unavailable</div>
+                  )}
                 </div>
               )}
               {deployStatus[confab.id]?.status === 'failed' && (
@@ -317,6 +350,16 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
 
               {/* Action Buttons */}
               <div className="mt-4 flex flex-col gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 gap-2"
+                  disabled={deployStatus[confab.id]?.status === 'running'}
+                  onClick={() => setDocManageConfab(confab)}
+                >
+                  <FileText className="w-3 h-3" />
+                  Documents
+                </Button>
                 {confab.status === 'building' ? (
                   <Button
                     variant="default"
@@ -414,6 +457,15 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {docManageConfab && (
+        <DocumentManagementDialog
+          open={!!docManageConfab}
+          onOpenChange={(open) => { if (!open) setDocManageConfab(null); }}
+          confabId={docManageConfab.id}
+          confabName={docManageConfab.name}
+        />
+      )}
     </div>
   );
 }

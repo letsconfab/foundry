@@ -117,6 +117,10 @@ class ConfabDeployment(Base):
     api_server_key_hash = Column(String(255), nullable=False)
     api_base_url_external = Column(Text, nullable=False)
     api_base_url_internal = Column(Text, nullable=False)
+    dashboard_enabled = Column(Boolean, nullable=False, default=False)
+    dashboard_port = Column(Integer, unique=True, nullable=True)
+    dashboard_url_external = Column(Text, nullable=True)
+    dashboard_url_internal = Column(Text, nullable=True)
 
     rag_workspace = Column(String(255), nullable=False)
     rag_prefix = Column(String(255), nullable=False)

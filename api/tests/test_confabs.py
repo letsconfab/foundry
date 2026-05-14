@@ -174,6 +174,9 @@ class TestDeployConfab:
                 "status": "running",
                 "model_id": f"confab-{test_confab.id}-test-confab",
                 "openwebui_url": "http://localhost:3001",
+                "dashboard_enabled": True,
+                "dashboard_url": "http://localhost:9100",
+                "dashboard_port": 9100,
                 "rag_workspace": f"confabs/{test_confab.id}",
             },
             "knowledge_synced": True,
@@ -187,6 +190,9 @@ class TestDeployConfab:
         data = response.json()
         assert data["message"] == "Deployed"
         assert data["deployment"]["model_id"] == f"confab-{test_confab.id}-test-confab"
+        assert data["deployment"]["dashboard_enabled"] is True
+        assert data["deployment"]["dashboard_url"] == "http://localhost:9100"
+        assert data["deployment"]["dashboard_port"] == 9100
         assert data["rag_workspace"] == f"confabs/{test_confab.id}"
         assert data["knowledge_synced"] is True
         assert data["rag_indexed"] == 5
@@ -225,6 +231,9 @@ class TestDeployConfab:
             "runtime": "hermes_profile",
             "model_id": None,
             "rag_workspace": f"confabs/{test_confab.id}",
+            "dashboard_enabled": False,
+            "dashboard_url": None,
+            "dashboard_port": None,
         }
         response = client.get(f"/confabs/{test_confab.id}/deploy-status", headers=auth_headers)
         assert response.status_code == 200
@@ -238,11 +247,15 @@ class TestDeployConfab:
             "model_id": f"confab-{test_confab.id}-test-confab",
             "openwebui_url": "http://localhost:3001",
             "rag_workspace": f"confabs/{test_confab.id}",
+            "dashboard_enabled": True,
+            "dashboard_url": "http://localhost:9100",
+            "dashboard_port": 9100,
         }
         response = client.get(f"/confabs/{test_confab.id}/deploy-status", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "running"
         assert response.json()["model_id"] == f"confab-{test_confab.id}-test-confab"
+        assert response.json()["dashboard_url"] == "http://localhost:9100"
 
     def test_deploy_not_found(self, client: TestClient, auth_headers: dict):
         response = client.post("/confabs/99999/deploy", headers=auth_headers)
