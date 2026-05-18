@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 
@@ -69,6 +70,11 @@ def test_router_unknown_model_returns_openai_error(client: TestClient, monkeypat
 
 def test_router_non_streaming_chat_forwards_profile_key(client: TestClient, db, tmp_path: Path, monkeypatch):
     monkeypatch.setattr(model_router_proxy, "HERMES_MODEL_ROUTER_API_KEY", "router-secret")
+
+    async def no_sources(_workspace, _query):
+        return [], ""
+
+    monkeypatch.setattr(model_router_proxy, "retrieve_rag_sources", no_sources)
     db.add(_deployment(tmp_path, "confab-100-running", "running"))
     db.commit()
     calls = []
@@ -120,6 +126,11 @@ def test_router_non_streaming_chat_forwards_profile_key(client: TestClient, db, 
 
 def test_router_grounding_instruction_ignores_stale_empty_history(client: TestClient, db, tmp_path: Path, monkeypatch):
     monkeypatch.setattr(model_router_proxy, "HERMES_MODEL_ROUTER_API_KEY", "router-secret")
+
+    async def no_sources(_workspace, _query):
+        return [], ""
+
+    monkeypatch.setattr(model_router_proxy, "retrieve_rag_sources", no_sources)
     db.add(_deployment(tmp_path, "confab-100-running", "running"))
     db.commit()
     calls = []
@@ -171,3 +182,248 @@ def test_router_grounding_instruction_ignores_stale_empty_history(client: TestCl
     assert "If prior chat history says the knowledge base had no relevant material" in messages[-2]["content"]
     assert "Do not call `mcp_raganything_classical_classical_query` as the first search" in messages[-2]["content"]
     assert messages[-1]["content"] == "What is INTEGRATE?"
+
+
+def test_router_streaming_source_event_precedes_upstream_chunks(client: TestClient, db, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(model_router_proxy, "HERMES_MODEL_ROUTER_API_KEY", "router-secret")
+    db.add(_deployment(tmp_path, "confab-100-running", "running"))
+    db.commit()
+
+    source = {
+        "source": {"id": "confabs/100/doc.pdf", "name": "doc.pdf", "type": "file"},
+        "document": [""],
+        "metadata": [{"source": "confabs/100/doc.pdf", "name": "doc.pdf"}],
+    }
+
+    async def fake_sources(_workspace, _query):
+        return [source], "<source id=\"1\">grounding</source>"
+
+    class FakeContent:
+        async def iter_any(self):
+            yield b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+
+    class FakeResponse:
+        status = 200
+        content = FakeContent()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def read(self):
+            return b""
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(model_router_proxy, "retrieve_rag_sources", fake_sources)
+    monkeypatch.setattr(model_router_proxy.aiohttp, "ClientSession", FakeSession)
+
+    with client.stream(
+        "POST",
+        "/router/v1/chat/completions",
+        headers={"Authorization": "Bearer router-secret"},
+        json={
+            "model": "confab-100-running",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hi"}],
+        },
+    ) as response:
+        body = b"".join(response.iter_bytes()).decode()
+
+    assert response.status_code == 200
+    first_event = body.split("\n\n", 1)[0].removeprefix("data: ")
+    assert json.loads(first_event) == {"event": {"type": "source", "data": source}}
+    assert body.index('"type": "source"') < body.index('"choices"')
+
+
+def test_router_streaming_relays_chunks_when_source_retrieval_fails(client: TestClient, db, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(model_router_proxy, "HERMES_MODEL_ROUTER_API_KEY", "router-secret")
+    db.add(_deployment(tmp_path, "confab-100-running", "running"))
+    db.commit()
+
+    async def failing_sources(_workspace, _query):
+        raise RuntimeError("rag down")
+
+    class FakeContent:
+        async def iter_any(self):
+            yield b"data: upstream\n\n"
+
+    class FakeResponse:
+        status = 200
+        content = FakeContent()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def read(self):
+            return b""
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(model_router_proxy, "retrieve_rag_sources", failing_sources)
+    monkeypatch.setattr(model_router_proxy.aiohttp, "ClientSession", FakeSession)
+
+    with client.stream(
+        "POST",
+        "/router/v1/chat/completions",
+        headers={"Authorization": "Bearer router-secret"},
+        json={
+            "model": "confab-100-running",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hi"}],
+        },
+    ) as response:
+        body = b"".join(response.iter_bytes()).decode()
+
+    assert response.status_code == 200
+    assert body == "data: upstream\n\n"
+
+
+def test_router_forwarded_messages_include_source_context(client: TestClient, db, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(model_router_proxy, "HERMES_MODEL_ROUTER_API_KEY", "router-secret")
+    db.add(_deployment(tmp_path, "confab-100-running", "running"))
+    db.commit()
+    calls = []
+
+    async def fake_sources(_workspace, _query):
+        return [], '<source id="1" name="doc.pdf" resource-type="file" resource-id="confabs/100/doc.pdf">text</source>'
+
+    class FakeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def json(self):
+            return {"id": "chatcmpl-test", "choices": []}
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            calls.append(json)
+            return FakeResponse()
+
+    monkeypatch.setattr(model_router_proxy, "retrieve_rag_sources", fake_sources)
+    monkeypatch.setattr(model_router_proxy.aiohttp, "ClientSession", FakeSession)
+
+    response = client.post(
+        "/router/v1/chat/completions",
+        headers={"Authorization": "Bearer router-secret"},
+        json={"model": "confab-100-running", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+
+    assert response.status_code == 200
+    messages = calls[0]["messages"]
+    assert messages[-2]["role"] == "system"
+    assert "<source" in messages[-2]["content"]
+    assert messages[-1]["role"] == "user"
+
+
+def test_router_non_streaming_response_includes_sources(client: TestClient, db, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(model_router_proxy, "HERMES_MODEL_ROUTER_API_KEY", "router-secret")
+    db.add(_deployment(tmp_path, "confab-100-running", "running"))
+    db.commit()
+    source = {
+        "source": {"id": "confabs/100/doc.pdf", "name": "doc.pdf", "type": "file"},
+        "document": [""],
+        "metadata": [{"source": "confabs/100/doc.pdf", "name": "doc.pdf"}],
+    }
+
+    async def fake_sources(_workspace, _query):
+        return [source], "<source id=\"1\">grounding</source>"
+
+    class FakeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def json(self):
+            return {"id": "chatcmpl-test", "choices": []}
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(model_router_proxy, "retrieve_rag_sources", fake_sources)
+    monkeypatch.setattr(model_router_proxy.aiohttp, "ClientSession", FakeSession)
+
+    response = client.post(
+        "/router/v1/chat/completions",
+        headers={"Authorization": "Bearer router-secret"},
+        json={"model": "confab-100-running", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == [source]
+
+
+def test_last_user_content_handles_multimodal_text_arrays():
+    assert (
+        model_router_proxy._last_user_content(
+            {
+                "messages": [
+                    {"role": "user", "content": "old"},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+                            {"type": "text", "text": "What is"},
+                            {"type": "text", "text": "INTEGRATE?"},
+                        ],
+                    },
+                ]
+            }
+        )
+        == "What is\nINTEGRATE?"
+    )
