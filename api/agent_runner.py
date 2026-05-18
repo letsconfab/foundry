@@ -6,7 +6,8 @@ import asyncio
 import os
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.tools import Tool
-from agent_tools import get_langchain_tools
+from agent_naming import slugify
+import agent_tools
 import datetime
 import re
 
@@ -22,23 +23,6 @@ def generate_placeholder_confab_name(user_id: int, db: Session) -> str:
     # Second confab should be untitled-confab-1, not untitled-confab-2
     return f'untitled-confab-{existing}'
 
-
-def slugify(text: str) -> str:
-    """
-    Convert text to a clean, URL-friendly slug.
-    
-    Args:
-        text: The input text to slugify
-        
-    Returns:
-        A slugified string suitable for folder names
-    """
-    text = text.lower()
-    text = re.sub(r'[^a-z0-9 ]', '', text)
-    text = text.strip()
-    text = text.replace(" ", "-")
-    text = re.sub(r'-+', '-', text)
-    return text
 
 def generate_confab_name_from_purpose(purpose_text: str) -> str:
     """
@@ -164,8 +148,6 @@ def store_purpose_to_file(confab_id: int, user_message: str, ai_response: str, d
         True if successful, False otherwise
     """
     try:
-        from agent_tools import update_file_tool
-        
         # Get confab and ensure it has a slugified name
         confab = db.query(Confab).filter(Confab.id == confab_id).first()
         if not confab:
@@ -195,7 +177,7 @@ def store_purpose_to_file(confab_id: int, user_message: str, ai_response: str, d
         
         # Store in confabs/{confab.name}/PURPOSE.md
         file_path = f"confabs/{confab_name}/PURPOSE.md"
-        result = update_file_tool.invoke({
+        result = agent_tools.update_file_tool.invoke({
             'confab_id': confab_id,
             'file_path': file_path,
             'content': formatted_purpose
@@ -256,13 +238,12 @@ async def run_langgraph_agent(confab_id: int, user_message: str, db: Session) ->
             }
         
         # Get purpose from GitHub PURPOSE.md file
-        from agent_tools import get_purpose
-        system_prompt = get_purpose(confab_id)
+        system_prompt = agent_tools.get_purpose(confab_id)
         if not system_prompt:
             system_prompt = "You are an AI agent that describes purposes and objectives. Focus only on explaining what something is for, not how to implement solutions."
         
         # Get tools from agent_tools
-        tools = get_langchain_tools()
+        tools = agent_tools.get_langchain_tools()
         
         # Simple agent implementation - focus on purpose description only
         tool_descriptions = []
@@ -306,7 +287,7 @@ Respond ONLY with purpose description:"""
             "timestamp": str(datetime.datetime.now()),
             "architecture": "Simple LLM with tools context",
             "purpose_stored": True,
-            "purpose_source": "GitHub PURPOSE.md" if get_purpose(confab_id) else "Generated"
+            "purpose_source": "GitHub PURPOSE.md" if agent_tools.get_purpose(confab_id) else "Generated"
         }
             
     except Exception as e:
@@ -395,7 +376,7 @@ def get_agent_status() -> Dict[str, Any]:
         return {
             "status": "active" if llm else "not_initialized",
             "llm_provider": type(llm).__name__ if llm else "ChatGroq (not initialized)",
-            "tools_count": len(get_langchain_tools()),
+            "tools_count": len(agent_tools.get_langchain_tools()),
             "architecture": "LangGraph with MCP integration"
         }
     except Exception as e:

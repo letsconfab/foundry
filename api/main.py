@@ -23,6 +23,7 @@ from routes.learning_routes import router as learning_router
 from routes.document_routes import router as document_router
 from routes.conversation_routes import router as conversation_router
 from routes.github_sync_routes import router as sync_router
+from routes.model_router_routes import router as model_router
 
 # ---------------------------------------------------------------------------
 # Create database tables
@@ -79,6 +80,9 @@ app.include_router(conversation_router)
 # Admin + GitHub sync + users list
 app.include_router(sync_router)
 
+# OpenAI-compatible router for deployed Hermes profiles
+app.include_router(model_router)
+
 
 # ---------------------------------------------------------------------------
 # Root
@@ -95,4 +99,4 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("PORT", "8011")))

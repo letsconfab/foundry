@@ -156,6 +156,112 @@ class TestDeleteConfab:
         assert response.status_code == 404
 
 
+class TestDeployConfab:
+    """Tests for deploy/undeploy/status endpoints."""
+
+    def test_deploy_requires_published(self, client: TestClient, auth_headers: dict, test_confab: Confab):
+        response = client.post(f"/confabs/{test_confab.id}/deploy", headers=auth_headers)
+        assert response.status_code == 400
+        assert "published" in response.json()["detail"].lower()
+
+    @patch("routes.confab_routes.deploy_confab", new_callable=AsyncMock)
+    def test_deploy_success(self, mock_deploy, client: TestClient, auth_headers: dict, test_confab: Confab, db: Session):
+        test_confab.status = "published"
+        db.commit()
+        mock_deploy.return_value = {
+            "message": "Deployed",
+            "deployment": {
+                "status": "running",
+                "model_id": f"confab-{test_confab.id}-test-confab",
+                "openwebui_url": "http://localhost:3001",
+                "dashboard_enabled": True,
+                "dashboard_url": "http://localhost:9100",
+                "dashboard_port": 9100,
+                "rag_workspace": f"confabs/{test_confab.id}",
+            },
+            "knowledge_synced": True,
+            "rag_indexed": 5,
+            "rag_workspace": f"confabs/{test_confab.id}",
+            "rag_errors": [],
+        }
+
+        response = client.post(f"/confabs/{test_confab.id}/deploy", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["message"] == "Deployed"
+        assert data["deployment"]["model_id"] == f"confab-{test_confab.id}-test-confab"
+        assert data["deployment"]["dashboard_enabled"] is True
+        assert data["deployment"]["dashboard_url"] == "http://localhost:9100"
+        assert data["deployment"]["dashboard_port"] == 9100
+        assert data["rag_workspace"] == f"confabs/{test_confab.id}"
+        assert data["knowledge_synced"] is True
+        assert data["rag_indexed"] == 5
+        mock_deploy.assert_awaited_once()
+
+    @patch("routes.confab_routes.deploy_confab", new_callable=AsyncMock)
+    def test_deploy_runtime_unavailable(self, mock_deploy, client: TestClient, auth_headers: dict, test_confab: Confab, db: Session):
+        test_confab.status = "published"
+        db.commit()
+        mock_deploy.side_effect = RuntimeError("runtime unavailable")
+
+        response = client.post(f"/confabs/{test_confab.id}/deploy", headers=auth_headers)
+        assert response.status_code == 502
+
+    @patch("routes.confab_routes.undeploy_confab", new_callable=AsyncMock)
+    def test_undeploy_success(self, mock_undeploy, client: TestClient, auth_headers: dict, test_confab: Confab):
+        mock_undeploy.return_value = {
+            "message": "Undeployed",
+            "deployment": {
+                "status": "stopped",
+                "profile_name": "confab-1-test-confab",
+                "model_id": "confab-1-test-confab",
+                "profile_preserved": True,
+                "rag_workspace": "confabs/1",
+            },
+        }
+        response = client.post(f"/confabs/{test_confab.id}/undeploy", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["deployment"]["status"] == "stopped"
+        mock_undeploy.assert_awaited_once()
+
+    @patch("routes.confab_routes.get_deploy_status", new_callable=AsyncMock)
+    def test_deploy_status_not_deployed(self, mock_status, client: TestClient, auth_headers: dict, test_confab: Confab):
+        mock_status.return_value = {
+            "status": "not_deployed",
+            "runtime": "hermes_profile",
+            "model_id": None,
+            "rag_workspace": f"confabs/{test_confab.id}",
+            "dashboard_enabled": False,
+            "dashboard_url": None,
+            "dashboard_port": None,
+        }
+        response = client.get(f"/confabs/{test_confab.id}/deploy-status", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "not_deployed"
+
+    @patch("routes.confab_routes.get_deploy_status", new_callable=AsyncMock)
+    def test_deploy_status_running(self, mock_status, client: TestClient, auth_headers: dict, test_confab: Confab):
+        mock_status.return_value = {
+            "status": "running",
+            "runtime": "hermes_profile",
+            "model_id": f"confab-{test_confab.id}-test-confab",
+            "openwebui_url": "http://localhost:3001",
+            "rag_workspace": f"confabs/{test_confab.id}",
+            "dashboard_enabled": True,
+            "dashboard_url": "http://localhost:9100",
+            "dashboard_port": 9100,
+        }
+        response = client.get(f"/confabs/{test_confab.id}/deploy-status", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "running"
+        assert response.json()["model_id"] == f"confab-{test_confab.id}-test-confab"
+        assert response.json()["dashboard_url"] == "http://localhost:9100"
+
+    def test_deploy_not_found(self, client: TestClient, auth_headers: dict):
+        response = client.post("/confabs/99999/deploy", headers=auth_headers)
+        assert response.status_code == 404
+
+
 class TestConfabLearnings:
     """Tests for confab learnings CRUD."""
 

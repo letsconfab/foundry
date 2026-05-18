@@ -7,6 +7,7 @@ A full-stack platform for building, configuring, and managing AI agents (confabs
 - **Guided Agent Creation** - 7-step interview process led by the Foreman system agent
 - **GitHub Sync** - Automatic version control of agent configurations as markdown files
 - **Document Store** - Upload documents for RAG-enabled knowledge bases (ChromaDB)
+- **Hermes Platform Deploy** - Published confabs deploy into Open WebUI with RAGAnything-backed knowledge
 - **Chat Interface** - Conversation threading with message history
 - **OASF Export** - Open Agent Specification Format for portability
 
@@ -164,6 +165,26 @@ To enable GitHub sync:
 | `GITHUB_REDIRECT_URI` | OAuth callback URL |
 | `ALLOWED_ORIGINS` | CORS whitelist |
 | `FOREMAN_V2_ENABLED` | Enable V2 deterministic interview flow |
+| `OPENWEBUI_URL` | Open WebUI URL shown for deployed confabs, default `http://localhost:3001` |
+| `RAGANYTHING_URL` | RAGAnything REST API URL, default `http://localhost:8001` |
+| `RAGANYTHING_WORKSPACE_PREFIX` | Workspace/prefix root for deployed confabs, default `confabs` |
+| `HERMES_PROFILE_IMAGE` | Hermes Agent Docker image for profile runtimes |
+| `HERMES_PROFILE_NETWORK` | Docker network where Hermes profile containers run |
+| `HERMES_PROFILE_DATA_DIR` | Host root for generated Hermes profile directories; local default is `api/data/hermes-profiles` |
+| `HERMES_PROFILE_PORT_START` / `HERMES_PROFILE_PORT_END` | Persistent host port allocation range |
+| `HERMES_PLATFORM_PROFILE_SOURCE` | Platform default Hermes profile directory to inherit model settings from |
+| `HERMES_PLATFORM_PROFILE_CONTAINER` | Optional running Hermes container to copy platform model config/auth from when the profile source is not host-readable |
+| `HERMES_MODEL_ROUTER_API_KEY` | Shared bearer key Open WebUI uses for the Foundry model router |
+| `HERMES_MODEL_ROUTER_PROXY_BASE` | `external` for host-local routing, `internal` for Docker-network routing |
+| `HERMES_OPENWEBUI_BASE_MODEL` | Deprecated for the profile runtime deploy path |
+
+## Deployment Bridge
+
+Foundry remains the source of truth for confab definitions, uploaded documents, and approved learnings. Deploying a published confab now syncs deployable knowledge into RAGAnything under `confabs/{confab_id}/`, indexes that folder, renders a Hermes profile, starts one dedicated Hermes container, and exposes the confab as model `confab-{confab_id}-{slug}` through the Foundry model router.
+
+Open WebUI should be configured with one OpenAI-compatible backend pointing at the router, for example `http://localhost:8011/router/v1` from the host or the equivalent Foundry API service URL inside Docker. The old Open WebUI wrapper-only model path, the old hermes-agents realization API on `:8022`, and the old confab-rag API on `:8099` are deprecated for the Foundry deploy path. Undeploy removes the dedicated runtime and preserves profile files and RAG workspace data.
+
+For local GitHub OAuth, set the GitHub OAuth app callback URL to `http://localhost:8011/auth/github/callback`. The Hermes RAGAnything service owns `localhost:8001` in the local stack, so Foundry uses `8011` for its API.
 
 ## License
 

@@ -14,6 +14,8 @@ alembic==1.17.2
 email-validator==2.3.0
 PyGithub==2.3.0
 aiohttp==3.13.5
+docker>=7.1.0
+PyYAML>=6.0.1
 langchain==1.2.12
 langchain-core==1.2.19
 langchain-community==0.4.1

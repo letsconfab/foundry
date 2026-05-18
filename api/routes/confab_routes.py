@@ -20,6 +20,11 @@ from schemas import (
 from deps import get_current_user
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
+from services.deploy_orchestrator import (
+    deploy_confab,
+    undeploy_confab,
+    get_deploy_status,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["confabs"])
@@ -209,6 +214,7 @@ async def update_confab(
 
     db.commit()
     db.refresh(confab)
+
     return ConfabResponse.model_validate(confab)
 
 
@@ -569,3 +575,52 @@ async def delete_confab(
         "message": "Confab deleted",
         "github_folder_deleted": github_folder_deleted
     }
+
+
+# =============================================================================
+# Deploy / undeploy endpoints
+# =============================================================================
+
+@router.post("/confabs/{confab_id}/deploy")
+async def deploy_confab_endpoint(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    if confab.status != "published":
+        raise HTTPException(status_code=400, detail="Confab must be published before deploying")
+
+    try:
+        return await deploy_confab(db, confab)
+    except Exception as e:
+        logger.error("Confab deploy failed for %s: %s", confab.id, e)
+        raise HTTPException(status_code=502, detail=f"Failed to deploy: {e}")
+
+
+@router.post("/confabs/{confab_id}/undeploy")
+async def undeploy_confab_endpoint(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    return await undeploy_confab(db, confab)
+
+
+@router.get("/confabs/{confab_id}/deploy-status")
+async def deploy_status_endpoint(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    return await get_deploy_status(db, confab)

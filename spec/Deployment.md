@@ -143,6 +143,43 @@ All variables from `api/.env.example` apply, with these adjustments:
 | `REGISTRY_GITHUB_TOKEN` | Server-side GitHub PAT for email/password user registry commits |
 | `REGISTRY_REPO_OWNER` | Registry repo owner (default: `letsconfab`) |
 | `REGISTRY_REPO_NAME` | Registry repo name (default: `registry`) |
+| `OPENWEBUI_URL` | Open WebUI URL for confab model wrappers, default `http://localhost:3001` |
+| `OPENWEBUI_ADMIN_EMAIL` | Open WebUI admin account email |
+| `OPENWEBUI_ADMIN_PASSWORD` | Open WebUI admin account password |
+| `RAGANYTHING_URL` | RAGAnything REST API URL, default `http://localhost:8001` |
+| `RAGANYTHING_WORKSPACE_PREFIX` | Workspace root for deployed confabs, default `confabs` |
+| `HERMES_OPENWEBUI_BASE_MODEL` | Base Open WebUI model for confab wrappers, default `hermes-agent` |
+
+## Hermes Platform Bridge
+
+Foundry deploys published confabs into the local Hermes platform rather than provisioning cloud infrastructure in this pass.
+
+Deploy flow:
+
+1. Foundry collects the confab purpose, description, guardrails, tests/sample I/O, active uploaded documents, and approved learnings.
+2. Foundry uploads active documents and generated markdown files (`PURPOSE.md`, `GUARDRAILS.md`, `TESTS.md`, `LEARNINGS.md`, `CONFAB.md`) to RAGAnything under `confabs/{confab_id}/`.
+3. Foundry indexes that folder with both `/api/v1/folder/index` and `/api/v1/classical/folder/index`.
+4. Foundry creates or updates an Open WebUI model wrapper with ID `confab-{confab_id}-{slug}` and base model `hermes-agent`.
+5. Deploy status reports `running` when the Open WebUI model wrapper exists.
+
+Local platform endpoints:
+
+| Service | URL |
+|---------|-----|
+| Open WebUI | `http://localhost:3001` |
+| RAGAnything | `http://localhost:8001` |
+
+Deprecated for the Foundry deploy path:
+
+| Legacy setting | Status |
+|----------------|--------|
+| `HERMES_AGENTS_URL=http://localhost:8022` | Deprecated realization API path |
+| `CONFAB_RAG_URL=http://localhost:8099` | Deprecated confab-rag API path |
+| `HERMES_WEBHOOK_SECRET` | Keep only if a webhook receiver is intentionally reintroduced |
+
+RAGAnything workspace cleanup is not implemented because the observed API has no safe delete-workspace endpoint. Undeploy removes only the Open WebUI model wrapper and logs the skipped RAG cleanup.
+
+Runtime answer grounding is still a separate verification item: Hermes must either invoke RAGAnything MCP tools through Open WebUI, or a follow-up runtime query layer must be added before generation.
 
 ### Infrastructure Considerations
 

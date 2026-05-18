@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8011';
 console.log('API Client: API_BASE_URL set to:', API_BASE_URL);
 
 class ApiClient {
@@ -160,6 +160,18 @@ class ApiClient {
     });
   }
 
+  async deployConfab(id) {
+    return this.request(`/confabs/${id}/deploy`, { method: 'POST' });
+  }
+
+  async undeployConfab(id) {
+    return this.request(`/confabs/${id}/undeploy`, { method: 'POST' });
+  }
+
+  async getDeployStatus(id) {
+    return this.request(`/confabs/${id}/deploy-status`);
+  }
+
   async refreshDefinitionFiles(confabId) {
     return this.request(`/confabs/${confabId}/definition-files/refresh`, {
       method: 'POST',
@@ -303,6 +315,28 @@ class ApiClient {
     return this.request(`/confabs/${confabId}/documents/${documentId}`, {
       method: 'DELETE',
     });
+  }
+
+  async createDocumentVersion(confabId, documentId, file, metadata = null) {
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+      binary += String.fromCharCode(uint8Array[i]);
+    }
+    const base64 = btoa(binary);
+
+    return this.request(`/confabs/${confabId}/documents/${documentId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        content_base64: base64,
+        metadata: metadata,
+      }),
+    });
+  }
+
+  async listDocumentVersions(confabId, documentId) {
+    return this.request(`/confabs/${confabId}/documents/${documentId}/versions`);
   }
 
   // === High-level Conversation API (Phase 6) ===
