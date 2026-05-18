@@ -28,6 +28,7 @@ from services.hermes_runtime import (
     wait_for_runtime_healthy,
 )
 from services.model_router import OPENWEBUI_URL, register_deployment_model, unregister_deployment_model
+from services.rag_evaluation import evaluate_rag_grounding
 from services.rag_sync import sync_documents_to_raganything
 
 _LOCAL_PROFILE_DATA_DIR = os.path.abspath(
@@ -49,6 +50,7 @@ def _deployment_payload(deployment: ConfabDeployment) -> dict:
     )
     return {
         "status": deployment.status,
+        "status_detail": deployment.status_detail,
         "runtime": deployment.runtime,
         "profile_name": deployment.profile_name,
         "model_id": deployment.model_id,
@@ -158,8 +160,19 @@ async def deploy_confab(db: Session, confab: Confab) -> dict:
         db.commit()
 
         await register_deployment_model(deployment)
+        deployment.status = "evaluating_grounding"
+        db.commit()
+
+        rag_evaluation = await evaluate_rag_grounding(db, confab, deployment.rag_workspace)
+        deployment.last_sync_result = {**(deployment.last_sync_result or rag_result), "evaluation": rag_evaluation}
+        if rag_evaluation.get("status") == "failed":
+            deployment.status_detail = (
+                f"RAG grounding evaluation failed for {rag_evaluation.get('failed', 0)} "
+                f"of {rag_evaluation.get('total_documents', 0)} documents"
+            )
+        else:
+            deployment.status_detail = None
         deployment.status = "running"
-        deployment.status_detail = None
         deployment.deployed_at = dt.datetime.now(dt.timezone.utc)
         deployment.stopped_at = None
         db.commit()
@@ -172,6 +185,7 @@ async def deploy_confab(db: Session, confab: Confab) -> dict:
             "rag_indexed": rag_result["uploaded"],
             "rag_workspace": rag_result["workspace"],
             "rag_errors": rag_result["errors"],
+            "rag_evaluation": rag_evaluation,
         }
     except Exception as e:
         deployment.status = "failed"
@@ -257,6 +271,8 @@ async def get_deploy_status(db: Session, confab: Confab) -> dict:
             "indexed": sync.get("indexed", False),
             "classical_indexed": sync.get("classical_indexed", False),
             "errors": sync.get("errors", []),
+            "evaluation": sync.get("evaluation"),
         },
         "last_error": deployment.last_error,
+        "status_detail": deployment.status_detail,
     }
