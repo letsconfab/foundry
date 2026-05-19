@@ -155,12 +155,8 @@ async def deploy_confab(db: Session, confab: Confab) -> dict:
             raise RuntimeError(started.detail or "Failed to start Hermes container")
         health = await wait_for_runtime_healthy(deployment)
 
-        deployment.status = "registering_model"
-        deployment.last_health = health
-        db.commit()
-
-        await register_deployment_model(deployment)
         deployment.status = "evaluating_grounding"
+        deployment.last_health = health
         db.commit()
 
         rag_evaluation = await evaluate_rag_grounding(db, confab, deployment.rag_workspace)
@@ -170,8 +166,15 @@ async def deploy_confab(db: Session, confab: Confab) -> dict:
                 f"RAG grounding evaluation failed for {rag_evaluation.get('failed', 0)} "
                 f"of {rag_evaluation.get('total_documents', 0)} documents"
             )
+            db.commit()
+            raise RuntimeError(deployment.status_detail)
         else:
             deployment.status_detail = None
+
+        deployment.status = "registering_model"
+        db.commit()
+
+        await register_deployment_model(deployment)
         deployment.status = "running"
         deployment.deployed_at = dt.datetime.now(dt.timezone.utc)
         deployment.stopped_at = None

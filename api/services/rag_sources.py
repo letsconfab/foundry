@@ -69,6 +69,16 @@ def sources_from_chunks(chunks: list[dict]) -> list[dict]:
     return sources
 
 
+def _attach_workspace_to_chunk_paths(chunks: list[dict], working_dir: str) -> list[dict]:
+    normalized = []
+    for chunk in chunks:
+        file_path = normalize_file_path(chunk.get("file_path") or "")
+        if file_path and "/" not in file_path:
+            file_path = f"{working_dir.rstrip('/')}/{file_path}"
+        normalized.append({**chunk, "file_path": file_path})
+    return normalized
+
+
 def _chunk_text(chunk: dict) -> str:
     for key in ("content", "text", "chunk", "document", "page_content"):
         value = chunk.get(key)
@@ -163,7 +173,7 @@ async def _query_raganything(
     ) as resp:
         if resp.status >= 400:
             raise RuntimeError(f"RAGAnything query failed with {resp.status} {await resp.text()}")
-        return _chunks_from_payload(await resp.json())
+        return _attach_workspace_to_chunk_paths(_chunks_from_payload(await resp.json()), working_dir)
 
 
 async def retrieve_rag_sources(working_dir: str, query: str) -> tuple[list[dict], str]:

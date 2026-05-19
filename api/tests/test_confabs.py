@@ -257,8 +257,27 @@ class TestDeployConfab:
         assert response.json()["model_id"] == f"confab-{test_confab.id}-test-confab"
         assert response.json()["dashboard_url"] == "http://localhost:9100"
 
+    @patch("routes.confab_routes.list_rag_pipeline_documents", new_callable=AsyncMock)
+    def test_rag_documents(self, mock_documents, client: TestClient, auth_headers: dict, test_confab: Confab):
+        mock_documents.return_value = {
+            "confab_id": test_confab.id,
+            "rag_workspace": f"confabs/{test_confab.id}",
+            "files": [{"name": "PURPOSE.md", "path": f"confabs/{test_confab.id}/PURPOSE.md"}],
+            "file_count": 1,
+        }
+
+        response = client.get(f"/confabs/{test_confab.id}/rag-documents", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["files"][0]["name"] == "PURPOSE.md"
+        mock_documents.assert_awaited_once()
+
     def test_deploy_not_found(self, client: TestClient, auth_headers: dict):
         response = client.post("/confabs/99999/deploy", headers=auth_headers)
+        assert response.status_code == 404
+
+    def test_rag_documents_not_found(self, client: TestClient, auth_headers: dict):
+        response = client.get("/confabs/99999/rag-documents", headers=auth_headers)
         assert response.status_code == 404
 
 

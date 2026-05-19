@@ -118,9 +118,10 @@ async def _upload_file(
 
 
 async def _index_folder(session: aiohttp.ClientSession, endpoint: str, workspace: str) -> bool:
+    indexing_workspace = workspace if workspace.endswith("/") else f"{workspace}/"
     async with session.post(
         f"{RAGANYTHING_URL}{endpoint}",
-        json={"working_dir": workspace, "recursive": True},
+        json={"working_dir": indexing_workspace, "recursive": True},
         timeout=aiohttp.ClientTimeout(total=600),
     ) as resp:
         if resp.status in (200, 201, 202):

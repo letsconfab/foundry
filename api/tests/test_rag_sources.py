@@ -37,6 +37,21 @@ def test_sources_from_chunks_deduplicates_file_paths():
     ]
 
 
+def test_attach_workspace_to_chunk_paths_preserves_full_paths():
+    chunks = rag_sources._attach_workspace_to_chunk_paths(
+        [
+            {"file_path": "doc.pdf", "content": "one"},
+            {"file_path": "confabs/3911/other.pdf", "content": "two"},
+        ],
+        "confabs/3911",
+    )
+
+    assert [chunk["file_path"] for chunk in chunks] == [
+        "confabs/3911/doc.pdf",
+        "confabs/3911/other.pdf",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_retrieve_rag_sources_empty_retrieval(monkeypatch):
     calls = []

@@ -2,6 +2,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from models import Confab, ConfabDeployment
 from services import deploy_orchestrator, hermes_runtime
 from services.deployment_naming import (
@@ -212,6 +214,76 @@ def test_deployment_payload_includes_dashboard_fields(monkeypatch):
 def test_deploy_runs_post_deployment_rag_evaluation(db, test_confab: Confab, tmp_path: Path, monkeypatch):
     test_confab.status = "published"
     db.commit()
+    events = []
+    evaluation = {
+        "status": "passed",
+        "workspace": f"confabs/{test_confab.id}",
+        "total_documents": 2,
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "tests": [],
+        "skipped_documents": [],
+        "errors": [],
+    }
+
+    async def fake_sync(_db, confab):
+        return {
+            "workspace": f"confabs/{confab.id}",
+            "uploaded": 2,
+            "indexed": True,
+            "classical_indexed": True,
+            "errors": [],
+        }
+
+    async def fake_write(_confab, _deployment, _api_key):
+        return None
+
+    async def fake_runtime_ok(_deployment):
+        return RuntimeResult(True)
+
+    async def fake_health(_deployment):
+        return {"healthy": True, "models_ok": True}
+
+    async def fake_register(deployment):
+        events.append(("register", deployment.status))
+        deployment.router_registered = True
+        return {"model_id": deployment.model_id}
+
+    async def fake_evaluate(_db, confab, workspace):
+        events.append(("evaluate", workspace))
+        assert workspace == f"confabs/{confab.id}"
+        return evaluation
+
+    monkeypatch.setattr(deploy_orchestrator, "HERMES_PROFILE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(deploy_orchestrator, "allocate_port", lambda _db: asyncio.sleep(0, result=8700))
+    monkeypatch.setattr(deploy_orchestrator, "sync_documents_to_raganything", fake_sync)
+    monkeypatch.setattr(deploy_orchestrator, "write_profile_files", fake_write)
+    monkeypatch.setattr(deploy_orchestrator, "create_or_replace_container", fake_runtime_ok)
+    monkeypatch.setattr(deploy_orchestrator, "start_container", fake_runtime_ok)
+    monkeypatch.setattr(deploy_orchestrator, "wait_for_runtime_healthy", fake_health)
+    monkeypatch.setattr(deploy_orchestrator, "register_deployment_model", fake_register)
+    monkeypatch.setattr(deploy_orchestrator, "evaluate_rag_grounding", fake_evaluate)
+
+    result = asyncio.run(deploy_orchestrator.deploy_confab(db, test_confab))
+
+    deployment = db.query(ConfabDeployment).filter(ConfabDeployment.confab_id == test_confab.id).first()
+    assert result["deployment"]["status"] == "running"
+    assert result["rag_evaluation"] == evaluation
+    assert deployment.last_sync_result["evaluation"] == evaluation
+    assert deployment.status_detail is None
+    assert events == [("evaluate", f"confabs/{test_confab.id}"), ("register", "registering_model")]
+
+
+def test_deploy_does_not_register_model_when_rag_evaluation_fails(
+    db,
+    test_confab: Confab,
+    tmp_path: Path,
+    monkeypatch,
+):
+    test_confab.status = "published"
+    db.commit()
+    events = []
     evaluation = {
         "status": "failed",
         "workspace": f"confabs/{test_confab.id}",
@@ -243,10 +315,11 @@ def test_deploy_runs_post_deployment_rag_evaluation(db, test_confab: Confab, tmp
         return {"healthy": True, "models_ok": True}
 
     async def fake_register(deployment):
-        deployment.router_registered = True
+        events.append(("register", deployment.status))
         return {"model_id": deployment.model_id}
 
     async def fake_evaluate(_db, confab, workspace):
+        events.append(("evaluate", workspace))
         assert workspace == f"confabs/{confab.id}"
         return evaluation
 
@@ -260,13 +333,14 @@ def test_deploy_runs_post_deployment_rag_evaluation(db, test_confab: Confab, tmp
     monkeypatch.setattr(deploy_orchestrator, "register_deployment_model", fake_register)
     monkeypatch.setattr(deploy_orchestrator, "evaluate_rag_grounding", fake_evaluate)
 
-    result = asyncio.run(deploy_orchestrator.deploy_confab(db, test_confab))
+    with pytest.raises(RuntimeError, match="RAG grounding evaluation failed for 1 of 2 documents"):
+        asyncio.run(deploy_orchestrator.deploy_confab(db, test_confab))
 
     deployment = db.query(ConfabDeployment).filter(ConfabDeployment.confab_id == test_confab.id).first()
-    assert result["deployment"]["status"] == "running"
-    assert result["rag_evaluation"] == evaluation
+    assert deployment.status == "failed"
     assert deployment.last_sync_result["evaluation"] == evaluation
-    assert deployment.status_detail == "RAG grounding evaluation failed for 1 of 2 documents"
+    assert deployment.last_error == "RAG grounding evaluation failed for 1 of 2 documents"
+    assert events == [("evaluate", f"confabs/{test_confab.id}")]
 
 
 def test_runtime_health_includes_dashboard_state(tmp_path: Path, monkeypatch):

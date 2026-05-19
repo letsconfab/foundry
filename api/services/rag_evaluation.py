@@ -1,7 +1,10 @@
 """Post-deployment checks for RAG source grounding."""
 
+import asyncio
 import logging
+import os
 import re
+import time
 from dataclasses import dataclass
 
 import aiohttp
@@ -15,6 +18,8 @@ from services.rag_sources import display_name_from_file_path, normalize_file_pat
 logger = logging.getLogger(__name__)
 
 MAX_EVALUATED_DOCUMENTS = 50
+RAG_EVALUATION_WAIT_SECONDS = float(os.getenv("RAG_EVALUATION_WAIT_SECONDS", "180"))
+RAG_EVALUATION_RETRY_INTERVAL_SECONDS = float(os.getenv("RAG_EVALUATION_RETRY_INTERVAL_SECONDS", "5"))
 
 
 @dataclass
@@ -149,59 +154,103 @@ async def _query_sources(
     return sources_from_chunks(chunks)
 
 
-async def evaluate_rag_grounding(db: Session, confab: Confab, working_dir: str) -> dict:
+async def _evaluate_candidate(
+    session: aiohttp.ClientSession,
+    candidate: RagGroundingCandidate,
+    working_dir: str,
+    attempt: int,
+) -> dict:
+    query = _query_for_candidate(candidate)
+    modes_tried = []
+    sources = []
+    error = None
+    for mode in ("naive", "hybrid+"):
+        modes_tried.append(mode)
+        try:
+            sources = await _query_sources(session, working_dir, query, mode)
+        except Exception as e:
+            error = str(e)
+            logger.warning(
+                "RAG grounding evaluation query failed for %s in %s: %s",
+                candidate.filename,
+                working_dir,
+                e,
+            )
+            break
+        if any(_source_matches_filename(source, candidate.filename) for source in sources):
+            break
+
+    matched_sources = [
+        source["source"]["id"]
+        for source in sources
+        if isinstance(source, dict)
+        and isinstance(source.get("source"), dict)
+        and _source_matches_filename(source, candidate.filename)
+    ]
+    return {
+        "filename": candidate.filename,
+        "document_id": candidate.document_id,
+        "source_type": candidate.source_type,
+        "query": query,
+        "status": "passed" if matched_sources else "failed",
+        "attempt": attempt,
+        "modes_tried": modes_tried,
+        "matched_source_ids": matched_sources,
+        "returned_source_ids": [
+            source["source"]["id"]
+            for source in sources
+            if isinstance(source, dict) and isinstance(source.get("source"), dict)
+        ],
+        "error": error,
+    }
+
+
+async def evaluate_rag_grounding(
+    db: Session,
+    confab: Confab,
+    working_dir: str,
+    max_wait_seconds: float | None = None,
+    retry_interval_seconds: float | None = None,
+) -> dict:
     candidates, skipped = _deployed_rag_candidates(db, confab)
-    tests = []
+    tests_by_key: dict[tuple[str, int | None, str], dict] = {}
+    max_wait = RAG_EVALUATION_WAIT_SECONDS if max_wait_seconds is None else max_wait_seconds
+    retry_interval = (
+        RAG_EVALUATION_RETRY_INTERVAL_SECONDS
+        if retry_interval_seconds is None
+        else retry_interval_seconds
+    )
+    deadline = time.monotonic() + max_wait
+    attempt = 0
 
     try:
         async with aiohttp.ClientSession() as session:
-            for candidate in candidates:
-                query = _query_for_candidate(candidate)
-                modes_tried = []
-                sources = []
-                error = None
-                for mode in ("naive", "hybrid+"):
-                    modes_tried.append(mode)
-                    try:
-                        sources = await _query_sources(session, working_dir, query, mode)
-                    except Exception as e:
-                        error = str(e)
-                        logger.warning(
-                            "RAG grounding evaluation query failed for %s in %s: %s",
-                            candidate.filename,
-                            working_dir,
-                            e,
-                        )
-                        break
-                    if any(_source_matches_filename(source, candidate.filename) for source in sources):
-                        break
-
-                matched_sources = [
-                    source["source"]["id"]
-                    for source in sources
-                    if isinstance(source, dict)
-                    and isinstance(source.get("source"), dict)
-                    and _source_matches_filename(source, candidate.filename)
+            while True:
+                attempt += 1
+                pending = [
+                    candidate
+                    for candidate in candidates
+                    if tests_by_key.get(
+                        (candidate.filename, candidate.document_id, candidate.source_type),
+                        {},
+                    ).get("status")
+                    != "passed"
                 ]
-                tests.append(
-                    {
-                        "filename": candidate.filename,
-                        "document_id": candidate.document_id,
-                        "source_type": candidate.source_type,
-                        "query": query,
-                        "status": "passed" if matched_sources else "failed",
-                        "modes_tried": modes_tried,
-                        "matched_source_ids": matched_sources,
-                        "returned_source_ids": [
-                            source["source"]["id"]
-                            for source in sources
-                            if isinstance(source, dict) and isinstance(source.get("source"), dict)
-                        ],
-                        "error": error,
-                    }
-                )
+                if not pending:
+                    break
+
+                for candidate in pending:
+                    key = (candidate.filename, candidate.document_id, candidate.source_type)
+                    tests_by_key[key] = await _evaluate_candidate(session, candidate, working_dir, attempt)
+
+                if all(test["status"] == "passed" for test in tests_by_key.values()):
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(min(retry_interval, max(0, deadline - time.monotonic())))
     except Exception as e:
         logger.warning("RAG grounding evaluation failed for workspace %s: %s", working_dir, e)
+        tests = list(tests_by_key.values())
         return {
             "status": "failed",
             "workspace": working_dir,
@@ -214,6 +263,7 @@ async def evaluate_rag_grounding(db: Session, confab: Confab, working_dir: str) 
             "errors": [str(e)],
         }
 
+    tests = list(tests_by_key.values())
     passed = sum(1 for test in tests if test["status"] == "passed")
     failed = sum(1 for test in tests if test["status"] == "failed")
     status = "passed" if failed == 0 else "failed"
@@ -227,6 +277,7 @@ async def evaluate_rag_grounding(db: Session, confab: Confab, working_dir: str) 
         "passed": passed,
         "failed": failed,
         "skipped": len(skipped),
+        "attempts": attempt,
         "tests": tests,
         "skipped_documents": skipped,
         "errors": [],

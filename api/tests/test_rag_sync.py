@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 
+import pytest
 from sqlalchemy.orm import Session
 
 from document_store_v2.compression import compress
@@ -29,6 +30,31 @@ def _add_document(db: Session, confab: Confab, filename: str, content: bytes, st
     db.add(doc_version)
     db.commit()
     return doc
+
+
+@pytest.mark.asyncio
+async def test_index_folder_sends_trailing_slash_workspace(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status = 202
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def text(self):
+            return ""
+
+    class FakeSession:
+        def post(self, url, json=None, timeout=None):
+            calls.append((url, json, timeout))
+            return FakeResponse()
+
+    assert await rag_sync._index_folder(FakeSession(), "/api/v1/classical/folder/index", "confabs/3911")
+    assert calls[0][1]["working_dir"] == "confabs/3911/"
 
 
 def test_sync_uploads_active_latest_documents_and_synthetic_files(monkeypatch, db: Session, test_confab: Confab):

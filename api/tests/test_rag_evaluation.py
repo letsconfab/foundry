@@ -66,7 +66,7 @@ async def test_evaluate_rag_grounding_passes_each_candidate(monkeypatch, db: Ses
 
     monkeypatch.setattr(rag_evaluation, "_query_sources", fake_query_sources)
 
-    result = await rag_evaluation.evaluate_rag_grounding(db, test_confab, "confabs/1")
+    result = await rag_evaluation.evaluate_rag_grounding(db, test_confab, "confabs/1", max_wait_seconds=0)
 
     assert result["status"] == "passed"
     assert result["total_documents"] == 2
@@ -85,12 +85,39 @@ async def test_evaluate_rag_grounding_reports_missing_source(monkeypatch, db: Se
 
     monkeypatch.setattr(rag_evaluation, "_query_sources", fake_query_sources)
 
-    result = await rag_evaluation.evaluate_rag_grounding(db, test_confab, "confabs/1")
+    result = await rag_evaluation.evaluate_rag_grounding(db, test_confab, "confabs/1", max_wait_seconds=0)
 
     assert result["status"] == "failed"
     assert result["passed"] == 0
     assert result["failed"] == 1
     assert result["tests"][0]["returned_source_ids"] == ["confabs/1/other.txt"]
+
+
+@pytest.mark.asyncio
+async def test_evaluate_rag_grounding_retries_until_source_is_searchable(monkeypatch, db: Session, test_confab: Confab):
+    candidates = [rag_evaluation.RagGroundingCandidate(filename="delayed.txt", content=b"short")]
+    calls = 0
+    monkeypatch.setattr(rag_evaluation, "_deployed_rag_candidates", lambda _db, _confab: (candidates, []))
+
+    async def fake_query_sources(_session, _working_dir, _query, _mode):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return []
+        return [{"source": {"id": "confabs/1/delayed.txt", "name": "delayed.txt", "type": "file"}, "metadata": []}]
+
+    monkeypatch.setattr(rag_evaluation, "_query_sources", fake_query_sources)
+
+    result = await rag_evaluation.evaluate_rag_grounding(
+        db,
+        test_confab,
+        "confabs/1",
+        max_wait_seconds=1,
+        retry_interval_seconds=0.01,
+    )
+
+    assert result["status"] == "passed"
+    assert result["attempts"] == 2
 
 
 def test_source_match_accepts_encoded_file_path():

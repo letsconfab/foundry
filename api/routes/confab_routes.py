@@ -25,6 +25,7 @@ from services.deploy_orchestrator import (
     undeploy_confab,
     get_deploy_status,
 )
+from services.rag_pipeline import list_rag_pipeline_documents
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["confabs"])
@@ -624,3 +625,16 @@ async def deploy_status_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
     return await get_deploy_status(db, confab)
+
+
+@router.get("/confabs/{confab_id}/rag-documents")
+async def rag_documents_endpoint(
+    confab_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+
+    return await list_rag_pipeline_documents(db, confab)
