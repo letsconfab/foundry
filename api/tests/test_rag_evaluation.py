@@ -48,6 +48,32 @@ def test_deployed_rag_candidates_cover_uploaded_and_synthetic_documents(db: Sess
     assert skipped == []
 
 
+def test_deployed_rag_candidates_skip_pdf_binary_content(db: Session, test_confab: Confab):
+    _add_document(db, test_confab, "source.pdf", b"%PDF-1.4 binary")
+
+    candidates, skipped = rag_evaluation._deployed_rag_candidates(db, test_confab)
+
+    assert "source.pdf" not in [candidate.filename for candidate in candidates]
+    assert skipped == [
+        {
+            "filename": "source.pdf",
+            "document_id": skipped[0]["document_id"],
+            "reason": "binary PDF content is validated through RAG document inventory",
+        }
+    ]
+
+
+def test_query_for_candidate_uses_filename_for_pdf_bytes():
+    candidate = rag_evaluation.RagGroundingCandidate(
+        filename="source.pdf",
+        content=b"%PDF-1.4\x00\x01 binary object stream",
+    )
+
+    assert rag_evaluation._query_for_candidate(candidate) == (
+        'Retrieve the deployed source document named "source.pdf" and cite it as the source.'
+    )
+
+
 @pytest.mark.asyncio
 async def test_evaluate_rag_grounding_passes_each_candidate(monkeypatch, db: Session, test_confab: Confab):
     candidates = [
@@ -60,7 +86,7 @@ async def test_evaluate_rag_grounding_passes_each_candidate(monkeypatch, db: Ses
     async def fake_query_sources(_session, _working_dir, query, mode):
         if "doc1.txt" in query:
             return [{"source": {"id": "confabs/1/doc1.txt", "name": "doc1.txt", "type": "file"}, "metadata": []}]
-        if "doc2.txt" in query and mode == "hybrid+":
+        if "doc2.txt" in query and mode == "hybrid":
             return [{"source": {"id": "confabs/1/doc2.txt", "name": "doc2.txt", "type": "file"}, "metadata": []}]
         return []
 
@@ -72,7 +98,7 @@ async def test_evaluate_rag_grounding_passes_each_candidate(monkeypatch, db: Ses
     assert result["total_documents"] == 2
     assert result["passed"] == 2
     assert result["failed"] == 0
-    assert result["tests"][1]["modes_tried"] == ["naive", "hybrid+"]
+    assert result["tests"][1]["modes_tried"] == ["naive", "hybrid"]
 
 
 @pytest.mark.asyncio

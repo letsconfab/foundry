@@ -7,7 +7,7 @@ from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from models import User, Confab, Thread
+from models import User, Confab, ConfabDeployment, Thread
 
 
 class TestCreateConfab:
@@ -279,6 +279,173 @@ class TestDeployConfab:
     def test_rag_documents_not_found(self, client: TestClient, auth_headers: dict):
         response = client.get("/confabs/99999/rag-documents", headers=auth_headers)
         assert response.status_code == 404
+
+    def test_rag_dashboard_redirect_requires_owner(self, client: TestClient, auth_headers: dict, test_confab: Confab):
+        response = client.get(
+            f"/confabs/{test_confab.id}/rag-dashboard",
+            headers=auth_headers,
+            follow_redirects=False,
+        )
+        assert response.status_code == 307
+        assert response.headers["location"] == f"/confabs/{test_confab.id}/rag-dashboard/webui/"
+
+    def test_rag_dashboard_non_owner_receives_404(self, client: TestClient, db: Session, test_confab: Confab):
+        from auth import create_access_token, get_password_hash
+
+        other_user = User(
+            name="Other User",
+            email="other-rag@example.com",
+            password_hash=get_password_hash("password"),
+            country="US",
+            timezone="UTC",
+        )
+        db.add(other_user)
+        db.commit()
+        other_token = create_access_token({"user_id": other_user.id, "email": other_user.email})
+
+        response = client.get(
+            f"/confabs/{test_confab.id}/rag-dashboard",
+            headers={"Authorization": f"Bearer {other_token}"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 404
+
+    def test_rag_dashboard_proxy_injects_api_key_and_rewrites_html(
+        self,
+        client: TestClient,
+        auth_headers: dict,
+        test_confab: Confab,
+        db: Session,
+        tmp_path,
+        monkeypatch,
+    ):
+        key_path = tmp_path / ".rag_dashboard_api_key"
+        key_path.write_text("secret-rag-key", encoding="utf-8")
+        deployment = ConfabDeployment(
+            confab_id=test_confab.id,
+            user_id=test_confab.user_id,
+            status="running",
+            profile_name=f"confab-{test_confab.id}-test-confab",
+            model_id=f"confab-{test_confab.id}-test-confab",
+            container_name=f"hermes-confab-{test_confab.id}-test-confab",
+            profile_host_path=str(tmp_path),
+            api_port=8700,
+            api_server_key_hash="hash",
+            api_base_url_external="http://localhost:8700/v1",
+            api_base_url_internal="http://hermes:8642/v1",
+            rag_workspace=f"confabs/{test_confab.id}",
+            rag_prefix=f"confabs/{test_confab.id}/",
+            lightrag_workspace="ws_test",
+            rag_dashboard_enabled=True,
+            rag_dashboard_port=9200,
+            rag_dashboard_container_name=f"rag-dashboard-confab-{test_confab.id}-test-confab",
+        )
+        db.add(deployment)
+        db.commit()
+        captured = {}
+
+        class FakeResponse:
+            status = 200
+            headers = {"content-type": "text/html; charset=utf-8"}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def read(self):
+                return b'<script src="/webui/app.js"></script><a href="/graphs">Graph</a><script>fetch("/documents");router.push("/login")</script>'
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            def request(self, method, url, headers=None, data=None, **_kwargs):
+                captured["method"] = method
+                captured["url"] = url
+                captured["headers"] = headers
+                captured["data"] = data
+                return FakeResponse()
+
+        monkeypatch.setattr("routes.confab_routes.aiohttp.ClientSession", FakeSession)
+
+        response = client.get(
+            f"/confabs/{test_confab.id}/rag-dashboard/webui/index.html?x=1",
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        assert captured["url"] == "http://127.0.0.1:9200/webui/index.html?x=1"
+        assert captured["headers"]["X-API-Key"] == "secret-rag-key"
+        assert f'"/confabs/{test_confab.id}/rag-dashboard/webui/app.js' in response.text
+        assert f'"/confabs/{test_confab.id}/rag-dashboard/graphs' in response.text
+        assert f'"/confabs/{test_confab.id}/rag-dashboard/documents' in response.text
+        assert 'router.push("/login")' in response.text
+        assert response.headers["cache-control"] == "no-store"
+
+    def test_rag_dashboard_proxy_forwards_json_unchanged(
+        self,
+        client: TestClient,
+        auth_headers: dict,
+        test_confab: Confab,
+        db: Session,
+        tmp_path,
+        monkeypatch,
+    ):
+        (tmp_path / ".rag_dashboard_api_key").write_text("secret-rag-key", encoding="utf-8")
+        db.add(
+            ConfabDeployment(
+                confab_id=test_confab.id,
+                user_id=test_confab.user_id,
+                status="running",
+                profile_name=f"confab-{test_confab.id}-test-confab-json",
+                model_id=f"confab-{test_confab.id}-test-confab-json",
+                container_name=f"hermes-confab-{test_confab.id}-test-confab-json",
+                profile_host_path=str(tmp_path),
+                api_port=8700,
+                api_server_key_hash="hash",
+                api_base_url_external="http://localhost:8700/v1",
+                api_base_url_internal="http://hermes:8642/v1",
+                rag_workspace=f"confabs/{test_confab.id}",
+                rag_prefix=f"confabs/{test_confab.id}/",
+                rag_dashboard_enabled=True,
+                rag_dashboard_port=9200,
+            )
+        )
+        db.commit()
+
+        class FakeResponse:
+            status = 200
+            headers = {"content-type": "application/json"}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def read(self):
+                return b'{"path":"/graphs","ok":true}'
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            def request(self, *_args, **_kwargs):
+                return FakeResponse()
+
+        monkeypatch.setattr("routes.confab_routes.aiohttp.ClientSession", FakeSession)
+
+        response = client.get(f"/confabs/{test_confab.id}/rag-dashboard/graphs", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json() == {"path": "/graphs", "ok": True}
 
 
 class TestConfabLearnings:

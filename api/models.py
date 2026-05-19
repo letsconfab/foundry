@@ -121,9 +121,16 @@ class ConfabDeployment(Base):
     dashboard_port = Column(Integer, unique=True, nullable=True)
     dashboard_url_external = Column(Text, nullable=True)
     dashboard_url_internal = Column(Text, nullable=True)
+    rag_dashboard_enabled = Column(Boolean, nullable=False, default=False)
+    rag_dashboard_port = Column(Integer, unique=True, nullable=True)
+    rag_dashboard_url_external = Column(Text, nullable=True)
+    rag_dashboard_url_internal = Column(Text, nullable=True)
+    rag_dashboard_container_name = Column(String(255), unique=True, nullable=True)
+    rag_dashboard_api_key_hash = Column(String(255), nullable=True)
 
     rag_workspace = Column(String(255), nullable=False)
     rag_prefix = Column(String(255), nullable=False)
+    lightrag_workspace = Column(String(255), nullable=True)
 
     openwebui_model_id = Column(String(255), nullable=True)
     router_registered = Column(Boolean, nullable=False, default=False)

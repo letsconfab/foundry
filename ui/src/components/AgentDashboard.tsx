@@ -69,6 +69,16 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
     dashboard_enabled?: boolean;
     dashboard_url?: string | null;
     dashboard_port?: number | null;
+    rag_dashboard_enabled?: boolean;
+    rag_dashboard_url?: string | null;
+    rag_dashboard_port?: number | null;
+    rag_dashboard_health?: {
+      ok?: boolean;
+      status?: number;
+      webui_available?: boolean;
+      error?: string;
+    } | null;
+    lightrag_workspace?: string | null;
     rag_workspace?: string | null;
     runtime_health?: {
       healthy?: boolean;
@@ -125,8 +135,13 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
       const openWebuiUrl = deployment?.deployment?.openwebui_url || ds?.openwebui_url;
       const dashboardUrl = deployment?.deployment?.dashboard_url || ds?.dashboard_url;
       const dashboardPort = deployment?.deployment?.dashboard_port || ds?.dashboard_port;
-      const description = dashboardUrl && dashboardPort
+      const ragDashboardUrl = deployment?.deployment?.rag_dashboard_url || ds?.rag_dashboard_url;
+      const description = dashboardUrl && dashboardPort && ragDashboardUrl
+        ? `Open WebUI model is backed by a dedicated Hermes profile. Hermes and RAG dashboards are available.`
+        : dashboardUrl && dashboardPort
         ? `Open WebUI model is backed by a dedicated Hermes profile. Hermes dashboard available at localhost:${dashboardPort}`
+        : ragDashboardUrl
+        ? 'Open WebUI model is backed by a dedicated Hermes profile. RAG dashboard is available.'
         : openWebuiUrl
           ? 'Open WebUI model is backed by a dedicated Hermes profile'
           : modelId ? `Model ID: ${modelId}` : undefined;
@@ -325,11 +340,33 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                       </a>
                     </div>
                   )}
+                  {deployStatus[confab.id]?.rag_dashboard_url && (
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <FileText className="h-3 w-3 text-slate-500 dark:text-slate-400" />
+                      <a
+                        href={apiClient.getRagDashboardUrl(confab.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-600 hover:underline dark:text-indigo-400"
+                      >
+                        RAG Dashboard
+                      </a>
+                    </div>
+                  )}
                   {deployStatus[confab.id]?.dashboard_url && deployStatus[confab.id]?.runtime_health?.dashboard_ok === true && (
-                    <div>Dashboard: available</div>
+                    <div>Hermes dashboard: available</div>
                   )}
                   {deployStatus[confab.id]?.dashboard_url && deployStatus[confab.id]?.runtime_health?.dashboard_ok === false && (
-                    <div>Dashboard: unavailable</div>
+                    <div>Hermes dashboard: unavailable</div>
+                  )}
+                  {deployStatus[confab.id]?.rag_dashboard_enabled && deployStatus[confab.id]?.rag_dashboard_health?.ok === true && (
+                    <div>RAG dashboard: available</div>
+                  )}
+                  {deployStatus[confab.id]?.rag_dashboard_enabled && deployStatus[confab.id]?.rag_dashboard_health?.ok === false && (
+                    <div>RAG dashboard: unavailable</div>
+                  )}
+                  {deployStatus[confab.id]?.rag_dashboard_enabled && !deployStatus[confab.id]?.rag_dashboard_health && (
+                    <div>RAG dashboard: starting</div>
                   )}
                 </div>
               )}

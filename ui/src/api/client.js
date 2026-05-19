@@ -172,6 +172,16 @@ class ApiClient {
     return this.request(`/confabs/${id}/deploy-status`);
   }
 
+  async getRagDocuments(id) {
+    return this.request(`/confabs/${id}/rag-documents`);
+  }
+
+  getRagDashboardUrl(id) {
+    const token = localStorage.getItem('access_token');
+    const suffix = token ? `?access_token=${encodeURIComponent(token)}` : '';
+    return `${this.baseURL}/confabs/${id}/rag-dashboard${suffix}`;
+  }
+
   async refreshDefinitionFiles(confabId) {
     return this.request(`/confabs/${confabId}/definition-files/refresh`, {
       method: 'POST',

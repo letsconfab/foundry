@@ -59,6 +59,15 @@ def _deployed_rag_candidates(db: Session, confab: Confab) -> tuple[list[RagGroun
         except Exception as e:
             skipped.append({"filename": doc.filename, "document_id": doc.id, "reason": f"decompression failed: {e}"})
             continue
+        if content.startswith(b"%PDF"):
+            skipped.append(
+                {
+                    "filename": doc.filename,
+                    "document_id": doc.id,
+                    "reason": "binary PDF content is validated through RAG document inventory",
+                }
+            )
+            continue
         candidates.append(
             RagGroundingCandidate(
                 filename=doc.filename,
@@ -80,8 +89,14 @@ def _deployed_rag_candidates(db: Session, confab: Confab) -> tuple[list[RagGroun
 
 
 def _query_for_candidate(candidate: RagGroundingCandidate) -> str:
+    if candidate.content.startswith(b"%PDF"):
+        return f'Retrieve the deployed source document named "{candidate.filename}" and cite it as the source.'
     text = candidate.content.decode("utf-8", errors="ignore")
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
+    printable = sum(1 for char in text if char.isprintable() or char.isspace())
+    if not text or printable / max(len(text), 1) < 0.85:
+        return f'Retrieve the deployed source document named "{candidate.filename}" and cite it as the source.'
     if len(text) >= 80:
         excerpt = text[:500]
         return (
@@ -164,7 +179,7 @@ async def _evaluate_candidate(
     modes_tried = []
     sources = []
     error = None
-    for mode in ("naive", "hybrid+"):
+    for mode in ("naive", "hybrid"):
         modes_tried.append(mode)
         try:
             sources = await _query_sources(session, working_dir, query, mode)

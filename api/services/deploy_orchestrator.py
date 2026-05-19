@@ -28,6 +28,18 @@ from services.hermes_runtime import (
     wait_for_runtime_healthy,
 )
 from services.model_router import OPENWEBUI_URL, register_deployment_model, unregister_deployment_model
+from services.rag_dashboard import (
+    RAG_DASHBOARD_CONTAINER_PORT,
+    allocate_rag_dashboard_port,
+    create_or_replace_rag_dashboard_container,
+    get_rag_dashboard_health,
+    lightrag_workspace_name,
+    rag_dashboard_container_name,
+    rag_dashboard_external_url,
+    start_rag_dashboard_container,
+    stop_rag_dashboard_container,
+    remove_rag_dashboard_container,
+)
 from services.rag_evaluation import evaluate_rag_grounding
 from services.rag_sync import sync_documents_to_raganything
 
@@ -48,6 +60,7 @@ def _deployment_payload(deployment: ConfabDeployment) -> dict:
         and deployment.dashboard_enabled
         and deployment.dashboard_url_external
     )
+    rag_dashboard_available = bool(deployment.rag_dashboard_enabled and deployment.rag_dashboard_url_external)
     return {
         "status": deployment.status,
         "status_detail": deployment.status_detail,
@@ -59,8 +72,12 @@ def _deployment_payload(deployment: ConfabDeployment) -> dict:
         "dashboard_enabled": dashboard_available,
         "dashboard_url": deployment.dashboard_url_external if dashboard_available else None,
         "dashboard_port": deployment.dashboard_port if dashboard_available else None,
+        "rag_dashboard_enabled": rag_dashboard_available,
+        "rag_dashboard_url": deployment.rag_dashboard_url_external if rag_dashboard_available else None,
+        "rag_dashboard_port": deployment.rag_dashboard_port if rag_dashboard_available else None,
         "openwebui_url": OPENWEBUI_URL,
         "rag_workspace": deployment.rag_workspace,
+        "lightrag_workspace": deployment.lightrag_workspace,
     }
 
 
@@ -80,6 +97,17 @@ async def _apply_dashboard_metadata(db: Session, deployment: ConfabDeployment) -
     deployment.dashboard_url_internal = None
 
 
+async def _apply_rag_dashboard_metadata(db: Session, deployment: ConfabDeployment) -> None:
+    if deployment.rag_dashboard_port is None:
+        deployment.rag_dashboard_port = await allocate_rag_dashboard_port(db)
+    deployment.rag_dashboard_container_name = rag_dashboard_container_name(deployment)
+    deployment.lightrag_workspace = lightrag_workspace_name(deployment.rag_workspace)
+    deployment.rag_dashboard_url_external = rag_dashboard_external_url(deployment)
+    deployment.rag_dashboard_url_internal = (
+        f"http://{deployment.rag_dashboard_container_name}:{RAG_DASHBOARD_CONTAINER_PORT}"
+    )
+
+
 async def get_or_create_deployment(db: Session, confab: Confab) -> tuple[ConfabDeployment, str]:
     model_id = deployment_model_id(confab)
     deployment = db.query(ConfabDeployment).filter(ConfabDeployment.confab_id == confab.id).first()
@@ -91,10 +119,12 @@ async def get_or_create_deployment(db: Session, confab: Confab) -> tuple[ConfabD
         deployment.profile_host_path = os.path.join(HERMES_PROFILE_DATA_DIR, deployment.profile_name)
         deployment.rag_workspace = rag_workspace(confab)
         deployment.rag_prefix = f"{deployment.rag_workspace}/"
+        deployment.lightrag_workspace = lightrag_workspace_name(deployment.rag_workspace)
         deployment.api_base_url_external = f"http://localhost:{deployment.api_port}/v1"
         deployment.api_base_url_internal = f"http://{deployment.container_name}:8642/v1"
         deployment.api_server_key_hash = _hash_key(api_key)
         await _apply_dashboard_metadata(db, deployment)
+        await _apply_rag_dashboard_metadata(db, deployment)
         return deployment, api_key
 
     port = await allocate_port(db)
@@ -123,11 +153,13 @@ async def get_or_create_deployment(db: Session, confab: Confab) -> tuple[ConfabD
         ),
         rag_workspace=rag_workspace(confab),
         rag_prefix=f"{rag_workspace(confab)}/",
+        lightrag_workspace=lightrag_workspace_name(rag_workspace(confab)),
         llm_provider=confab.model_provider,
         llm_model=confab.model_name,
         llm_config_source="platform_default",
     )
     db.add(deployment)
+    await _apply_rag_dashboard_metadata(db, deployment)
     return deployment, api_key
 
 
@@ -136,6 +168,7 @@ async def deploy_confab(db: Session, confab: Confab) -> dict:
     try:
         deployment.status = "syncing_knowledge"
         deployment.last_error = None
+        deployment.rag_dashboard_enabled = False
         db.commit()
 
         rag_result = await sync_documents_to_raganything(db, confab)
@@ -170,6 +203,24 @@ async def deploy_confab(db: Session, confab: Confab) -> dict:
             raise RuntimeError(deployment.status_detail)
         else:
             deployment.status_detail = None
+
+        deployment.status = "starting_rag_dashboard"
+        db.commit()
+        try:
+            created_dashboard = await create_or_replace_rag_dashboard_container(deployment)
+            if not created_dashboard.ok:
+                raise RuntimeError(created_dashboard.detail or "Failed to create RAG dashboard container")
+            started_dashboard = await start_rag_dashboard_container(deployment)
+            if not started_dashboard.ok:
+                raise RuntimeError(started_dashboard.detail or "Failed to start RAG dashboard container")
+            deployment.rag_dashboard_enabled = True
+        except Exception as dashboard_error:
+            deployment.rag_dashboard_enabled = False
+            deployment.last_sync_result = {
+                **(deployment.last_sync_result or rag_result),
+                "rag_dashboard_error": str(dashboard_error),
+            }
+            deployment.status_detail = f"RAG dashboard unavailable: {dashboard_error}"
 
         deployment.status = "registering_model"
         db.commit()
@@ -216,6 +267,8 @@ async def undeploy_confab(db: Session, confab: Confab) -> dict:
     await unregister_deployment_model(deployment)
     await stop_container(deployment)
     await remove_container(deployment)
+    await stop_rag_dashboard_container(deployment)
+    await remove_rag_dashboard_container(deployment)
     deployment.status = "stopped"
     deployment.stopped_at = dt.datetime.now(dt.timezone.utc)
     db.commit()
@@ -242,6 +295,10 @@ async def get_deploy_status(db: Session, confab: Confab) -> dict:
             "dashboard_enabled": False,
             "dashboard_url": None,
             "dashboard_port": None,
+            "rag_dashboard_enabled": False,
+            "rag_dashboard_url": None,
+            "rag_dashboard_port": None,
+            "lightrag_workspace": lightrag_workspace_name(rag_workspace(confab)),
         }
     health = deployment.last_health
     if deployment.status == "running":
@@ -256,6 +313,9 @@ async def get_deploy_status(db: Session, confab: Confab) -> dict:
         and deployment.dashboard_enabled
         and deployment.dashboard_url_external
     )
+    rag_dashboard_health = None
+    if deployment.rag_dashboard_enabled and deployment.rag_dashboard_port:
+        rag_dashboard_health = await get_rag_dashboard_health(deployment)
     return {
         "status": deployment.status,
         "runtime": deployment.runtime,
@@ -266,8 +326,13 @@ async def get_deploy_status(db: Session, confab: Confab) -> dict:
         "dashboard_enabled": dashboard_available,
         "dashboard_url": deployment.dashboard_url_external if dashboard_available else None,
         "dashboard_port": deployment.dashboard_port if dashboard_available else None,
+        "rag_dashboard_enabled": bool(deployment.rag_dashboard_enabled and deployment.rag_dashboard_url_external),
+        "rag_dashboard_url": deployment.rag_dashboard_url_external if deployment.rag_dashboard_enabled else None,
+        "rag_dashboard_port": deployment.rag_dashboard_port if deployment.rag_dashboard_enabled else None,
+        "rag_dashboard_health": rag_dashboard_health,
         "openwebui_url": OPENWEBUI_URL,
         "rag_workspace": deployment.rag_workspace,
+        "lightrag_workspace": deployment.lightrag_workspace,
         "runtime_health": health,
         "knowledge": {
             "uploaded": sync.get("uploaded", 0),

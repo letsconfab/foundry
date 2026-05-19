@@ -6,9 +6,12 @@ import re
 import os
 import datetime
 import logging
+from urllib.parse import urlencode
 from typing import Optional, List, Dict, Any, Tuple, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import aiohttp
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -17,6 +20,7 @@ from schemas import (
     ConfabCreate, ConfabUpdate, ConfabResponse, ConfabListItem,
     DefinitionFilesRefreshResponse, DefinitionFilesCommitRequest, DefinitionFilesCommitResponse,
 )
+from auth import verify_token
 from deps import get_current_user
 from github_service import GitHubService, GitHubServiceError, FileNotFoundError as GitHubFileNotFoundError
 from oasf_export import export_confab_to_oasf_yaml, generate_all_export_files
@@ -26,9 +30,54 @@ from services.deploy_orchestrator import (
     get_deploy_status,
 )
 from services.rag_pipeline import list_rag_pipeline_documents
+from services.rag_dashboard import load_rag_dashboard_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["confabs"])
+
+_RAG_DASHBOARD_REWRITE_PATHS = (
+    ("/webui", "webui"),
+    ("/graphs", "graphs"),
+    ("/graph/", "graph/"),
+    ("/documents", "documents"),
+    ("/query", "query"),
+    ("/health", "health"),
+    ("/auth-status", "auth-status"),
+)
+
+
+def _rewrite_rag_dashboard_content(content: bytes, content_type: str, confab_id: int) -> bytes:
+    if "text/html" not in content_type and "javascript" not in content_type:
+        return content
+    text = content.decode("utf-8", errors="replace")
+    prefix = f"/confabs/{confab_id}/rag-dashboard"
+    for source, target in _RAG_DASHBOARD_REWRITE_PATHS:
+        replacement = f"{prefix}/{target}"
+        text = text.replace(f'"{source}', f'"{replacement}')
+        text = text.replace(f"'{source}", f"'{replacement}")
+        text = text.replace(f"`{source}", f"`{replacement}")
+    return text.encode("utf-8")
+
+
+def _is_rag_dashboard_rewritable_response(content_type: str) -> bool:
+    return "text/html" in content_type or "javascript" in content_type
+
+
+async def _get_rag_dashboard_user(request: Request, db: Session) -> User:
+    auth_header = request.headers.get("authorization", "")
+    token = None
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    token = token or request.query_params.get("access_token") or request.cookies.get("rag_dashboard_token")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    payload = verify_token(token)
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    user = db.query(User).filter(User.id == payload.get("user_id")).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    return user
 
 
 # =============================================================================
@@ -638,3 +687,98 @@ async def rag_documents_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
 
     return await list_rag_pipeline_documents(db, confab)
+
+
+@router.get("/confabs/{confab_id}/rag-dashboard")
+async def rag_dashboard_root_endpoint(
+    confab_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    current_user = await _get_rag_dashboard_user(request, db)
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    response = RedirectResponse(url=f"/confabs/{confab_id}/rag-dashboard/webui/")
+    token = request.query_params.get("access_token")
+    if token:
+        response.set_cookie(
+            "rag_dashboard_token",
+            token,
+            max_age=60 * 60,
+            httponly=True,
+            samesite="lax",
+            path=f"/confabs/{confab_id}/rag-dashboard",
+        )
+    return response
+
+
+async def _proxy_rag_dashboard(
+    confab_id: int,
+    path: str,
+    request: Request,
+    current_user: User,
+    db: Session,
+) -> Response:
+    current_user = current_user or await _get_rag_dashboard_user(request, db)
+    confab = db.query(Confab).filter(Confab.id == confab_id, Confab.user_id == current_user.id).first()
+    if not confab or not confab.deployment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confab not found")
+    deployment = confab.deployment
+    if not deployment.rag_dashboard_enabled or not deployment.rag_dashboard_port:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="RAG dashboard unavailable")
+    api_key = load_rag_dashboard_api_key(deployment)
+    if not api_key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="RAG dashboard API key missing")
+
+    upstream = f"http://127.0.0.1:{deployment.rag_dashboard_port}/{path}"
+    query_items = [
+        (key, value)
+        for key, value in request.query_params.multi_items()
+        if key != "access_token"
+    ]
+    if query_items:
+        upstream = f"{upstream}?{urlencode(query_items)}"
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in {"host", "content-length", "authorization"}
+    }
+    headers["X-API-Key"] = api_key
+    body = await request.body()
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.request(request.method, upstream, headers=headers, data=body, timeout=30) as resp:
+                content = await resp.read()
+                content_type = resp.headers.get("content-type", "")
+                content = _rewrite_rag_dashboard_content(content, content_type, confab_id)
+                response_headers = {
+                    key: value
+                    for key, value in resp.headers.items()
+                    if key.lower() not in {"content-length", "content-encoding", "transfer-encoding", "connection"}
+                }
+                if _is_rag_dashboard_rewritable_response(content_type):
+                    response_headers["cache-control"] = "no-store"
+                return Response(
+                    content=content,
+                    status_code=resp.status,
+                    headers=response_headers,
+                    media_type=content_type.split(";", 1)[0] if content_type else None,
+                )
+    except aiohttp.ClientError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.api_route(
+    "/confabs/{confab_id}/rag-dashboard/{path:path}",
+    methods=["GET", "POST", "DELETE"],
+)
+async def rag_dashboard_proxy_endpoint(
+    confab_id: int,
+    path: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    current_user = await _get_rag_dashboard_user(request, db)
+    return await _proxy_rag_dashboard(confab_id, path, request, current_user, db)
