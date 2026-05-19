@@ -103,9 +103,7 @@ async def _apply_rag_dashboard_metadata(db: Session, deployment: ConfabDeploymen
     deployment.rag_dashboard_container_name = rag_dashboard_container_name(deployment)
     deployment.lightrag_workspace = lightrag_workspace_name(deployment.rag_workspace)
     deployment.rag_dashboard_url_external = rag_dashboard_external_url(deployment)
-    deployment.rag_dashboard_url_internal = (
-        f"http://{deployment.rag_dashboard_container_name}:{RAG_DASHBOARD_CONTAINER_PORT}"
-    )
+    deployment.rag_dashboard_url_internal = None
 
 
 async def get_or_create_deployment(db: Session, confab: Confab) -> tuple[ConfabDeployment, str]:

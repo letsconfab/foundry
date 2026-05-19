@@ -344,7 +344,7 @@ export function AgentDashboard({ onNavigate }: AgentDashboardProps) {
                     <div className="mt-1 flex items-center gap-1.5">
                       <FileText className="h-3 w-3 text-slate-500 dark:text-slate-400" />
                       <a
-                        href={apiClient.getRagDashboardUrl(confab.id)}
+                        href={deployStatus[confab.id]?.rag_dashboard_url || '#'}
                         target="_blank"
                         rel="noreferrer"
                         className="text-indigo-600 hover:underline dark:text-indigo-400"

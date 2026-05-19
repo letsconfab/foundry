@@ -18,7 +18,6 @@ RAG_DASHBOARD_NETWORK = os.getenv("RAG_DASHBOARD_NETWORK", "hermes-agents_hermes
 RAG_DASHBOARD_PORT_START = int(os.getenv("RAG_DASHBOARD_PORT_START", "9200"))
 RAG_DASHBOARD_PORT_END = int(os.getenv("RAG_DASHBOARD_PORT_END", "9299"))
 RAG_DASHBOARD_CONTAINER_PORT = int(os.getenv("RAG_DASHBOARD_CONTAINER_PORT", "9621"))
-FOUNDRY_PUBLIC_URL = os.getenv("FOUNDRY_PUBLIC_URL", "http://localhost:8011")
 RAG_DASHBOARD_API_KEY_FILENAME = ".rag_dashboard_api_key"
 
 
@@ -44,7 +43,7 @@ def rag_dashboard_container_name(deployment: ConfabDeployment) -> str:
 
 
 def rag_dashboard_external_url(deployment: ConfabDeployment) -> str:
-    return f"{FOUNDRY_PUBLIC_URL.rstrip('/')}/confabs/{deployment.confab_id}/rag-dashboard"
+    return f"http://localhost:{deployment.rag_dashboard_port}/webui/"
 
 
 def _hash_key(key: str) -> str:

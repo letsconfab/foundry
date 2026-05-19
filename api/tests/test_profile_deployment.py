@@ -289,7 +289,8 @@ def test_deploy_runs_post_deployment_rag_evaluation(db, test_confab: Confab, tmp
         ("register", "registering_model"),
     ]
     assert result["deployment"]["rag_dashboard_enabled"] is True
-    assert result["deployment"]["rag_dashboard_url"].endswith(f"/confabs/{test_confab.id}/rag-dashboard")
+    url = result["deployment"]["rag_dashboard_url"]
+    assert url.startswith("http://localhost:") and url.endswith("/webui/")
     assert result["deployment"]["lightrag_workspace"] == deployment.lightrag_workspace
 
 
